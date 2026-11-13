@@ -19,6 +19,8 @@ mod export_xml;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod garbage;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod guidance;
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod inspect_fields;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod inspect_response_limit;
