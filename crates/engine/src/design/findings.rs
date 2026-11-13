@@ -93,7 +93,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
         spec!(
             "design.finding.accept",
             "Accept finding as it is",
-            "{id, reason}  left as it is on purpose; refused to an AI agent for judgements and feedback → {finding}",
+            "{id, reason}  left as it is on purpose; a person's call: refused to an AI agent → {finding}",
             true,
             accept
         ),
@@ -101,7 +101,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
         spec!(
             "design.finding.remove",
             "Remove finding",
-            "{id}  refused to an AI agent for feedback and for judgements it didn't raise itself → {removed}",
+            "{id}  refused to an AI agent for feedback, for checks and for judgements it didn't raise itself → {removed}",
             true,
             remove
         ),
@@ -302,6 +302,10 @@ fn accept(s: &mut Session, p: &Value) -> Result<Value> {
     let id = req_entry_id(cmd, p, "id")?;
     let reason = req_text(cmd, p, "reason")?;
     person_decides(cmd, s, &id, "accepts feedback as it is", "accepts a judgement as it is")?;
+    // Leaving a measured problem in place is a decision about the design, so a person's too.
+    if s.agent.is_some() {
+        return Err(bad(cmd, format!("only a person accepts a finding as it is; leave {id} open and say why you didn't fix it")));
+    }
     edit(s, |ctx, _| {
         let f = finding_mut(cmd, ctx, &id)?;
         f.status = FindingStatus::Accepted;
@@ -334,6 +338,10 @@ fn remove(s: &mut Session, p: &Value) -> Result<Value> {
             (Some(_), FindingKind::Feedback) => return Err(bad(cmd, format!("`id`: {id} is feedback from {}; only a person removes it", f.source))),
             (Some(me), FindingKind::Judgement) if f.source != *me => {
                 return Err(bad(cmd, format!("`id`: {id} is a judgement by {}; only they or the user remove it", f.source)));
+            }
+            // Removing a measured finding would drop it without the rule passing.
+            (Some(_), FindingKind::Check) => {
+                return Err(bad(cmd, format!("`id`: {id} is a check; fix it and run design.finding.recheck, only a person removes it")));
             }
             _ => {}
         }

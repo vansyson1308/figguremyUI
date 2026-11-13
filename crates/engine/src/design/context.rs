@@ -102,7 +102,13 @@ pub(super) fn specs() -> Vec<CommandSpec> {
             true,
             decision_set
         ),
-        spec!("design.decision.remove", "Remove decision", "{id} → {removed}", true, decision_remove),
+        spec!(
+            "design.decision.remove",
+            "Remove decision",
+            "{id}  an AI agent removes only its own proposed decisions → {removed}",
+            true,
+            decision_remove
+        ),
         spec!(
             "design.decision.accept",
             "Accept decision",
@@ -369,9 +375,19 @@ fn decision_set(s: &mut Session, p: &Value) -> Result<Value> {
 fn decision_remove(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "design.decision.remove";
     let id = req_entry_id(cmd, p, "id")?;
+    let agent = s.agent.clone();
     edit(s, |ctx, _| {
-        if !ctx.decisions.iter().any(|d| d.id == id) {
+        let Some(d) = ctx.decisions.iter().find(|d| d.id == id) else {
             return Err(bad(cmd, format!("`id`: no decision {id}")));
+        };
+        // An agent takes back its own proposals; what a person accepted or wrote stays theirs.
+        if let Some(me) = &agent
+            && (d.status == DecisionStatus::Accepted || d.author != *me)
+        {
+            return Err(bad(
+                cmd,
+                format!("`id`: {id} is {} by {}; an AI agent removes only its own proposed decisions", status_word(d.status), d.author),
+            ));
         }
         ctx.decisions.retain(|d| d.id != id);
         // A set of alternatives keeps what was chosen, without a record of why.
@@ -380,6 +396,13 @@ fn decision_remove(s: &mut Session, p: &Value) -> Result<Value> {
         }
         Ok(json!({"removed": id}))
     })
+}
+
+fn status_word(status: DecisionStatus) -> &'static str {
+    match status {
+        DecisionStatus::Accepted => "accepted",
+        DecisionStatus::Proposed => "proposed",
+    }
 }
 
 fn decision_accept(s: &mut Session, p: &Value) -> Result<Value> {

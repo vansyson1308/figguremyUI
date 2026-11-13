@@ -206,9 +206,37 @@ fn checks_are_not_verified_by_saying_so() {
         assert!(e.contains("re-run it with design.finding.recheck"), "{e}");
     }
     assert_eq!(status(&s, "F1"), FindingStatus::Open);
-    // Anyone may claim a fix or accept a measured finding as it is; the claim doesn't verify it.
+    // Anyone may claim a fix; the claim doesn't verify it.
     as_agent(&mut s, "design.finding.address", json!({"id": "F1", "resolution": "Moved the banner"}));
     assert_eq!(status(&s, "F1"), FindingStatus::Addressed);
-    as_agent(&mut s, "design.finding.accept", json!({"id": "F1", "reason": "The banner bleeds off the edge on purpose"}));
+    // Leaving a measured problem in place, or dropping it, is a person's call.
+    let keep = json!({"id": "F1", "reason": "The banner bleeds off the edge on purpose"});
+    let e = agent_err(&mut s, "design.finding.accept", keep.clone());
+    assert!(e.contains("only a person accepts a finding"), "{e}");
+    let e = agent_err(&mut s, "design.finding.remove", json!({"id": "F1"}));
+    assert!(e.contains("is a check") && e.contains("design.finding.recheck"), "{e}");
+    assert_eq!(status(&s, "F1"), FindingStatus::Addressed);
+    ex(&mut s, "design.finding.accept", keep);
     assert_eq!(status(&s, "F1"), FindingStatus::Accepted);
+    ex(&mut s, "design.finding.remove", json!({"id": "F1"}));
+    assert!(s.doc().unwrap().design.findings.is_empty());
+}
+
+#[test]
+fn an_agent_removes_only_its_own_proposed_decisions() {
+    let mut s = Session::new();
+    ex(&mut s, "design.decision.add", json!({"title": "Bottom actions", "rationale": "Thumb reach"}));
+    as_agent(&mut s, "design.decision.add", json!({"title": "Large type", "rationale": "Read at arm's length"}));
+    as_agent(&mut s, "design.decision.add", json!({"title": "One column", "rationale": "Narrow screens"}));
+    ex(&mut s, "design.decision.accept", json!({"id": "D3"}));
+    // The user's decision, and the agent's own once a person accepted it, stay.
+    for id in ["D1", "D3"] {
+        let e = agent_err(&mut s, "design.decision.remove", json!({"id": id}));
+        assert!(e.contains("removes only its own proposed decisions"), "{e}");
+    }
+    assert_eq!(s.doc().unwrap().design.decisions.len(), 3);
+    as_agent(&mut s, "design.decision.remove", json!({"id": "D2"}));
+    ex(&mut s, "design.decision.remove", json!({"id": "D1"}));
+    let left: Vec<String> = s.doc().unwrap().design.decisions.iter().map(|d| d.id.clone()).collect();
+    assert_eq!(left, ["D3"]);
 }

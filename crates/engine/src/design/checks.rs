@@ -72,10 +72,9 @@ pub fn rules() -> Vec<Rule> {
     all
 }
 
-/// HOOK FOR THE MERGE: rules other modules provide (the prototype flow and scenario rules of
-/// `crate::proto_verify::rules()`), added to `design.check`'s list.
+/// Rules other modules provide: the prototype flow and scenario rules.
 fn external_rules() -> Vec<Rule> {
-    Vec::new()
+    crate::proto_verify::rules()
 }
 
 /// The earliest stage at which rule `rule_id` runs unless it is asked for by name. While a design
@@ -84,7 +83,7 @@ fn external_rules() -> Vec<Rule> {
 pub fn min_stage(rule_id: &str) -> Stage {
     match rule_id {
         "flow.brokenTarget" | context::MISSING_LINK => Stage::Exploring,
-        context::BRIEF_INCOMPLETE | context::UNTESTED_ASSUMPTION | context::STALE_DECISION => Stage::Ready,
+        context::BRIEF_INCOMPLETE | context::UNTESTED_ASSUMPTION | context::STALE_DECISION | "scenario.none" | "scenario.unvisited" => Stage::Ready,
         _ => Stage::Converging,
     }
 }
