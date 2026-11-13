@@ -330,16 +330,10 @@ fn end_states(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
             }
             quiet(ui, tr("Why the flow may end here"));
         });
-        // A proposal's reason is the agent's, shown as it is: a person's `proto.endState.set` on
-        // a proposal accepts it, so editing the reason here would accept it unasked. Accept
-        // first, then the reason can be edited.
-        if proposed {
-            pad(ui, |ui| {
-                body(ui, &e.reason);
-                quiet(ui, tr("Accept it to edit the reason."));
-            });
-        } else if cx.name(e.node).is_some()
-            // The reason is written when its field loses the keyboard.
+        // The reason is written when its field loses the keyboard. A proposal's too: a person's
+        // `proto.endState.set` that only gives a new reason leaves it a proposal (only Accept,
+        // above, accepts it), so rewording what the agent wrote accepts nothing unasked.
+        if cx.name(e.node).is_some()
             && let Some(reason) = widgets::multiline_field(ui, cx.id(("end", e.node)), &e.reason, "", 1)
         {
             act(app, "ends", "proto.endState.set", json!({"id": e.node, "reason": reason}));

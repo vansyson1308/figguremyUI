@@ -794,12 +794,27 @@ fn an_end_state_an_agent_proposes_waits_for_a_person_and_its_reason_stays_the_ag
     assert_eq!((counts["proposedEndStates"].clone(), counts["waitingForAPerson"].clone()), (json!(1), json!(1)), "{counts}");
     // Said once above the sections, with where to go.
     assert!(w.says("1 proposal waits for you:") && w.says("1 end of the flow"), "{:?}", w.texts());
-    // Its reason is the agent's: shown, not a field a person could edit (that would accept it).
-    assert!(w.says("Accept it to edit the reason."));
+    // Its reason is a field the person may reword: that leaves it a proposal (only Accept
+    // accepts it), still the agent's.
     let panel = w.panel();
     let in_panel = |n: &Node| n.bounds().is_some_and(|b| panel.contains(pos2(((b.x0 + b.x1) / 2.0) as f32, ((b.y0 + b.y1) / 2.0) as f32)));
-    let fields = w.nodes().iter().filter(|n| matches!(n.role(), Role::MultilineTextInput | Role::TextInput) && in_panel(n)).count();
-    assert_eq!(fields, 0, "no field in the panel for the proposal's reason");
+    let fields: Vec<Rect> = w
+        .nodes()
+        .iter()
+        .filter(|n| matches!(n.role(), Role::MultilineTextInput | Role::TextInput) && in_panel(n))
+        .filter_map(|n| n.bounds())
+        .map(|b| Rect::from_min_max(pos2(b.x0 as f32, b.y0 as f32), pos2(b.x1 as f32, b.y1 as f32)))
+        .collect();
+    assert_eq!(fields.len(), 1, "one field in the panel: the proposal's reason");
+    w.click(fields[0].center());
+    w.key(Key::End);
+    w.type_text(" (checked with the ward)");
+    w.key(Key::Escape);
+    let end = w.design().end_states[0].clone();
+    assert_eq!(end.reason, "The handover is recorded here (checked with the ward)");
+    assert_eq!((end.status, end.author.as_str()), (figcraft_doc::design::EndStateStatus::Proposed, "Claude (agent)"), "rewording accepts nothing");
+    assert!(w.says("Proposed") && w.controls("Accept").len() == 1, "{:?}", w.texts());
+    assert_eq!(w.shown()["counts"]["proposedEndStates"], json!(1));
     // The flow check says so for the frame, as the engine does.
     w.button("Check the flow");
     assert_eq!(w.shown()["flowCheck"]["proposedEndStates"], json!([done]));
@@ -811,8 +826,6 @@ fn an_end_state_an_agent_proposes_waits_for_a_person_and_its_reason_stays_the_ag
     assert_eq!(w.design().end_states[0].author, "Claude (agent)", "the author stays the agent");
     assert!(!w.says("1 proposal waits for you:") && w.controls("Accept it as an end").is_empty());
     assert_eq!(w.shown()["counts"]["waitingForAPerson"], json!(0));
-    // Accepted, its reason is a field again.
-    assert!(!w.says("Accept it to edit the reason."));
     // And the panel's own Accept, for a second proposal.
     w.agent("proto.endState.set", json!({"id": home, "reason": "Nothing to do"})).unwrap();
     w.button("Accept");
