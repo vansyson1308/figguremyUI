@@ -239,7 +239,7 @@ fn a_frame_without_a_batch_does_not_error_another_windows_acknowledgement() {
     frame(&ctx, &mut app, false);
     // The root's batch awaits the pass that presents it.
     let (tx, rx) = channel();
-    app.input_acks.push(crate::PendingAck { viewport: ViewportId::ROOT, tx, reply: ControlReply { id: json!(5), result: Ok(json!({})) } });
+    app.input_acks.push(crate::PendingAck { viewport: ViewportId::ROOT, tx, reply: ControlReply::new(json!(5), Ok(json!({}))) });
     // The child's raw-input hook runs first in the same frame and has no batch of its own: that
     // is not a document change, so the root's acknowledgement must neither be errored nor drained.
     let events = crate::windows::take_input(&mut app, crate::windows::viewport(w));

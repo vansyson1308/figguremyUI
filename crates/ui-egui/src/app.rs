@@ -64,6 +64,8 @@ impl FigApp {
             ime: egui::ime_context::ImeContextTracker::new(),
             updates_rt: updates_ui::Runtime::default(),
             instance: crate::control::new_instance_id(),
+            control_error: None,
+            control_revision: None,
             #[cfg(test)]
             ime_observations: 0,
         }

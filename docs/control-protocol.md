@@ -15,16 +15,22 @@ request:  {"id": 1, "method": "engine.execute", "params": {...}}
 reply:    {"id": 1, "ok": true, "result": ...}
           {"id": 1, "ok": false, "error": "message"}
           {"id": 1, "ok": false, "error": "message", "errorDetail": {"code": "noSuchNode", "message": "message", "node": 41}}
+          {"id": 1, "ok": true, "result": ..., "revision": 12}     (engine.execute)
 ```
 
-`errorDetail` (**app side pending**: the headless MCP backend sends it; the desktop app still
-replies with `error` alone) says what kind of failure `error` is, for a program: `{code, message}`
+`errorDetail` (sent by the desktop app, the web build and the headless MCP backend) says what
+kind of failure `error` is, for a program: `{code, message}`
 plus, where the error knows them, `command`, `param`, `node`, `step`, `expected`, `actual`,
 `since`, `document`, `label`, `author`. It is `figcraft_engine::EngineError::detail()` for an
 engine error, and `{"code": "badParams" | "unknownMethod" | "failed", "message"}` for one the
-control handler raises itself. The codes are listed in [mcp.md](mcp.md) (Errors). A client reads it
-when it is there and otherwise takes the error as `{"code": "error", "message"}`; `error` stays
-the text it always was.
+control handler raises itself (also for a timeout, a full queue, a line too large or not JSON).
+The codes are listed in [mcp.md](mcp.md) (Errors). A client reads it when it is there and
+otherwise takes the error as `{"code": "error", "message"}`; `error` stays the text it always was.
+
+`revision` (on an `engine.execute` reply, success or failure) is the revision of the document the
+command acted on, read right after it ran, in the same request: a client reports it as the state
+its command left, without a second request that could already include somebody else's change. An
+app that doesn't send it is read as before (`doc.list` / `document.inspect`).
 
 Requests are queued and run on the UI thread at the start of the next frame, so replies reflect the
 real UI state. A request that the UI doesn't answer within 60 s gets a timeout error that says what
@@ -129,7 +135,9 @@ temporary files.
 ### `engine.execute {command, params?}`
 
 Run any command (the same ids as the menus, shortcuts, Actions palette, CLI and MCP). Programmatic
-calls never open dialogs: dialog requests are dropped. Returns the command's result (creation
+calls never open dialogs: dialog requests are dropped, and an object result then gains
+`"ui": "dropped (<request kinds>)"` (e.g. `file.colorProfile {}` without a profile:
+`"dropped (dialog.colorProfile)"`) so it doesn't read as if one had opened. Returns the command's result (creation
 commands return `{"id": N}`). Paints (`fills`, `strokes`, `paint`) take a colour, the full paint
 JSON or the gradient shorthand `{"type":"linearGradient","stops":["#hex","#hex"],"from"?,"to"?}`
 (as in `docs/mcp.md`). A parameter the command's doc (`engine.commands`) doesn't list is an error
@@ -366,10 +374,11 @@ Returns `{"command": id}` for shortcuts. Refused while the presenter plays (see 
 Type into the text being edited (start editing with a double-click, `text.edit.begin {id}`, or the
 text tool). Refused while the presenter plays (see `ui.pointer`).
 
-`ui.pointer`, `ui.key` and `ui.type` take `agent` like `engine.execute` (**app side pending**: the
-headless MCP backend reads it; the desktop app ignores it, so there a gesture an agent makes is
-recorded as the user's undo step): what the gesture or the typed text changes is then that agent's
-step in the undo history.
+`ui.pointer`, `ui.key` and `ui.type` take `agent` like `engine.execute` (the desktop app, the web
+build and the headless MCP backend): what the gesture or the typed text changes is then that
+agent's step in the undo history, named as `engine.execute {agent}` names it, so the agent's
+`edit.undo` takes it back and refuses the person's. Whoever acted before is put back when the
+gesture ends, also when it fails.
 
 ### `ui.input {events}`
 
@@ -397,6 +406,11 @@ separate calls. Returns `{queued}`.
 ### `ui.menu.invoke {id}`
 
 Invoke a menu item exactly like clicking it (this may open a dialog). Returns `{ok, lastError}`.
+
+`ui.input`, `ui.menu.invoke` and `ui.set` act as the person at the window (raw input reaches every
+control, the panel's Accept buttons among them), so a request that carries `agent` is refused
+(`badParams`, `param: "agent"`) and nothing is done: an AI agent runs commands with
+`engine.execute {agent}` and canvas gestures with `ui.pointer`, `ui.key` and `ui.type` with `agent`.
 
 ### `ui.set {rightTab?, leftTab?, theme?, home?, homeSection?, homeSearch?, homeRecentsView?, homeRecentsSort?, homeRecentsOrder?, palette?, mainMenu?, focusRegion?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?, stylePicker?, stylePickerEdit?, stylePickerView?, iconGallery?, protoEditor?, contextMenu?, contextSelectLayer?, commentOpen?, commentDraft?, commentFilter?, commentSort?, commentSearch?, commentReply?, commentEdit?, presentComments?, devCompare?, devCompareMode?, devCompareSplit?, annotationFilter?, resetFrameStats?, pluginsWindow?, pluginsTab?, pluginConfirm?, pluginForm?, devCompareVersion?}`
 
@@ -491,8 +505,9 @@ closing while others are open takes over one of them, and closing the last windo
 
 ### `app.info {}`
 
-Which run of the app answers: `{"instance", "version", "pid"}`, plus `window` and `features` where
-the app says them. `instance` is 32 hex digits made once when the app starts; it stays the same for
+Which run of the app answers: `{"instance", "version", "pid", "window", "features"}` (`window`:
+true from the desktop app and the web build, false from the headless MCP backend; an app from
+before them leaves both out). `instance` is 32 hex digits made once when the app starts; it stays the same for
 as long as that process runs and differs in every other run, so a client that reconnects (or finds
 the port answered by something else) can tell whether it reached the same app, with the same open
 files and undo history, or another one. `version` is the app's version and `pid` its process id
@@ -500,7 +515,7 @@ files and undo history, or another one. `version` is the app's version and `pid`
 
 ```json
 {"id":1,"method":"app.info"}
-{"id":1,"result":{"instance":"5f0c2a9e41d7b3a86e1f0c2a9e41d7b3","pid":41327,"version":"0.18.1"}}
+{"id":1,"result":{"instance":"5f0c2a9e41d7b3a86e1f0c2a9e41d7b3","pid":41327,"version":"0.18.1","window":true,"features":["errorDetail","revision"]}}
 ```
 
 `features` lists what this app's control channel does beyond the first protocol (`errorDetail`:

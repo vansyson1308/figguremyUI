@@ -1572,8 +1572,8 @@ the next to undo first; `history.undo` keeps the labels alone). An agent's `undo
 only its own steps: when the next step is the user's or another agent's, the call is refused with
 code `otherAuthor`, naming the step and its author, unless it passes `others: true`. The user's own
 undo in the app takes any step, as before. What an agent does with `pointer`, `key` and `type_text`
-is its step too (headless; an attached app records those as the user's until it reads `agent` on
-those control methods).
+is its step too, headless and attached (the app reads `agent` on those control methods). Attached,
+the app refuses its person-only methods (`ui.input`, `ui.menu.invoke`, `ui.set`) for an agent.
 
 ### Errors
 
