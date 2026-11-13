@@ -39,11 +39,18 @@ fn place_an_order(a: NodeId, b: NodeId, done: NodeId, next: NodeId, finish: Node
 fn a_scenario_is_stored_listed_run_edited_and_removed() {
     let (mut s, [a, b, done, help], [next, finish]) = checkout();
     assert_eq!(ex(&mut s, "proto.scenario.list", json!({})), json!({"scenarios": []}));
+    let none = ex(&mut s, "proto.scenario.run", json!({}));
     assert_eq!(
-        ex(&mut s, "proto.scenario.run", json!({})),
-        json!({"passed": true, "total": 0, "failed": 0, "results": []}),
+        (&none["passed"], &none["total"], &none["failed"], &none["results"]),
+        (&json!(true), &json!(0), &json!(0), &json!([])),
         "none stored: none failed"
     );
+    // A run is the simulator's, and says what the simulator leaves out.
+    assert_eq!(none["simulated"], json!(true));
+    let left_out = none["notModelled"].as_array().unwrap();
+    for part in ["animation and timing", "scroll position", "drag direction", "device frame and responsive resizing", "pointer hit-testing"] {
+        assert!(left_out.iter().any(|x| x.as_str().unwrap().contains(part)), "{part}: {left_out:?}");
+    }
     let r = ex(&mut s, "proto.scenario.add", place_an_order(a, b, done, next, finish));
     assert_eq!(r, json!({"id": "S1"}));
     let listed = ex(&mut s, "proto.scenario.list", json!({}));

@@ -33,21 +33,82 @@ fn judgements_and_feedback_are_added_with_their_source() {
     let f = s.doc().unwrap().design.findings[0].clone();
     assert_eq!((f.kind, f.rule.as_str(), f.severity, f.status), (FindingKind::Judgement, "hierarchy", Severity::Major, FindingStatus::Open));
     assert_eq!((f.source.as_str(), f.nodes, f.suggestion.as_str()), ("user", vec![home], "Quieten the banner"));
-    // Run for an agent, the finding is the agent's unless it says whose it is.
+    assert_eq!(f.recorded_by, "", "recorded by whom it comes from: nothing more to say");
+    // Run for an agent, a judgement is the agent's own: it can't be put in anybody else's mouth.
     as_agent(&mut s, "design.finding.add", json!({"kind": "judgement", "rule": "density", "message": "Cramped", "severity": "note"}));
-    as_agent(&mut s, "design.finding.add", json!({"kind": "judgement", "rule": "tone", "message": "Stiff", "source": "Review with Bo"}));
-    let found = &s.doc().unwrap().design.findings;
-    assert_eq!((found[1].source.as_str(), found[1].severity), (AGENT_NAME, Severity::Note));
-    assert_eq!(found[2].source, "Review with Bo");
+    as_agent(&mut s, "design.finding.add", json!({"kind": "judgement", "rule": "tone", "message": "Stiff", "source": AGENT_NAME}));
+    for claimed in ["user", "Review with Bo", "Ana"] {
+        let e = agent_err(&mut s, "design.finding.add", json!({"kind": "judgement", "rule": "tone", "message": "Stiff", "source": claimed}));
+        assert!(e.contains("`source`: a judgement an AI agent records is its own (Claude (agent))") && e.contains(claimed), "{e}");
+        assert!(e.contains("`kind`: feedback"), "it says what to do with what a person said: {e}");
+    }
+    let found = s.doc().unwrap().design.findings.clone();
+    assert_eq!(found.len(), 3, "the refused ones stored nothing");
+    assert_eq!((found[1].source.as_str(), found[1].severity, found[1].recorded_by.as_str()), (AGENT_NAME, Severity::Note, ""));
+    assert_eq!(found[2].source, AGENT_NAME);
+    // The user may record a judgement somebody else holds; it says who wrote it down.
+    ex(&mut s, "design.finding.add", json!({"kind": "judgement", "rule": "tone", "message": "Stiff", "source": "Review with Bo"}));
+    let f = s.doc().unwrap().design.findings[3].clone();
+    assert_eq!((f.source.as_str(), f.recorded_by.as_str()), ("Review with Bo", "user"));
     // Feedback is a person's words: both the person and the words are required.
     let r = ex_undoable(
         &mut s,
         "design.finding.add",
         json!({"kind": "feedback", "rule": "wording", "message": "Unclear label", "evidence": "\"What is Sync?\"", "source": "Ana"}),
     );
-    assert_eq!(r["id"], "F4");
+    assert_eq!(r["id"], "F5");
     ex(&mut s, "design.finding.add", json!({"kind": "feedback", "rule": "wording", "message": "Unclear", "evidence": "I don't get it"}));
-    assert_eq!(s.doc().unwrap().design.findings[4].source, "user", "the user's own feedback is the user's");
+    assert_eq!(s.doc().unwrap().design.findings[5].source, "user", "the user's own feedback is the user's");
+    // Passed on by an agent, feedback keeps the person as its source and says who relayed it.
+    as_agent(
+        &mut s,
+        "design.finding.add",
+        json!({"kind": "feedback", "rule": "wording", "message": "Unclear", "evidence": "\"Sync what?\"", "source": "Ana"}),
+    );
+    let relayed = s.doc().unwrap().design.findings[6].clone();
+    assert_eq!((relayed.source.as_str(), relayed.recorded_by.as_str()), ("Ana", AGENT_NAME));
+    assert_eq!(serde_json::to_value(&relayed).unwrap()["recordedBy"], AGENT_NAME);
+    // An agent's own view isn't feedback.
+    let e =
+        agent_err(&mut s, "design.finding.add", json!({"kind": "feedback", "rule": "x", "message": "m", "evidence": "words", "source": AGENT_NAME}));
+    assert!(e.contains("feedback is what a person said"), "{e}");
+}
+
+#[test]
+fn an_agent_doesnt_undo_what_a_person_accepted_or_verified() {
+    let mut s = Session::new();
+    three_findings(&mut s);
+    // F1 (the user's judgement) is accepted with a reason; F3 (Ana's feedback) is verified.
+    ex(&mut s, "design.finding.accept", json!({"id": "F1", "reason": "Both are meant to shout"}));
+    ex(&mut s, "design.finding.verify", json!({"id": "F3", "evidence": "Ana read the new label", "by": "Ana"}));
+    let before = super::doc_json(&s);
+    for (cmd, params) in [
+        ("design.finding.address", json!({"id": "F1", "resolution": "Quietened one"})),
+        ("design.finding.reopen", json!({"id": "F1"})),
+        ("design.finding.address", json!({"id": "F3", "resolution": "Reworded again"})),
+        ("design.finding.reopen", json!({"id": "F3"})),
+    ] {
+        let e = agent_err(&mut s, cmd, params.clone());
+        let who = if params["id"] == "F1" { "F1 was accepted as it is by the user" } else { "F3 was verified by Ana" };
+        assert!(e.contains(who) && e.contains("an AI agent (Claude (agent)) doesn't undo that") && e.contains("design.finding.add"), "{cmd}: {e}");
+        // The same inside a batch the agent runs.
+        let batch = json!({"commands": [{"command": cmd, "params": params}]});
+        assert!(s.execute_as(Some(super::AGENT), "command.batch", &batch).is_err(), "{cmd} in a batch");
+    }
+    assert_eq!(super::doc_json(&s), before, "the person's reason and confirmation are as they left them");
+    assert_eq!(s.doc().unwrap().design.findings[0].resolution, "Both are meant to shout");
+    assert_eq!(s.doc().unwrap().design.findings[2].verified_by, "Ana");
+    // The person can; and an agent may reopen a check that only its rule verified.
+    ex(&mut s, "design.finding.reopen", json!({"id": "F1"}));
+    assert_eq!(status(&s, "F1"), FindingStatus::Open);
+    let home = frame(&mut s, "Home", 0.0, 320.0, 480.0);
+    let banner = rect(&mut s, home, [300.0, 10.0, 100.0, 40.0], json!({"name": "Banner"}));
+    ex(&mut s, "design.check.record", json!({"rules": ["layout.clippedContent"]}));
+    ex(&mut s, "node.set", json!({"id": banner, "props": {"x": 10}}));
+    ex(&mut s, "design.finding.recheck", json!({"id": "F4"}));
+    assert_eq!(status(&s, "F4"), FindingStatus::Verified);
+    as_agent(&mut s, "design.finding.reopen", json!({"id": "F4"}));
+    assert_eq!(status(&s, "F4"), FindingStatus::Open);
 }
 
 #[test]

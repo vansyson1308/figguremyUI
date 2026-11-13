@@ -9,7 +9,7 @@ use figcraft_doc::design::{MAX_ENTRIES, Scenario, Severity, StepAction};
 use figcraft_doc::{Document, NodeId};
 use serde_json::{Value, json};
 
-use super::flow::Graph;
+use super::flow::{Graph, page_subject};
 use super::parse;
 use super::run::{Run, run, steps_json};
 use crate::check::Found;
@@ -147,7 +147,14 @@ pub(super) fn run_stored(s: &mut Session, p: &Value) -> Result<Value> {
             v
         })
         .collect();
-    Ok(json!({"passed": failed == 0, "total": results.len(), "failed": failed, "results": results}))
+    Ok(json!({
+        "passed": failed == 0,
+        "simulated": true,
+        "notModelled": super::run::NOT_MODELLED,
+        "total": results.len(),
+        "failed": failed,
+        "results": results,
+    }))
 }
 
 /// What a step does, in a few words.
@@ -169,13 +176,15 @@ fn failure(doc: &Document, sc: &Scenario, r: &Run) -> Found {
         None if r.state.is_none() => ("before the first step".to_string(), None),
         None => ("after the last step".to_string(), None),
     };
-    // The most specific layer first; one that is gone would put the finding out of every scope.
+    // Where to look: the failing step's layer, then the start. The finding is the scenario's
+    // whichever step fails; a layer that is gone would put it out of every scope.
     let mut nodes: Vec<NodeId> = layer.into_iter().chain([sc.start]).filter(|n| doc.contains(*n)).collect();
     nodes.dedup();
     Found {
         rule: FAILS,
         severity: Severity::Major,
         nodes,
+        subject: format!("scenario:{}", sc.id),
         message: format!("scenario {} \"{}\" doesn't pass", sc.id, figcraft_format::clip(&sc.name, 80)),
         evidence: figcraft_format::clip(&format!("{place}: {}", r.first_failures().join("; ")), MAX_EVIDENCE),
         suggestion: format!(
@@ -205,6 +214,7 @@ pub(super) fn findings(doc: &Document, g: &Graph) -> Vec<Found> {
                 rule: NONE,
                 severity: Severity::Note,
                 nodes: vec![start.frame],
+                subject: page_subject(g.page),
                 message: "the page has a flow but no stored scenario, so nothing checks that the flow works".into(),
                 evidence: format!("{} flow start(s), the first at {}; 0 scenarios start on this page", g.starts.len(), label(doc, start.frame)),
                 suggestion: "Store the walk a viewer is meant to take, with what should be true at the end, with proto.scenario.add.".into(),
@@ -219,6 +229,7 @@ pub(super) fn findings(doc: &Document, g: &Graph) -> Vec<Found> {
             rule: UNVISITED,
             severity: Severity::Note,
             nodes: unvisited.clone(),
+            subject: page_subject(g.page),
             message: format!("{} screen(s) the flows reach are never shown by a stored scenario", unvisited.len()),
             evidence: figcraft_format::clip(&names.join(", "), MAX_EVIDENCE),
             suggestion: "Add a scenario that goes there (proto.scenario.add), or check by hand what no scenario covers.".into(),

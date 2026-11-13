@@ -14,9 +14,15 @@ use crate::{Result, Session, bad};
 /// Who a command runs for when it isn't an AI agent.
 pub(super) const USER: &str = "user";
 
+/// The AI agent the running command is for, by the name its records are signed with
+/// (`Claude (agent)`); `None`: the user. The one place the design and prototype commands ask.
+pub(super) fn agent(s: &Session) -> Option<&str> {
+    s.agent.as_deref()
+}
+
 /// Who the running command is for: the agent's name (as its comments are signed), else [`USER`].
 pub(super) fn actor(s: &Session) -> String {
-    s.agent.clone().unwrap_or_else(|| USER.into())
+    agent(s).unwrap_or(USER).to_string()
 }
 
 /// Change the design context with `f`, which also sees the document. The file changes (one undo

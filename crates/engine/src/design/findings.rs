@@ -5,19 +5,31 @@
 //! rule, so only running the rule again settles it (`design.finding.recheck`): saying it is
 //! fixed doesn't make it so. A `judgement` is somebody's opinion and `feedback` is what a person
 //! said: only a person confirms either is met or accepts it as it is. An AI agent records what
-//! it changed (`design.finding.address`) and leaves the verdict to the person.
+//! it changed (`design.finding.address`) and leaves the verdict to the person, and doesn't
+//! reopen or re-address what a person accepted or verified.
+//!
+//! A stored check is the same problem as a later result of its rule when both are about the
+//! same thing ([`same_problem`]): the result's subject when it names one (a scenario, an
+//! overlay, a page), else its layers. Running the rule again verifies the finding only when
+//! nothing about that thing is reported any more: not when the failure moved to another step or
+//! layer, and not when what was measured can no longer be measured.
+//!
+//! Who a finding comes from is `source`; who ran the command that stored it is `recordedBy` when
+//! that is somebody else (an agent passing on what a person said). An agent's judgement is
+//! always its own.
 
 use std::collections::BTreeMap;
 
-use figcraft_doc::design::{DesignContext, Finding, FindingKind, FindingStatus, Recheck, Severity};
-use figcraft_doc::{Document, NodeId};
+use figcraft_doc::NodeId;
+use figcraft_doc::design::{DesignContext, Finding, FindingKind, FindingStatus, MAX_ENTRIES, Recheck, Severity};
 use serde_json::{Value, json};
 
-use super::checks::{self, Outcome, min_stage, page_scope, run_rule, same_problem};
-use super::input::{actor, choice, edit, layers, req_choice, req_entry_id, req_layer_id, req_text, room_for, shown, text};
-use crate::check::Found;
+use super::checks::{self, Outcome, min_stage, run_rule, same_problem};
+use super::input::{actor, agent, choice, edit, layers, req_choice, req_entry_id, req_layer_id, req_text, room_for, shown, text};
+use crate::check::{Facts, Found, Scope};
 use crate::cmd::CommandSpec;
 use crate::params::get;
+use crate::proto_verify::{Where, subject_where};
 use crate::{Result, Session, bad, spec};
 
 const KINDS: [(&str, FindingKind); 3] = [("check", FindingKind::Check), ("judgement", FindingKind::Judgement), ("feedback", FindingKind::Feedback)];
@@ -37,7 +49,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
         spec!(
             "design.check",
             "Check design",
-            "{scope?: [layer ids] (each with everything inside it; default: the current page's top-level frames), rules?: [rule ids] (run exactly these; default: the rules the file's stage calls for, see design.stage.set and design.check.rules)}  measures the file; hidden layers are skipped; nothing is stored → {findings: [{rule, severity, nodes, message, evidence, suggestion, kind: \"check\"}] (by severity, rule, layer), summary: {total, bySeverity: {blocker, major, minor, note}, byRule}, rules: [{id, about}] (the rules that ran), skipped: [{id, reason}] (the rules that didn't), stage}",
+            "{scope?: [layer ids] (each with everything inside it; default: the current page: its top-level frames for the rules that measure layers, and for the flow.* and scenario.* rules everything proto.check reports for the page, also what is about the page itself or a layer outside every frame), rules?: [rule ids] (run exactly these; default: the rules the file's stage calls for, see design.stage.set and design.check.rules)}  measures the file; hidden layers are skipped; nothing is stored. With `scope`, a flow or scenario finding is kept when a layer it names is in scope, and one about a page as a whole when the scope holds that page or one of its top-level frames → {findings: [{rule, severity, nodes, subject? (what it is about when that isn't the layers: scenario:S1, overlay:12, page:1…), message, evidence, suggestion, kind: \"check\"}] (by severity, rule, layer), summary: {total, bySeverity: {blocker, major, minor, note}, byRule}, rules: [{id, about}] (the rules that ran), skipped: [{id, reason}] (the rules that didn't), stage}",
             false,
             check
         ),
@@ -51,14 +63,14 @@ pub(super) fn specs() -> Vec<CommandSpec> {
         spec!(
             "design.check.record",
             "Record design check findings",
-            "{scope?: [layer ids], rules?: [rule ids]}  as design.check, then stores each result as an open finding of kind check unless a stored finding about the same problem (same rule on the same layers) is still unverified → {added: [ids], existing: [ids], total, skipped: [{id, reason}]}",
+            "{scope?: [layer ids], rules?: [rule ids]}  as design.check, then stores each result as an open finding of kind check unless a stored finding about the same problem (same rule and subject; without a subject, same rule on the same layers) is still unverified. The file keeps at most 500 findings: the results are stored worst first until it is full, and the rest are counted in `truncated` (narrow `scope` or `rules`, or remove settled findings, and record again) → {added: [ids], existing: [ids], total, truncated (results not stored), note? (when truncated), skipped: [{id, reason}]}",
             true,
             record
         ),
         spec!(
             "design.finding.add",
             "Add finding",
-            "{kind: judgement|feedback (judgement: a reviewer's or an AI agent's opinion; feedback: what a person said), rule (a short label), message, severity?: blocker|major|minor|note (default major), nodes?: [layer ids], evidence? (what was observed; for feedback the person's words, required), suggestion?, source? (who holds it; default: the AI agent the command runs for, else user; for feedback the person, required from an agent)}  measured findings are stored by design.check.record instead → {id}",
+            "{kind: judgement|feedback (judgement: a reviewer's or an AI agent's opinion; feedback: what a person said), rule (a short label), message, severity?: blocker|major|minor|note (default major), nodes?: [layer ids], evidence? (what was observed; for feedback the person's words, required), suggestion?, source? (who holds it; default: the AI agent the command runs for, else user; for feedback the person, required from an agent; an AI agent's judgement is always its own: naming anyone else is refused)}  measured findings are stored by design.check.record instead; whoever runs the command is kept as recordedBy when that isn't the source → {id}",
             true,
             add
         ),
@@ -72,14 +84,14 @@ pub(super) fn specs() -> Vec<CommandSpec> {
         spec!(
             "design.finding.address",
             "Mark finding addressed",
-            "{id, resolution (what was changed)}  a fix is claimed, not confirmed: a check is confirmed by design.finding.recheck, a judgement or feedback by a person (design.finding.verify) → {finding}",
+            "{id, resolution (what was changed)}  a fix is claimed, not confirmed: a check is confirmed by design.finding.recheck, a judgement or feedback by a person (design.finding.verify); refused to an AI agent on a finding a person accepted or verified → {finding}",
             true,
             address
         ),
         spec!(
             "design.finding.recheck",
             "Re-run checks of findings",
-            "{id? (a finding of kind check; default: every stored check that isn't accepted)}  runs the finding's rule again on its layers: no longer reported → verified; still reported → open, also when it was marked addressed (an accepted one stays accepted); its layers are gone → verified → {results: [{id, passed, detail, status}]}",
+            "{id? (a finding of kind check; default: every stored check that isn't accepted)}  runs the finding's rule again where the finding was found: on its layers, or for a finding with a subject (a scenario, an overlay, a page) on the page that subject is on. Nothing about it is reported any more → verified; still reported → open with what is measured now, also when it was marked addressed and when the failure moved (another step fails, another layer opens the overlay); what was measured can no longer be measured (contrast.text) → open; an accepted one stays accepted; its layers, page or scenario are gone → verified → {results: [{id, passed, detail, status}]}",
             true,
             recheck
         ),
@@ -97,7 +109,13 @@ pub(super) fn specs() -> Vec<CommandSpec> {
             true,
             accept
         ),
-        spec!("design.finding.reopen", "Reopen finding", "{id} → {finding}", true, reopen),
+        spec!(
+            "design.finding.reopen",
+            "Reopen finding",
+            "{id}  refused to an AI agent on a finding a person accepted or verified → {finding}",
+            true,
+            reopen
+        ),
         spec!(
             "design.finding.remove",
             "Remove finding",
@@ -108,12 +126,9 @@ pub(super) fn specs() -> Vec<CommandSpec> {
     ]
 }
 
-/// The layers a check looks at: `scope`, else the top-level frames of `page`.
-fn scope_of(cmd: &str, doc: &Document, page: NodeId, p: &Value) -> Result<Vec<NodeId>> {
-    Ok(match layers(cmd, doc, p, "scope")? {
-        Some(given) if !given.is_empty() => given,
-        _ => page_scope(doc, page),
-    })
+/// The layers asked for in `scope` (none: the page).
+fn scope_layers(cmd: &str, s: &Session, p: &Value) -> Result<Vec<NodeId>> {
+    Ok(layers(cmd, s.doc()?, p, "scope")?.unwrap_or_default())
 }
 
 /// The rules named in `rules` (`None`: not given, the stage decides).
@@ -135,7 +150,11 @@ fn picked_rules(cmd: &str, p: &Value) -> Result<Option<Vec<String>>> {
 }
 
 fn found_json(f: &Found) -> Value {
-    json!({"rule": f.rule, "severity": f.severity, "nodes": f.nodes, "message": f.message, "evidence": f.evidence, "suggestion": f.suggestion, "kind": FindingKind::Check})
+    let mut v = json!({"rule": f.rule, "severity": f.severity, "nodes": f.nodes, "message": f.message, "evidence": f.evidence, "suggestion": f.suggestion, "kind": FindingKind::Check});
+    if let (Some(o), false) = (v.as_object_mut(), f.subject.is_empty()) {
+        o.insert("subject".into(), json!(f.subject));
+    }
+    v
 }
 
 fn skipped_json(run: &Outcome) -> Vec<Value> {
@@ -145,8 +164,8 @@ fn skipped_json(run: &Outcome) -> Vec<Value> {
 fn check(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "design.check";
     let (doc, page) = (s.doc()?, s.page()?);
-    let scope = scope_of(cmd, doc, page, p)?;
-    let run = checks::run(doc, &scope, picked_rules(cmd, p)?.as_deref());
+    let layers = scope_layers(cmd, s, p)?;
+    let run = checks::run(&Facts::new(doc), Scope { page, layers: &layers }, picked_rules(cmd, p)?.as_deref());
     let count = |sev: Severity| run.found.iter().filter(|f| f.severity == sev).count();
     let mut by_rule: BTreeMap<&str, usize> = BTreeMap::new();
     for f in &run.found {
@@ -169,17 +188,20 @@ fn record(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "design.check.record";
     let page = s.page()?;
     let only = picked_rules(cmd, p)?;
+    let layers = scope_layers(cmd, s, p)?;
+    let who = actor(s);
     edit(s, |ctx, doc| {
-        let scope = scope_of(cmd, doc, page, p)?;
-        let run = checks::run(doc, &scope, only.as_deref());
+        let run = checks::run(&Facts::new(doc), Scope { page, layers: &layers }, only.as_deref());
         let (mut added, mut existing): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+        // Results the file has no room for: the list is worst first, so those are the least.
+        let mut truncated = 0usize;
         for found in &run.found {
             let stored = ctx.findings.iter().find(|f| f.kind == FindingKind::Check && f.status != FindingStatus::Verified && same_problem(f, found));
             match stored {
                 Some(f) if !existing.contains(&f.id) && !added.contains(&f.id) => existing.push(f.id.clone()),
                 Some(_) => {}
+                None if ctx.findings.len() >= MAX_ENTRIES => truncated += 1,
                 None => {
-                    room_for(cmd, "findings", ctx.findings.len(), 1)?;
                     let id = ctx.next_id("F");
                     ctx.findings.push(Finding {
                         id: id.clone(),
@@ -187,17 +209,27 @@ fn record(s: &mut Session, p: &Value) -> Result<Value> {
                         rule: found.rule.to_string(),
                         severity: found.severity,
                         nodes: found.nodes.clone(),
+                        subject: found.subject.clone(),
                         message: found.message.clone(),
                         evidence: found.evidence.clone(),
                         suggestion: found.suggestion.clone(),
                         source: "check".into(),
+                        recorded_by: who.clone(),
                         ..Finding::default()
                     });
                     added.push(id);
                 }
             }
         }
-        Ok(json!({"added": added, "existing": existing, "total": run.found.len(), "skipped": skipped_json(&run)}))
+        let mut out = json!({"added": added, "existing": existing, "total": run.found.len(), "truncated": truncated, "skipped": skipped_json(&run)});
+        if let (Some(o), true) = (out.as_object_mut(), truncated > 0) {
+            let note = format!(
+                "{truncated} of {} result(s) were not stored: the file holds {MAX_ENTRIES} findings, the most it keeps. The worst were stored first. Narrow `scope` or `rules`, or remove settled findings (design.finding.remove), and record again",
+                run.found.len()
+            );
+            o.insert("note".into(), json!(note));
+        }
+        Ok(out)
     })
 }
 
@@ -213,14 +245,30 @@ fn add(s: &mut Session, p: &Value) -> Result<Value> {
     let evidence = text(cmd, p, "evidence")?.unwrap_or_default();
     let suggestion = text(cmd, p, "suggestion")?.unwrap_or_default();
     let feedback = kind == FindingKind::Feedback;
+    let (who, me) = (actor(s), agent(s));
     let source = match text(cmd, p, "source")?.filter(|who| !who.is_empty()) {
-        Some(who) => who,
+        // An agent can't put its opinion in somebody else's mouth, nor its own under feedback.
+        Some(named) if !feedback && me.is_some_and(|me| me != named) => {
+            return Err(bad(
+                cmd,
+                format!(
+                    "`source`: a judgement an AI agent records is its own ({who}), not {}'s; to pass on what a person said, add it with `kind`: feedback, their name in `source` and their words in `evidence`",
+                    shown(&json!(named))
+                ),
+            ));
+        }
+        Some(named) if feedback && me == Some(named.as_str()) => {
+            return Err(bad(cmd, format!("`source`: feedback is what a person said; {who}'s own view is a judgement (`kind`: judgement)")));
+        }
+        Some(named) => named,
         // An agent passing on what someone said isn't the one who said it.
-        None if feedback && (s.agent.is_some() || get(p, "source").is_some()) => {
+        None if feedback && (me.is_some() || get(p, "source").is_some()) => {
             return Err(bad(cmd, "`source` is required for feedback: the person who said it"));
         }
-        None => actor(s),
+        None => who.clone(),
     };
+    // Who ran the command, when the finding is somebody else's: "relayed by".
+    let recorded_by = if who == source { String::new() } else { who };
     if feedback && evidence.is_empty() {
         return Err(bad(cmd, "`evidence` is required for feedback: what the person said, in their words"));
     }
@@ -228,7 +276,19 @@ fn add(s: &mut Session, p: &Value) -> Result<Value> {
         let nodes = layers(cmd, doc, p, "nodes")?.unwrap_or_default();
         room_for(cmd, "findings", ctx.findings.len(), 1)?;
         let id = ctx.next_id("F");
-        ctx.findings.push(Finding { id: id.clone(), kind, rule, severity, nodes, message, evidence, suggestion, source, ..Finding::default() });
+        ctx.findings.push(Finding {
+            id: id.clone(),
+            kind,
+            rule,
+            severity,
+            nodes,
+            message,
+            evidence,
+            suggestion,
+            source,
+            recorded_by,
+            ..Finding::default()
+        });
         Ok(json!({"id": id}))
     })
 }
@@ -251,7 +311,7 @@ fn finding_mut<'a>(cmd: &str, ctx: &'a mut DesignContext, id: &str) -> Result<&'
 /// what a person said is met, is for a person to say. `on_feedback` and `on_judgement` say what
 /// only a person does.
 fn person_decides(cmd: &str, s: &Session, id: &str, on_feedback: &str, on_judgement: &str) -> Result<()> {
-    if s.agent.is_none() {
+    if agent(s).is_none() {
         return Ok(());
     }
     let finding = s.doc()?.design.findings.iter().find(|f| f.id == id);
@@ -265,12 +325,33 @@ fn person_decides(cmd: &str, s: &Session, id: &str, on_feedback: &str, on_judgem
     Err(bad(cmd, refused))
 }
 
+/// Refuse an AI agent a change of status on a finding a person settled: accepting one as it is
+/// is always a person's doing, and so is verifying a judgement or feedback. Addressing or
+/// reopening it would drop their reason or their confirmation.
+fn settled_by_a_person(cmd: &str, me: Option<&str>, f: &Finding) -> Result<()> {
+    let Some(me) = me else { return Ok(()) };
+    let settled = match f.status {
+        FindingStatus::Accepted => "accepted as it is by the user".to_string(),
+        FindingStatus::Verified if !f.verified_by.is_empty() => format!("verified by {}", f.verified_by),
+        _ => return Ok(()),
+    };
+    Err(bad(
+        cmd,
+        format!(
+            "`id`: {} was {settled}; an AI agent ({me}) doesn't undo that. If you think the problem is back, say so in a judgement of your own (design.finding.add) or ask them to reopen it",
+            f.id
+        ),
+    ))
+}
+
 fn address(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "design.finding.address";
     let id = req_entry_id(cmd, p, "id")?;
     let resolution = req_text(cmd, p, "resolution")?;
+    let me = agent(s).map(str::to_string);
     edit(s, |ctx, _| {
         let f = finding_mut(cmd, ctx, &id)?;
+        settled_by_a_person(cmd, me.as_deref(), f)?;
         f.status = FindingStatus::Addressed;
         f.resolution = resolution;
         f.verified_by.clear();
@@ -303,7 +384,7 @@ fn accept(s: &mut Session, p: &Value) -> Result<Value> {
     let reason = req_text(cmd, p, "reason")?;
     person_decides(cmd, s, &id, "accepts feedback as it is", "accepts a judgement as it is")?;
     // Leaving a measured problem in place is a decision about the design, so a person's too.
-    if s.agent.is_some() {
+    if agent(s).is_some() {
         return Err(bad(cmd, format!("only a person accepts a finding as it is; leave {id} open and say why you didn't fix it")));
     }
     edit(s, |ctx, _| {
@@ -319,8 +400,10 @@ fn accept(s: &mut Session, p: &Value) -> Result<Value> {
 fn reopen(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "design.finding.reopen";
     let id = req_entry_id(cmd, p, "id")?;
+    let me = agent(s).map(str::to_string);
     edit(s, |ctx, _| {
         let f = finding_mut(cmd, ctx, &id)?;
+        settled_by_a_person(cmd, me.as_deref(), f)?;
         f.status = FindingStatus::Open;
         f.verified_by.clear();
         f.verification.clear();
@@ -331,10 +414,10 @@ fn reopen(s: &mut Session, p: &Value) -> Result<Value> {
 fn remove(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "design.finding.remove";
     let id = req_entry_id(cmd, p, "id")?;
-    let agent = s.agent.clone();
+    let me = agent(s).map(str::to_string);
     edit(s, |ctx, _| {
         let f = finding_mut(cmd, ctx, &id)?;
-        match (&agent, f.kind) {
+        match (&me, f.kind) {
             (Some(_), FindingKind::Feedback) => return Err(bad(cmd, format!("`id`: {id} is feedback from {}; only a person removes it", f.source))),
             (Some(me), FindingKind::Judgement) if f.source != *me => {
                 return Err(bad(cmd, format!("`id`: {id} is a judgement by {}; only they or the user remove it", f.source)));
@@ -353,26 +436,49 @@ fn remove(s: &mut Session, p: &Value) -> Result<Value> {
 /// What running a stored check's rule again gave.
 enum Rerun {
     Passed(String),
-    Failed(String),
+    /// Still there: what is measured now, and the subject the result names when the stored
+    /// finding (from before subjects existed) has none yet.
+    Failed(String, Option<String>),
     /// The rule isn't one this version runs.
     NoRule,
 }
 
-/// Run the rule of stored check `f` again on its layers (a check of the context itself, which
-/// names none, on the page).
-fn rerun(doc: &Document, page: NodeId, f: &Finding) -> Rerun {
+/// Run the rule of stored check `f` again where it would report the finding again: on the
+/// finding's layers, or for a finding with a subject on the page that subject is on (see
+/// [`subject_where`]; `page`, the session's, when the subject isn't a place).
+fn rerun(facts: &Facts<'_>, page: NodeId, f: &Finding) -> Rerun {
+    let doc = facts.doc;
     let live: Vec<NodeId> = f.nodes.iter().copied().filter(|n| doc.contains(*n)).collect();
-    if !f.nodes.is_empty() && live.is_empty() {
-        return Rerun::Passed("the layer no longer exists".into());
+    let legacy = f.subject.is_empty();
+    let (pages, layers): (Vec<NodeId>, &[NodeId]) = if legacy {
+        // The layers are what the finding is about.
+        if !f.nodes.is_empty() && live.is_empty() {
+            return Rerun::Passed("the layer no longer exists".into());
+        }
+        (vec![live.first().and_then(|n| doc.page_of(*n)).unwrap_or(page)], &live)
+    } else {
+        match subject_where(doc, &f.subject) {
+            Where::Page(on) => (vec![on], &[]),
+            Where::Gone(why) => return Rerun::Passed(why),
+            Where::EveryPage => (doc.pages.clone(), &[]),
+            Where::Anywhere => (vec![page], &[]),
+        }
+    };
+    let same = |r: &Found| {
+        same_problem(f, r)
+            // Layers of the finding that are gone can't be reported again: what is left counts.
+            || (legacy && r.subject.is_empty() && !live.is_empty() && r.nodes == live)
+            // Stored before the rule named the page as its subject: the rule still reporting
+            // the page is the finding still being there, whichever frame it points at now.
+            || (legacy && r.subject.starts_with("page:"))
+    };
+    for on in pages {
+        let Some((found, unsettled)) = run_rule(facts, &f.rule, Scope { page: on, layers }) else { return Rerun::NoRule };
+        if let Some(r) = found.iter().chain(&unsettled).find(|r| same(r)) {
+            return Rerun::Failed(r.evidence.clone(), (legacy && !r.subject.is_empty()).then(|| r.subject.clone()));
+        }
     }
-    let scope = if f.nodes.is_empty() { page_scope(doc, page) } else { live.clone() };
-    let Some(found) = run_rule(doc, &f.rule, &scope) else { return Rerun::NoRule };
-    // Layers of the finding that are gone can't be reported again: what is left of them counts.
-    let still = found.iter().find(|r| same_problem(f, r) || (!live.is_empty() && r.rule == f.rule && r.nodes == live));
-    match still {
-        Some(r) => Rerun::Failed(r.evidence.clone()),
-        None => Rerun::Passed(format!("`{}` no longer reports it", f.rule)),
-    }
+    Rerun::Passed(format!("`{}` no longer reports it", f.rule))
 }
 
 fn recheck(s: &mut Session, p: &Value) -> Result<Value> {
@@ -386,15 +492,23 @@ fn recheck(s: &mut Session, p: &Value) -> Result<Value> {
                 return Err(bad(cmd, format!("`id`: only checks can be re-run; use design.finding.verify ({id} isn't a check)")));
             }
         }
+        // One set of facts for the whole call: the played copy, each page's flow graph and the
+        // runs of its scenarios are worked out once, however many findings read them.
+        let facts = Facts::new(doc);
         let mut results = Vec::new();
         let wanted = |f: &Finding| match &only {
             Some(id) => f.id == *id,
             None => f.kind == FindingKind::Check && f.status != FindingStatus::Accepted,
         };
         for f in ctx.findings.iter_mut().filter(|f| wanted(f)) {
-            let (passed, detail) = match rerun(doc, page, f) {
+            let (passed, detail) = match rerun(&facts, page, f) {
                 Rerun::Passed(detail) => (true, detail),
-                Rerun::Failed(detail) => (false, detail),
+                Rerun::Failed(detail, subject) => {
+                    if let Some(subject) = subject {
+                        f.subject = subject;
+                    }
+                    (false, detail)
+                }
                 Rerun::NoRule if only.is_some() => return Err(bad(cmd, format!("`id`: {}'s rule `{}` isn't one this version checks", f.id, f.rule))),
                 Rerun::NoRule => {
                     results.push(json!({"id": f.id, "passed": null, "detail": format!("rule `{}` isn't one this version checks: not re-run", f.rule), "status": f.status}));

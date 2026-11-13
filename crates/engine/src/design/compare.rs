@@ -273,9 +273,9 @@ impl Difference {
         };
         let reworked = d.structure || d.order || d.content || d.actions || d.size;
         let (layout, paint) = (d.layout == Some(true), d.paint == Some(true));
-        // A change of type moves the layers around it by itself, so only without one does a
-        // difference in geometry show that something was rearranged.
-        d.paint_only = paint && !reworked && (fonts || !layout);
+        // Paint only means nothing else differs: a change of type that moves or resizes layers
+        // can't be told from a rearrangement that came with it, so it isn't called a restyle.
+        d.paint_only = paint && !reworked && !layout;
         d.identical = !(reworked || layout || paint);
         d
     }

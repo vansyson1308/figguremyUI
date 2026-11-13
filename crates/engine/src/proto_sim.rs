@@ -35,6 +35,33 @@
 //! - **The player's own keys** (R to restart, the arrows stepping through frames) are not part of
 //!   the prototype: a key no interaction uses does nothing here.
 //! - **Widgets** are not clicked.
+//!
+//! Where the two are known to give different answers for the same file:
+//!
+//! - **A mouse up that does something takes the click.** In the player, releasing the pointer
+//!   fires "mouse up" first, and when that did something the "on click" of the same press isn't
+//!   fired. Here a click step fires "on click" whatever a "mouse up" on the layer would do
+//!   (each gesture is one trigger).
+//! - **A scroll-to that can't scroll.** The player counts a "scroll to" as having done nothing
+//!   when no frame around its layer can scroll there, so a click whose only action is such a
+//!   scroll falls through to whatever is under it. Here a "scroll to" a layer that shows counts as
+//!   fired: scroll positions aren't known.
+//! - **"Change to" something that isn't a component.** The player points the instance at the
+//!   layer all the same, leaving it without a main component. Here the action is refused and
+//!   reported as a problem.
+//! - **A delay that fires while hovering.** In the player an "after delay" that fires while a
+//!   "while hovering" change is in effect runs on top of that change and keeps it. Here every
+//!   step, a wait included, first ends the hover or press of the step before.
+//! - **Restart.** The player's restart forgets which frame each section showed last and starts
+//!   from the file as the editor has it. There is no step for it: a run that needs a fresh start
+//!   is a new [`Sim`].
+//!
+//! Layers that exist only after a "change to" (the layers of the variant an instance comes to
+//! show) get their ids when the simulator's copy is changed, so a stored scenario can't name
+//! them: name the instance, and say what it must show with `expect.variants`.
+//!
+//! `raise_fixed`, `relayout` and `settle` repeat what the player does to its own copy (`ui-egui`'s
+//! `present`); the two are kept in step by hand until the player calls one shared implementation.
 
 use std::collections::{HashMap, HashSet};
 

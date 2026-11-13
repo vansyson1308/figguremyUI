@@ -2,7 +2,7 @@
 //! expected and what is there instead, naming layers by name and id.
 
 use figcraft_doc::design::{Expect, TextExpect, VariantExpect};
-use figcraft_doc::{NodeId, NodeKind, VariableValue};
+use figcraft_doc::{NodeId, NodeKind, VariableType, VariableValue};
 use serde_json::Value;
 
 use super::state::is_end_state;
@@ -59,6 +59,23 @@ fn same(a: &VariableValue, b: &VariableValue) -> bool {
     }
 }
 
+/// An expected value as a value of a `kind` variable. Stricter than what an action may write
+/// ([`crate::proto_run::literal`] reads any text but "true" as false): a boolean is expected as
+/// `true` or `false` (or those words), so a mistyped expectation fails instead of passing as
+/// `false`.
+fn expected(kind: VariableType, want: &Value) -> Option<VariableValue> {
+    match (kind, want) {
+        (VariableType::Boolean, Value::Bool(b)) => Some(VariableValue::Boolean(*b)),
+        (VariableType::Boolean, Value::String(s)) => match s.trim() {
+            "true" => Some(VariableValue::Boolean(true)),
+            "false" => Some(VariableValue::Boolean(false)),
+            _ => None,
+        },
+        (VariableType::Boolean, _) => None,
+        _ => crate::proto_run::literal(kind, want),
+    }
+}
+
 fn variable(sim: &Sim, key: &str, want: &Value) -> Option<String> {
     let doc = &sim.design;
     let shown = figcraft_format::clip(&want.to_string(), 80);
@@ -67,8 +84,8 @@ fn variable(sim: &Sim, key: &str, want: &Value) -> Option<String> {
         Err(why) => return Some(format!("expected `{key}` to be {shown}, but {why}")),
     };
     let name = full_name(doc, v);
-    let Some(want) = crate::proto_run::literal(v.kind, want) else {
-        return Some(format!("expected `{name}` to be {shown}, but that isn't a {} value, which the variable holds", v.kind.id()));
+    let Some(want) = expected(v.kind, want) else {
+        return Some(format!("expected `{name}` to be {shown}, but the expected value isn't a {} value, which the variable holds", v.kind.id()));
     };
     match value_on(doc, v, sim.screen) {
         Some(is) if same(&is, &want) => None,

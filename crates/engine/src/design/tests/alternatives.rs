@@ -296,14 +296,32 @@ fn compare_reports_facts_about_each_member() {
 }
 
 #[test]
+fn a_change_of_type_that_moves_layers_isnt_called_paint_only() {
+    let mut s = Session::new();
+    let sc = screen(&mut s);
+    let big = alternative(&mut s, sc.home, "Big type");
+    // A bigger title is a change of paint (fonts) that also changes the title's box: whether
+    // anything else was rearranged with it can't be told, so it isn't flagged as a mere restyle.
+    set_twin(&mut s, [sc.home, big, sc.title], json!({"fontSize": 40}));
+    let r = compared(&mut s);
+    let d = &r["differences"][0];
+    assert_eq!(
+        (d["paint"].as_bool(), d["layout"].as_bool(), d["paintOnly"].as_bool(), d["identical"].as_bool()),
+        (Some(true), Some(true), Some(false), Some(false)),
+        "{d}"
+    );
+    assert_eq!(strings(&r["warnings"]), Vec::<String>::new());
+}
+
+#[test]
 fn a_recoloured_copy_is_flagged_as_a_restyle_and_a_reworked_one_is_not() {
     let mut s = Session::new();
     let sc = screen(&mut s);
     let recoloured = alternative(&mut s, sc.home, "Dark");
     let reworked = alternative(&mut s, sc.home, "Short");
-    // Dark: new fills, a new font size and a shadow; the same layers, words and actions.
+    // Dark: new fills and a stroke; the same layers, words, actions and places.
     ex(&mut s, "node.set", json!({"id": recoloured, "props": {"fill": "#111111"}}));
-    set_twin(&mut s, [sc.home, recoloured, sc.title], json!({"fill": "#FFFFFF", "fontSize": 28}));
+    set_twin(&mut s, [sc.home, recoloured, sc.title], json!({"fill": "#FFFFFF"}));
     set_twin(&mut s, [sc.home, recoloured, sc.button], json!({"fill": "#FFD60A", "strokes": ["#000000"], "strokeWeight": 2}));
     // Short: the body text is gone and a second action is added.
     let body = twin(&s, sc.home, reworked, sc.body);

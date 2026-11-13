@@ -237,7 +237,7 @@ pub(super) fn toggle(s: &mut Session, dest: NodeId) -> (NodeId, [NodeId; 2]) {
 }
 
 #[test]
-fn change_to_must_name_a_variant_the_instance_could_show() {
+fn change_to_is_broken_only_where_the_player_would_change_nothing() {
     let mut s = Session::new();
     let (a, b) = (frame(&mut s, "A", 0.0), frame(&mut s, "B", 400.0));
     let (set, [off, on]) = toggle(&mut s, b);
@@ -252,10 +252,17 @@ fn change_to_must_name_a_variant_the_instance_could_show() {
     let doc = s.doc().unwrap().clone();
     assert!(broken(&doc, instance, vec![Action::ChangeTo { dest: on }]).is_empty(), "on the instance itself");
     assert!(broken(&doc, off, vec![Action::ChangeTo { dest: on }]).is_empty(), "on the variant, which instances play");
+    // The player changes the instance at or around the layer to whatever component is named
+    // (`proto_run::change_to_target` falls back to the innermost instance): a component from
+    // another set is a swap it performs, so it isn't reported as broken.
+    assert_eq!(crate::proto_run::change_to_target(&doc, instance, lone), Some(instance));
+    assert!(broken(&doc, instance, vec![Action::ChangeTo { dest: lone }]).is_empty(), "a swap to a component outside the set");
+    assert!(broken(&doc, off, vec![Action::ChangeTo { dest: lone }]).is_empty(), "kept on a main component: its instances are what changes");
+    // Nothing to change, or nothing to change to.
     let why = broken(&doc, plain, vec![Action::ChangeTo { dest: on }]);
-    assert!(why.len() == 1 && why[0].contains("no instance of"), "nothing around it shows the set: {why:?}");
-    let why = broken(&doc, instance, vec![Action::ChangeTo { dest: lone }]);
-    assert!(why.len() == 1 && why[0].contains("isn't a variant of a component set"), "{why:?}");
+    assert!(why.len() == 1 && why[0].contains(&format!("there is no instance at or around `Plain` ({plain}) to change")), "{why:?}");
+    let why = broken(&doc, instance, vec![Action::ChangeTo { dest: b }]);
+    assert!(why.len() == 1 && why[0].contains("isn't a component"), "{why:?}");
 }
 
 #[test]
@@ -397,4 +404,238 @@ fn the_rules_are_listed_for_design_check_and_follow_its_scope() {
         assert_eq!(got.len(), usize::from(finds), "{scope:?}");
         assert!(got.iter().all(|f| f.rule == "flow.deadEnd" && f.nodes == [b]));
     }
+}
+
+/// A button component set "Button" (Rest, Hover) above everything else on the page, so that it is
+/// the page's first frame in reading order: Rest changes to Hover while hovering. Returns the
+/// set and the Rest variant.
+fn hover_button(s: &mut Session) -> (NodeId, NodeId) {
+    let mut variants = Vec::new();
+    for (k, state) in ["Rest", "Hover"].iter().enumerate() {
+        let f = idv(&ex(s, "frame.create", json!({"x": k as f64 * 150.0, "y": -900, "width": 100, "height": 40, "name": format!("State={state}")})));
+        variants.push(idv(&ex(s, "component.create", json!({"ids": [f]}))));
+    }
+    let set = idv(&ex(s, "component.combineVariants", json!({"ids": variants.clone()})));
+    ex(s, "proto.interaction.add", json!({"id": variants[0], "trigger": {"type": "onHover"}, "action": {"type": "changeTo", "dest": variants[1]}}));
+    (set, variants[0])
+}
+
+fn severities(v: &Value) -> Vec<&str> {
+    v["problems"].as_array().unwrap().iter().map(|p| p["severity"].as_str().unwrap()).collect()
+}
+
+#[test]
+fn a_page_of_screens_with_only_a_hover_state_on_a_button_isnt_a_prototype() {
+    let mut s = Session::new();
+    let frames = [frame(&mut s, "A", 0.0), frame(&mut s, "B", 400.0), frame(&mut s, "C", 800.0)];
+    assert_eq!(check(&mut s)["problems"], json!([]), "three static frames");
+    let (set, _) = hover_button(&mut s);
+    for f in frames {
+        ex(&mut s, "instance.create", json!({"component": set, "x": 20, "y": 20, "parent": f}));
+    }
+    let v = check(&mut s);
+    assert_eq!((&v["problems"], &v["ok"], &v["prototyped"]), (&json!([]), &json!(true), &json!(false)), "a hover state links no screens: {v}");
+    assert_eq!(screen(&v, set)["component"], json!(true));
+    // The same through design.check, whatever the stage.
+    ex(&mut s, "design.stage.set", json!({"stage": "ready"}));
+    let rules = ["flow.brokenTarget", "flow.deadEnd", "flow.trappedOverlay", "flow.unreachable", "flow.noStart", "scenario.fails", "scenario.none"];
+    assert_eq!(ex(&mut s, "design.check", json!({"rules": rules}))["findings"], json!([]));
+    // Once a screen links to another it is a prototype: it starts on the first screen, not on
+    // the component set above it, and the component set is neither a dead end nor unreachable.
+    button(&mut s, "Go", frames[0], 200.0, navigate(frames[1]));
+    let v = check(&mut s);
+    assert_eq!(v["prototyped"], json!(true));
+    assert_eq!(v["starts"], json!([{"frame": frames[0], "name": "A", "source": "firstFrame", "flow": null}]));
+    assert_eq!(problems(&v, "flow.noStart")[0]["nodes"], json!([frames[0]]));
+    let dead: Vec<Value> = problems(&v, "flow.deadEnd").iter().map(|p| p["nodes"].clone()).collect();
+    assert_eq!(dead, [json!([frames[1]])], "B, which the flow reaches and can't leave: {v}");
+    let unreachable: Vec<Value> = problems(&v, "flow.unreachable").iter().map(|p| p["nodes"].clone()).collect();
+    assert_eq!(unreachable, [json!([frames[2]])], "C; not the component set: {v}");
+    assert_eq!((&screen(&v, set)["deadEnd"], &screen(&v, set)["reachable"]), (&json!(false), &json!(false)));
+}
+
+#[test]
+fn a_single_screen_that_toggles_and_sets_a_variable_has_no_dead_end() {
+    let mut s = Session::new();
+    let a = frame(&mut s, "A", 0.0);
+    state_variables(&mut s);
+    let (set, _) = toggle(&mut s, a);
+    ex(&mut s, "instance.create", json!({"component": set, "x": 20, "y": 20, "parent": a}));
+    button(&mut s, "More", a, 200.0, json!({"type": "setVariable", "variable": "count", "value": 1}));
+    let v = check(&mut s);
+    assert!(severities(&v).iter().all(|sev| !matches!(*sev, "blocker" | "major")), "{v}");
+    assert_eq!(v["ok"], json!(true));
+    // Declaring where it starts doesn't make its only screen a dead end, nor does a "back".
+    flow(&mut s, a);
+    button(&mut s, "Back", a, 300.0, json!({"type": "back"}));
+    let v = check(&mut s);
+    assert!(problems(&v, "flow.deadEnd").is_empty() && v["ok"] == json!(true), "there is no other screen to get to: {v}");
+    assert_eq!(screen(&v, a)["deadEnd"], json!(false));
+    // A second screen makes the question real: A can't leave (its "back" has nowhere to go).
+    frame(&mut s, "B", 400.0);
+    let v = check(&mut s);
+    assert_eq!(problems(&v, "flow.deadEnd").len(), 1, "{v}");
+    // A start with a second screen but no action that moves between screens isn't one either.
+    let mut s = Session::new();
+    let a = frame(&mut s, "A", 0.0);
+    frame(&mut s, "B", 400.0);
+    flow(&mut s, a);
+    assert!(problems(&check(&mut s), "flow.deadEnd").is_empty(), "nobody linked the screens yet");
+}
+
+#[test]
+fn frames_another_pages_flow_leads_to_are_reached_and_can_go_back() {
+    let mut s = Session::new();
+    let first = s.page().unwrap();
+    let home = frame(&mut s, "Home", 0.0);
+    let second = idv(&ex(&mut s, "page.add", json!({})));
+    let detail = frame(&mut s, "Detail", 0.0);
+    let extra = frame(&mut s, "Extra", 400.0);
+    button(&mut s, "Back", detail, 20.0, json!({"type": "back"}));
+    ex(&mut s, "page.select", json!({"id": first}));
+    button(&mut s, "Open", home, 20.0, navigate(detail));
+    flow(&mut s, home);
+    // Checked on its own page, Detail is where a viewer arrives from the first page: it is
+    // reached, its "back" leads somewhere, and the page needs no flow start of its own.
+    let v = ex(&mut s, "proto.check", json!({"page": second}));
+    assert_eq!(v["starts"], json!([{"frame": detail, "name": "Detail", "source": "otherPage", "flow": null}]));
+    assert_eq!((&screen(&v, detail)["reachable"], &screen(&v, detail)["deadEnd"]), (&json!(true), &json!(false)), "{v}");
+    assert!(severities(&v).iter().all(|sev| !matches!(*sev, "blocker" | "major")), "{v}");
+    assert!(problems(&v, "flow.noStart").is_empty(), "{v}");
+    assert_eq!(problems(&v, "flow.unreachable").iter().map(|p| p["nodes"].clone()).collect::<Vec<_>>(), [json!([extra])]);
+    assert_eq!(v["ok"], json!(true));
+    // Without a way back the viewer who came from the first page is stuck there.
+    ex(&mut s, "page.select", json!({"id": second}));
+    let inside = s.doc().unwrap().node(detail).unwrap().children.clone();
+    ex(&mut s, "proto.interaction.clear", json!({"ids": inside}));
+    let v = check(&mut s);
+    assert_eq!(problems(&v, "flow.deadEnd").iter().map(|p| p["nodes"].clone()).collect::<Vec<_>>(), [json!([detail])], "{v}");
+}
+
+#[test]
+fn a_broken_action_an_instance_plays_from_a_main_on_another_page_is_found_once_on_the_instances_page() {
+    let mut s = Session::new();
+    let first = s.page().unwrap();
+    let home = frame(&mut s, "Home", 0.0);
+    let gone = frame(&mut s, "Gone", 400.0);
+    let components = idv(&ex(&mut s, "page.add", json!({"name": "Components"})));
+    let card = idv(&ex(&mut s, "frame.create", json!({"x": 0, "y": 0, "width": 100, "height": 40, "name": "Card"})));
+    let main = idv(&ex(&mut s, "component.create", json!({"ids": [card]})));
+    ex(&mut s, "proto.interaction.add", json!({"id": main, "dest": gone}));
+    ex(&mut s, "page.select", json!({"id": first}));
+    let one = idv(&ex(&mut s, "instance.create", json!({"component": main, "x": 20, "y": 20, "parent": home})));
+    ex(&mut s, "instance.create", json!({"component": main, "x": 20, "y": 120, "parent": home}));
+    flow(&mut s, home);
+    assert!(s.doc().unwrap().node(one).unwrap().interactions.is_empty(), "the instance holds no interaction of its own");
+    assert!(problems(&check(&mut s), "flow.brokenTarget").is_empty());
+    ex(&mut s, "edit.delete", json!({"ids": [gone]}));
+    // The instances play the component's click, which now leads nowhere: a blocker on this
+    // page, reported once for the component's action however many instances play it.
+    let v = check(&mut s);
+    let broken = problems(&v, "flow.brokenTarget");
+    assert_eq!(broken.len(), 1, "{v}");
+    assert_eq!((&broken[0]["severity"], &broken[0]["nodes"], &v["ok"]), (&json!("blocker"), &json!([main, one]), &json!(false)));
+    assert_eq!(broken[0]["subject"], json!(format!("action:{main}:0:0")));
+    assert_eq!(
+        broken[0]["evidence"],
+        json!(format!("`Card` ({main}), On click → Navigate to: layer {gone} doesn't exist; played by instance layer `Card` ({one})"))
+    );
+    // The edge is a fact of the screen all the same, without a target.
+    assert!(
+        screen(&v, home)["out"].as_array().unwrap().iter().any(|e| e["from"] == json!(one) && e["action"] == "navigate" && e.get("to").is_none())
+    );
+    // The page that holds the component reports the same problem, under the same subject.
+    let v = ex(&mut s, "proto.check", json!({"page": components}));
+    let there = problems(&v, "flow.brokenTarget");
+    assert_eq!(there.len(), 1, "{v}");
+    assert_eq!((&there[0]["subject"], &there[0]["nodes"]), (&broken[0]["subject"], &json!([main])));
+    // With the component on the same page as its instances it is one finding all the same,
+    // named by the component's layer with the first instance that plays it.
+    let mut same = Session::new();
+    let (home2, gone2) = (frame(&mut same, "Home", 0.0), frame(&mut same, "Gone", 400.0));
+    let chip = idv(&ex(&mut same, "frame.create", json!({"x": 0, "y": -600, "width": 100, "height": 40, "name": "Chip"})));
+    let chip = idv(&ex(&mut same, "component.create", json!({"ids": [chip]})));
+    ex(&mut same, "proto.interaction.add", json!({"id": chip, "dest": gone2}));
+    let placed = idv(&ex(&mut same, "instance.create", json!({"component": chip, "x": 20, "y": 20, "parent": home2})));
+    ex(&mut same, "instance.create", json!({"component": chip, "x": 20, "y": 120, "parent": home2}));
+    ex(&mut same, "edit.delete", json!({"ids": [gone2]}));
+    let here = problems(&check(&mut same), "flow.brokenTarget");
+    assert_eq!(here.len(), 1, "{here:?}");
+    assert_eq!((&here[0]["nodes"], &here[0]["subject"]), (&json!([chip, placed]), &json!(format!("action:{chip}:0:0"))));
+    assert!(here[0]["evidence"].as_str().unwrap().ends_with(&format!("; played by instance layer `Chip` ({placed})")), "{here:?}");
+    // design.check on the instances' page finds it too, also scoped to the frame that holds them.
+    for params in [json!({}), json!({"scope": [home]})] {
+        let r = ex(&mut s, "design.check", params);
+        assert_eq!(r["findings"].as_array().unwrap().iter().filter(|f| f["rule"] == "flow.brokenTarget").count(), 1, "{r}");
+    }
+}
+
+#[test]
+fn a_broken_action_in_a_variant_on_another_page_is_found_through_the_instance_that_can_change_to_it() {
+    let mut s = Session::new();
+    let first = s.page().unwrap();
+    let home = frame(&mut s, "Home", 0.0);
+    let gone = frame(&mut s, "Gone", 400.0);
+    ex(&mut s, "page.add", json!({}));
+    // Off changes to On on click; On navigates to Gone.
+    let (set, [_, on]) = toggle(&mut s, gone);
+    ex(&mut s, "page.select", json!({"id": first}));
+    let instance = idv(&ex(&mut s, "instance.create", json!({"component": set, "x": 20, "y": 20, "parent": home})));
+    flow(&mut s, home);
+    ex(&mut s, "edit.delete", json!({"ids": [gone]}));
+    let v = check(&mut s);
+    let broken = problems(&v, "flow.brokenTarget");
+    assert_eq!(broken.len(), 1, "{v}");
+    assert_eq!(broken[0]["nodes"], json!([on, instance]), "the variant's layer, and the instance on this page that leads to it");
+    let evidence = broken[0]["evidence"].as_str().unwrap();
+    let name = s.doc().unwrap().node(instance).unwrap().name.clone();
+    assert!(
+        evidence.contains(&format!("Navigate to: layer {gone} doesn't exist"))
+            && evidence.ends_with(&format!("; `{name}` ({instance}) can be changed to the variant that holds it")),
+        "{evidence}"
+    );
+}
+
+#[test]
+fn an_overlay_swapped_in_for_one_that_stays_open_is_a_trap_too() {
+    // Open shows A, which stays on a click outside; A's only action swaps it for B.
+    let build = |in_b: Option<Value>| {
+        let mut s = Session::new();
+        let (home, a, b) = (frame(&mut s, "Home", 0.0), frame(&mut s, "A", 400.0), frame(&mut s, "B", 800.0));
+        let opener = button(&mut s, "Open", home, 20.0, json!({"type": "openOverlay", "dest": a, "closeOnOutside": false}));
+        button(&mut s, "More", a, 20.0, json!({"type": "swapOverlay", "dest": b}));
+        if let Some(action) = in_b {
+            button(&mut s, "Item", b, 20.0, action);
+        }
+        flow(&mut s, home);
+        (check(&mut s), a, b, opener)
+    };
+    let (v, a, b, opener) = build(None);
+    let trapped = problems(&v, "flow.trappedOverlay");
+    assert_eq!(trapped.len(), 1, "B, where the viewer ends up; A still offers the swap: {v}");
+    assert_eq!((&trapped[0]["nodes"], &trapped[0]["subject"], &v["ok"]), (&json!([b, opener]), &json!(format!("overlay:{b}")), &json!(false)));
+    let evidence = trapped[0]["evidence"].as_str().unwrap();
+    assert!(
+        evidence.contains(&format!("`Open` ({opener}) opens overlay `A` ({a}) with close-on-outside-click off"))
+            && evidence.contains(&format!("a swap overlay leads from there to `B` ({b}), kept open the same way")),
+        "{evidence}"
+    );
+    // A way out of B is a way out of the slot; a link isn't.
+    for closer in [json!({"type": "closeOverlay"}), json!({"type": "back"})] {
+        assert!(problems(&build(Some(closer.clone())).0, "flow.trappedOverlay").is_empty(), "{closer}");
+    }
+    assert_eq!(problems(&build(Some(json!({"type": "openUrl", "url": "https://example.com"}))).0, "flow.trappedOverlay").len(), 1);
+    // Swapping back and forth without a way out traps the viewer in both; a swap to an overlay
+    // that can be closed doesn't.
+    let mut s = Session::new();
+    let (home, a2, b2) = (frame(&mut s, "Home", 0.0), frame(&mut s, "A", 400.0), frame(&mut s, "B", 800.0));
+    button(&mut s, "Open", home, 20.0, json!({"type": "openOverlay", "dest": a2, "closeOnOutside": false}));
+    button(&mut s, "More", a2, 20.0, json!({"type": "swapOverlay", "dest": b2}));
+    let less = button(&mut s, "Less", b2, 20.0, json!({"type": "swapOverlay", "dest": a2}));
+    flow(&mut s, home);
+    let v = check(&mut s);
+    let both: Vec<Value> = problems(&v, "flow.trappedOverlay").iter().map(|p| p["subject"].clone()).collect();
+    assert_eq!(both, [json!(format!("overlay:{a2}")), json!(format!("overlay:{b2}"))], "{v}");
+    ex(&mut s, "proto.interaction.add", json!({"id": less, "trigger": {"type": "onHover"}, "action": {"type": "closeOverlay"}}));
+    assert!(problems(&check(&mut s), "flow.trappedOverlay").is_empty());
 }

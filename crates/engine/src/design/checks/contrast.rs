@@ -5,8 +5,13 @@
 //! faded as a whole by its layer opacity, down to the page colour. Anything that makes the
 //! colour behind the text depend on where you look (a gradient, an image, another layer
 //! overlapping the text) or that this arithmetic doesn't cover (blend modes, masks) is reported
-//! as unmeasured rather than guessed. Known limits: effects (shadows, blurs), strokes on text,
-//! rounded corners and rotation of what is behind the text are not taken into account.
+//! as unmeasured rather than guessed, and so is text that has no fill and is drawn by its stroke
+//! alone. Known limits: effects (shadows, blurs), a stroke on text that also has a fill, rounded
+//! corners and rotation of what is behind the text are not taken into account.
+//!
+//! A stored `contrast.text` finding is settled only by a measurement that passes: text that
+//! failed and can no longer be measured (its backdrop became a gradient, something was put in
+//! front of it) keeps the finding open ([`no_longer_measured`]).
 
 use figcraft_color::{BlendMode, Color, Paint, PaintKind};
 use figcraft_doc::design::Severity;
@@ -306,13 +311,18 @@ fn read(doc: &Document, n: &Node) -> Option<Reading> {
         return Some(Reading::Unmeasured("the text has more differently styled stretches than are measured".into()));
     }
     let (mut worst, mut unsure): (Option<Sample>, Option<String>) = (None, None);
+    // Whether any stretch was measured, and whether one had no fill to measure.
+    let (mut measured, mut unfilled) = (false, false);
     for (start, end, style) in spans {
         if t.characters.chars().skip(start).take(end.saturating_sub(start)).all(char::is_whitespace) {
             continue;
         }
         let ink = match flat(style.fills.as_deref().unwrap_or(&n.fills)) {
             Ok(ink) if ink.alpha() > 0.0 => ink.faded(f64::from(n.opacity)),
-            Ok(_) => continue,
+            Ok(_) => {
+                unfilled = true;
+                continue;
+            }
             Err(why) => {
                 unsure = Some(format!("the text has {why}"));
                 continue;
@@ -324,6 +334,7 @@ fn read(doc: &Document, n: &Node) -> Option<Reading> {
         let text = behind.seen(ink);
         let name = style.font_style.trim().to_lowercase();
         let style = if name.is_empty() { format!("weight {}", style.weight()) } else { name };
+        measured = true;
         let sample = Sample { ratio: ratio(text, on), need, text, on, size, style };
         if sample.ratio < need && worst.as_ref().is_none_or(|w| sample.ratio / need < w.ratio / w.need) {
             worst = Some(sample);
@@ -332,6 +343,11 @@ fn read(doc: &Document, n: &Node) -> Option<Reading> {
     Some(match (worst, unsure) {
         (Some(sample), _) => Reading::Fails(sample),
         (None, Some(why)) => Reading::Unmeasured(why),
+        // Text without a fill that a stroke draws all the same is there to be read, and nothing
+        // of it was measured: that isn't a pass.
+        (None, None) if !measured && unfilled && n.has_visible_stroke() => {
+            Reading::Unmeasured("the text has no fill and is drawn by its stroke alone, which isn't measured".into())
+        }
         (None, None) => Reading::Passes,
     })
 }
@@ -348,6 +364,7 @@ pub(super) fn failing(doc: &Document, scope: &[NodeId]) -> Vec<Found> {
             rule: TEXT,
             severity: Severity::Major,
             nodes: vec![id],
+            subject: String::new(),
             message: format!("Text {} has too little contrast with what is behind it", named(doc, id)),
             evidence: sample.evidence(),
             suggestion: sample.suggestion(),
@@ -364,9 +381,28 @@ pub(super) fn unmeasured(doc: &Document, scope: &[NodeId]) -> Vec<Found> {
             rule: UNMEASURED,
             severity: Severity::Note,
             nodes: vec![id],
+            subject: String::new(),
             message: format!("The contrast of text {} wasn't measured: what is behind it isn't one certain colour", named(doc, id)),
             evidence: why,
             suggestion: "check it by eye where the background is least favourable, or put a solid fill behind the text".into(),
+        })
+    };
+    readings(doc, scope).into_iter().filter_map(found).collect()
+}
+
+/// What keeps a stored `contrast.text` finding open: texts whose contrast can't be measured now.
+/// A text that failed and can no longer be measured wasn't fixed by that.
+pub(super) fn no_longer_measured(doc: &Document, scope: &[NodeId]) -> Vec<Found> {
+    let found = |(id, reading)| {
+        let Reading::Unmeasured(why) = reading else { return None };
+        Some(Found {
+            rule: TEXT,
+            severity: Severity::Major,
+            nodes: vec![id],
+            subject: String::new(),
+            message: format!("The contrast of text {} can no longer be measured", named(doc, id)),
+            evidence: format!("not measured, so not shown to pass: {why}"),
+            suggestion: "put a solid fill behind the text and measure again, or have a person check it by eye and accept the finding".into(),
         })
     };
     readings(doc, scope).into_iter().filter_map(found).collect()

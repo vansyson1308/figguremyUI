@@ -191,3 +191,28 @@ fn actions_that_cannot_run_are_problems_that_name_them() {
     assert!(!o.fired && problem(&o).contains("conditional: nested more than"), "{o:?}");
     assert_eq!(p.screen(), a, "the player stops following conditionals that deep, and so does this");
 }
+
+#[test]
+fn an_expected_value_of_another_type_fails_instead_of_passing_as_false() {
+    let mut s = Session::new();
+    let a = frame(&mut s, "A", 0.0);
+    state_variables(&mut s);
+    let p = sim(&s, a);
+    // `open` is false. Expected as it is: passes, as a boolean or as the word.
+    assert_eq!(p.check(&expect_variables(&[("open", json!(false))])), Vec::<String>::new());
+    assert_eq!(p.check(&expect_variables(&[("open", json!("false"))])), Vec::<String>::new());
+    // Expected as something that isn't a boolean: a failure that says so, not `false == false`.
+    for wrong in [json!("banana"), json!("no"), json!(0), json!(null), json!([false])] {
+        let failures = p.check(&expect_variables(&[("open", wrong.clone())]));
+        assert_eq!(failures.len(), 1, "{wrong}: {failures:?}");
+        assert!(
+            failures[0].starts_with("expected `State/open` to be ")
+                && failures[0].ends_with("but the expected value isn't a boolean value, which the variable holds"),
+            "{failures:?}"
+        );
+    }
+    assert_eq!(p.check(&expect_variables(&[("open", json!(true))])), ["expected `State/open` to be true, but it is false"]);
+    // A number expected as a word that isn't one fails the same way.
+    let failures = p.check(&expect_variables(&[("count", json!("many"))]));
+    assert!(failures.len() == 1 && failures[0].contains("the expected value isn't a number value"), "{failures:?}");
+}

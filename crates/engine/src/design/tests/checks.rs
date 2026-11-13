@@ -794,3 +794,401 @@ fn recorded_checks_survive_save_and_reopen() {
     assert_eq!(back.design.findings[0].recheck.as_ref().map(|r| r.passed), Some(true));
     assert_eq!(back.design.stage, Stage::Ready);
 }
+
+/// The one result of `design.finding.recheck {id}` as (passed, status, detail).
+fn rechecked(s: &mut Session, id: &str) -> (bool, String, String) {
+    let r = ex(s, "design.finding.recheck", json!({"id": id}));
+    let one = &r["results"][0];
+    assert_eq!(one["id"], id, "{r}");
+    (one["passed"].as_bool().unwrap(), one["status"].as_str().unwrap().to_string(), one["detail"].as_str().unwrap().to_string())
+}
+
+/// Record what `rule` finds on the current page and give the ids added.
+fn recorded(s: &mut Session, rule: &str) -> Vec<String> {
+    super::strings(&ex(s, "design.check.record", json!({"rules": [rule]}))["added"])
+}
+
+fn click(s: &mut Session, layer: NodeId, action: Value) {
+    ex(s, "proto.interaction.add", json!({"id": layer, "trigger": {"type": "onClick"}, "action": action}));
+}
+
+fn stored(s: &Session, id: &str) -> figcraft_doc::design::Finding {
+    s.doc().unwrap().design.findings.iter().find(|f| f.id == id).unwrap_or_else(|| panic!("no finding {id}")).clone()
+}
+
+#[test]
+fn a_failing_scenario_stays_open_when_it_fails_at_another_step() {
+    let mut s = Session::new();
+    let (a, b, c) = (frame(&mut s, "A", 0.0, 300.0, 400.0), frame(&mut s, "B", 400.0, 300.0, 400.0), frame(&mut s, "C", 800.0, 300.0, 400.0));
+    let next = rect(&mut s, a, [20.0, 20.0, 100.0, 40.0], json!({"name": "Next"}));
+    let more = rect(&mut s, b, [20.0, 20.0, 100.0, 40.0], json!({"name": "More"}));
+    click(&mut s, next, json!({"type": "navigate", "dest": b}));
+    click(&mut s, more, json!({"type": "navigate", "dest": c}));
+    ex(&mut s, "proto.flow.add", json!({"start": a}));
+    // The first step expects the wrong screen, and so does the second.
+    let steps = |first: NodeId, second: NodeId| json!([{"click": next, "expect": {"screen": first}}, {"click": more, "expect": {"screen": second}}]);
+    ex(&mut s, "proto.scenario.add", json!({"name": "Walk", "start": a, "steps": steps(c, a)}));
+    assert_eq!(recorded(&mut s, "scenario.fails"), ["F1"]);
+    let f = stored(&s, "F1");
+    assert_eq!(
+        (f.subject.as_str(), f.nodes.clone()),
+        ("scenario:S1", vec![next, a]),
+        "the scenario is what it is about; the layers say where to look"
+    );
+    assert!(f.evidence.starts_with("steps[0] (click on `Next`"), "{}", f.evidence);
+    // The first step is put right: the scenario now fails at the second, on another layer.
+    ex(&mut s, "proto.scenario.set", json!({"id": "S1", "steps": steps(b, a)}));
+    let (passed, status, detail) = rechecked(&mut s, "F1");
+    assert!(!passed && status == "open", "S1 still fails: {detail}");
+    assert!(detail.starts_with("steps[1] (click on `More`"), "the evidence is the step that fails now: {detail}");
+    assert_eq!(
+        ex(&mut s, "design.check.record", json!({"rules": ["scenario.fails"]}))["existing"],
+        json!(["F1"]),
+        "and it isn't stored a second time"
+    );
+    // Put right altogether, it is verified.
+    ex(&mut s, "proto.scenario.set", json!({"id": "S1", "steps": steps(b, c)}));
+    let (passed, status, detail) = rechecked(&mut s, "F1");
+    assert!(passed && status == "verified" && detail == "`scenario.fails` no longer reports it", "{detail}");
+    // A finding about a scenario that was removed has nothing left to fail.
+    ex(&mut s, "proto.scenario.add", json!({"name": "Other", "start": a, "steps": steps(c, c)}));
+    assert_eq!(recorded(&mut s, "scenario.fails"), ["F2"]);
+    ex(&mut s, "proto.scenario.remove", json!({"id": "S2"}));
+    assert_eq!(rechecked(&mut s, "F2"), (true, "verified".into(), "scenario S2 no longer exists".into()));
+}
+
+#[test]
+fn screens_no_scenario_shows_stay_open_until_every_one_is_shown() {
+    let mut s = Session::new();
+    let a = frame(&mut s, "A", 0.0, 300.0, 400.0);
+    let mut links = Vec::new();
+    for (k, name) in ["B", "C", "D"].iter().enumerate() {
+        let to = frame(&mut s, name, 400.0 * (k as f64 + 1.0), 300.0, 400.0);
+        let link = rect(&mut s, a, [20.0, 20.0 + 60.0 * k as f64, 100.0, 40.0], json!({"name": format!("To {name}")}));
+        click(&mut s, link, json!({"type": "navigate", "dest": to}));
+        ex(&mut s, "proto.endState.set", json!({"id": to}));
+        links.push((link, to));
+    }
+    ex(&mut s, "proto.flow.add", json!({"start": a}));
+    ex(&mut s, "proto.scenario.add", json!({"name": "Start", "start": a, "steps": []}));
+    assert_eq!(recorded(&mut s, "scenario.unvisited"), ["F1"]);
+    let page = s.page().unwrap();
+    let f = stored(&s, "F1");
+    assert_eq!((f.subject, f.nodes.len()), (format!("page:{page}"), 3));
+    // One of the three is shown now: two are left, so the finding isn't settled.
+    ex(&mut s, "proto.scenario.set", json!({"id": "S1", "steps": [{"click": links[0].0}]}));
+    let (passed, status, detail) = rechecked(&mut s, "F1");
+    assert!(!passed && status == "open", "{detail}");
+    assert_eq!(detail, format!("`C` ({}), `D` ({})", links[1].1, links[2].1));
+    for (link, _) in &links[1..] {
+        ex(&mut s, "proto.scenario.add", json!({"name": "Another", "start": a, "steps": [{"click": link}]}));
+    }
+    assert_eq!(rechecked(&mut s, "F1"), (true, "verified".into(), "`scenario.unvisited` no longer reports it".into()));
+}
+
+#[test]
+fn a_trapped_overlay_stays_open_while_any_layer_still_opens_it_that_way() {
+    let mut s = Session::new();
+    let (a, menu) = (frame(&mut s, "A", 0.0, 300.0, 400.0), frame(&mut s, "Menu", 400.0, 300.0, 400.0));
+    let open = |s: &mut Session, layer: NodeId, close_on_outside: bool| {
+        ex(s, "proto.interaction.clear", json!({"ids": [layer]}));
+        click(s, layer, json!({"type": "openOverlay", "dest": menu, "closeOnOutside": close_on_outside}));
+    };
+    let first = rect(&mut s, a, [20.0, 20.0, 100.0, 40.0], json!({"name": "First"}));
+    let second = rect(&mut s, a, [20.0, 80.0, 100.0, 40.0], json!({"name": "Second"}));
+    open(&mut s, first, false);
+    open(&mut s, second, false);
+    ex(&mut s, "proto.flow.add", json!({"start": a}));
+    assert_eq!(recorded(&mut s, "flow.trappedOverlay"), ["F1"]);
+    let f = stored(&s, "F1");
+    assert_eq!((f.subject, f.nodes), (format!("overlay:{menu}"), vec![menu, first]));
+    // The first opener lets a click outside close it; the second still traps the viewer.
+    open(&mut s, first, true);
+    let (passed, status, detail) = rechecked(&mut s, "F1");
+    assert!(!passed && status == "open", "{detail}");
+    assert!(detail.starts_with(&format!("`Second` ({second}) opens it with close-on-outside-click off")), "{detail}");
+    open(&mut s, second, true);
+    assert_eq!(rechecked(&mut s, "F1").1, "verified");
+}
+
+#[test]
+fn findings_about_the_page_arent_settled_by_reordering_or_deleting_a_frame() {
+    let mut s = Session::new();
+    let (a, b) = (frame(&mut s, "A", 0.0, 300.0, 400.0), frame(&mut s, "B", 400.0, 300.0, 400.0));
+    let go = rect(&mut s, a, [20.0, 20.0, 100.0, 40.0], json!({"name": "Go"}));
+    let back = rect(&mut s, b, [20.0, 20.0, 100.0, 40.0], json!({"name": "Back"}));
+    click(&mut s, go, json!({"type": "navigate", "dest": b}));
+    click(&mut s, back, json!({"type": "back"}));
+    let page = s.page().unwrap();
+    // No flow start: the finding is about the page, and shows the frame the player falls back to.
+    assert_eq!(recorded(&mut s, "flow.noStart"), ["F1"]);
+    assert_eq!((stored(&s, "F1").subject, stored(&s, "F1").nodes), (format!("page:{page}"), vec![a]));
+    // B moved to the front is the first frame now; there is still no flow start.
+    set(&mut s, b, json!({"x": -800}));
+    let (passed, status, detail) = rechecked(&mut s, "F1");
+    assert!(!passed && status == "open", "{detail}");
+    assert_eq!(detail, format!("the player starts at the page's first frame, `B` ({b})"));
+    // Nor does deleting the frame it showed settle it.
+    ex(&mut s, "edit.delete", json!({"ids": [a]}));
+    let (passed, status, _) = rechecked(&mut s, "F1");
+    assert!(!passed && status == "open");
+    // A flow start does.
+    ex(&mut s, "proto.flow.add", json!({"start": b}));
+    assert_eq!(rechecked(&mut s, "F1"), (true, "verified".into(), "`flow.noStart` no longer reports it".into()));
+    // "No scenario walks the flow" is about the page too: the frame the flow starts on is where
+    // to look, not what the finding is about.
+    let c = frame(&mut s, "C", 400.0, 300.0, 400.0);
+    ex(&mut s, "proto.flow.add", json!({"start": c}));
+    assert_eq!(recorded(&mut s, "scenario.none"), ["F2"]);
+    assert_eq!(stored(&s, "F2").nodes, vec![b]);
+    ex(&mut s, "edit.delete", json!({"ids": [b]}));
+    let (passed, status, detail) = rechecked(&mut s, "F2");
+    assert!(!passed && status == "open", "the page still has a flow and no scenario: {detail}");
+    assert!(detail.contains(&format!("`C` ({c})")), "{detail}");
+    ex(&mut s, "proto.scenario.add", json!({"name": "Look", "start": c, "steps": []}));
+    assert_eq!(rechecked(&mut s, "F2").1, "verified");
+}
+
+#[test]
+fn two_broken_actions_on_one_layer_are_two_findings_settled_one_by_one() {
+    let mut s = Session::new();
+    let (a, b, c) = (frame(&mut s, "A", 0.0, 300.0, 400.0), frame(&mut s, "B", 400.0, 300.0, 400.0), frame(&mut s, "C", 800.0, 300.0, 400.0));
+    let go = rect(&mut s, a, [20.0, 20.0, 100.0, 40.0], json!({"name": "Go"}));
+    click(&mut s, go, json!({"type": "navigate", "dest": b}));
+    ex(&mut s, "proto.interaction.add", json!({"id": go, "trigger": {"type": "onDrag"}, "action": {"type": "navigate", "dest": c}}));
+    ex(&mut s, "edit.delete", json!({"ids": [b, c]}));
+    assert_eq!(recorded(&mut s, "flow.brokenTarget"), ["F1", "F2"]);
+    assert_eq!((stored(&s, "F1").subject, stored(&s, "F2").subject), (format!("action:{go}:0:0"), format!("action:{go}:1:0")));
+    assert_eq!(stored(&s, "F1").nodes, vec![go]);
+    // The drag is pointed at a frame that exists; the click still leads nowhere.
+    let d = frame(&mut s, "D", 400.0, 300.0, 400.0);
+    ex(&mut s, "proto.interaction.set", json!({"id": go, "index": 1, "action": {"type": "navigate", "dest": d}}));
+    let r = ex(&mut s, "design.finding.recheck", json!({}));
+    assert_eq!(r["results"][0]["status"], "open", "{r}");
+    assert_eq!(r["results"][0]["detail"], format!("`Go` ({go}), On click → Navigate to: layer {b} doesn't exist"));
+    assert_eq!((r["results"][1]["status"].as_str(), r["results"][1]["passed"].as_bool()), (Some("verified"), Some(true)), "{r}");
+}
+
+#[test]
+fn contrast_that_can_no_longer_be_measured_isnt_fixed() {
+    let mut s = Session::new();
+    let (card, text) = card_with_text(&mut s, "#9AA0A6");
+    assert_eq!(recorded(&mut s, CONTRAST), ["F1"]);
+    // The card gets a gradient: the text is as faint as before, and now nothing measures it.
+    set(&mut s, card, json!({"fills": [{"type": "linearGradient", "stops": ["#FFFFFF", "#EEEEEE"]}]}));
+    assert!(found(&mut s, CONTRAST).is_empty(), "the rule itself reports nothing it can't measure");
+    let (passed, status, detail) = rechecked(&mut s, "F1");
+    assert!(!passed && status == "open", "{detail}");
+    assert_eq!(detail, "not measured, so not shown to pass: `Card` has a gradient, image or pattern fill");
+    assert_eq!(stored(&s, "F1").recheck.map(|r| r.passed), Some(false));
+    // Something put in front of the text doesn't fix it either.
+    set(&mut s, card, json!({"fill": "#FFFFFF"}));
+    let cover = rect(&mut s, card, [0.0, 0.0, 30.0, 200.0], json!({"name": "Cover", "fill": "#000000"}));
+    let (passed, _, detail) = rechecked(&mut s, "F1");
+    assert!(!passed && detail.contains("`Cover` is in front of the text"), "{detail}");
+    // Measurable again and passing: verified. Measurable and failing: open, with the numbers.
+    ex(&mut s, "edit.delete", json!({"ids": [cover]}));
+    assert!(rechecked(&mut s, "F1").2.starts_with("2.64:1, needs 4.5:1"));
+    set(&mut s, text, json!({"fill": "#333333"}));
+    assert_eq!(rechecked(&mut s, "F1"), (true, "verified".into(), "`contrast.text` no longer reports it".into()));
+    // A recheck of everything reads the same way.
+    set(&mut s, text, json!({"fill": "#9AA0A6"}));
+    set(&mut s, card, json!({"fills": [{"type": "linearGradient", "stops": ["#FFFFFF", "#EEEEEE"]}]}));
+    let r = ex(&mut s, "design.finding.recheck", json!({}));
+    assert_eq!((r["results"][0]["passed"].as_bool(), r["results"][0]["status"].as_str()), (Some(false), Some("open")), "{r}");
+}
+
+#[test]
+fn text_drawn_by_a_stroke_alone_is_unmeasured_not_passing() {
+    let mut s = Session::new();
+    let (_, text) = card_with_text(&mut s, "#DDDDDD");
+    set(&mut s, text, json!({"fill": "none", "stroke": "#DDDDDD", "strokeWeight": 1}));
+    assert!(found(&mut s, CONTRAST).is_empty());
+    let f = only(&mut s, UNMEASURED);
+    assert_eq!(f["nodes"], json!([text]));
+    assert!(f["evidence"].as_str().unwrap().contains("no fill and is drawn by its stroke alone"), "{f}");
+    // Without a stroke either there is nothing to read, and nothing to report.
+    set(&mut s, text, json!({"strokes": []}));
+    assert!(found(&mut s, UNMEASURED).is_empty() && found(&mut s, CONTRAST).is_empty());
+}
+
+#[test]
+fn findings_that_changed_but_arent_fixed_stay_open_for_every_kind_of_rule() {
+    let mut s = Session::new();
+    let screen = frame(&mut s, "Screen", 0.0, 200.0, 100.0);
+    let other = frame(&mut s, "Other", 400.0, 200.0, 100.0);
+    let lost = frame(&mut s, "Lost", 800.0, 200.0, 100.0);
+    let banner = rect(&mut s, screen, [150.0, 10.0, 100.0, 40.0], json!({"name": "Banner"}));
+    let go = rect(&mut s, screen, [10.0, 10.0, 12.0, 12.0], json!({"name": "Go"}));
+    click(&mut s, go, json!({"type": "navigate", "dest": other}));
+    ex(&mut s, "proto.flow.add", json!({"start": screen}));
+    ex(&mut s, "design.assumption.add", json!({"text": "First"}));
+    ex(&mut s, "design.assumption.add", json!({"text": "Second"}));
+    ex(&mut s, "design.decision.add", json!({"title": "T", "rationale": "R"}));
+    ex(&mut s, "design.brief.set", json!({"tone": "Calm"}));
+    let rules =
+        [CLIPPED, TARGET, "flow.deadEnd", "flow.unreachable", "context.briefIncomplete", "context.untestedAssumption", "context.staleDecision"];
+    let added = super::strings(&ex(&mut s, "design.check.record", json!({"rules": rules}))["added"]);
+    let by_rule = |s: &Session, rule: &str| {
+        s.doc().unwrap().design.findings.iter().find(|f| f.rule == rule).unwrap_or_else(|| panic!("no {rule} finding")).id.clone()
+    };
+    assert_eq!(added.len(), rules.len(), "one finding of each: {added:?}");
+    // Each problem is changed without being fixed: cut on another side, still too small, an
+    // action that doesn't leave, an interaction of its own, another empty field, one assumption
+    // fewer, a newer brief.
+    set(&mut s, banner, json!({"x": 10, "y": 80}));
+    set(&mut s, go, json!({"width": 20, "height": 30}));
+    let hint = rect(&mut s, other, [10.0, 10.0, 60.0, 30.0], json!({"name": "Hint"}));
+    ex(&mut s, "proto.interaction.add", json!({"id": hint, "trigger": {"type": "onClick"}, "action": {"type": "scrollTo", "dest": hint}}));
+    let stray = rect(&mut s, lost, [10.0, 10.0, 60.0, 30.0], json!({"name": "Stray"}));
+    click(&mut s, stray, json!({"type": "back"}));
+    ex(&mut s, "design.assumption.set", json!({"id": "A1", "status": "supported", "evidence": "Asked five nurses"}));
+    ex(&mut s, "design.brief.set", json!({"audience": "Nurses"}));
+    let r = ex(&mut s, "design.finding.recheck", json!({}));
+    let results = r["results"].as_array().unwrap();
+    assert_eq!(results.len(), rules.len());
+    for one in results {
+        assert_eq!((one["passed"].as_bool(), one["status"].as_str()), (Some(false), Some("open")), "{one}");
+    }
+    let detail = |rule: &str| results.iter().find(|x| x["id"] == json!(by_rule(&s, rule))).unwrap()["detail"].as_str().unwrap().to_string();
+    assert!(detail(CLIPPED).starts_with("cut 20 px at the bottom"), "{}", detail(CLIPPED));
+    assert!(detail(TARGET).starts_with("20×30 px"), "{}", detail(TARGET));
+    assert!(detail("flow.deadEnd").starts_with("1 action(s) on it"), "{}", detail("flow.deadEnd"));
+    assert!(detail("flow.unreachable").ends_with("it has 1 action(s) of its own"), "{}", detail("flow.unreachable"));
+    assert_eq!(detail("context.briefIncomplete"), "empty: job, context, success");
+    assert_eq!(detail("context.untestedAssumption"), "1 of 2 untested: A2");
+    assert!(detail("context.staleDecision").ends_with("the brief is at revision 2"), "{}", detail("context.staleDecision"));
+}
+
+#[test]
+fn recording_stores_up_to_the_most_a_file_keeps_and_says_how_many_were_left_out() {
+    let mut s = Session::new();
+    let screen = frame(&mut s, "Screen", 0.0, 200.0, 100.0);
+    let max = figcraft_doc::design::MAX_ENTRIES;
+    // More layers cut by the frame than a file keeps findings.
+    let page = s.page().unwrap();
+    {
+        let doc = s.doc_mut().unwrap();
+        for k in 0..max + 5 {
+            let id = doc.create(screen, NodeKind::Rectangle, &format!("R{k}"), 190.0, 10.0, 30.0, 10.0).unwrap();
+            doc.get_mut(id).unwrap().fills = vec![figcraft_color::Paint::solid(figcraft_color::Color::BLACK)];
+        }
+        assert_eq!(doc.page_of(screen), Some(page));
+    }
+    let total = found(&mut s, CLIPPED).len();
+    assert_eq!(total, max + 5);
+    let r = ex_undoable(&mut s, "design.check.record", json!({"rules": [CLIPPED]}));
+    assert_eq!((r["added"].as_array().map(Vec::len), r["total"].as_u64(), r["truncated"].as_u64()), (Some(max), Some(total as u64), Some(5)), "{r}");
+    let note = r["note"].as_str().unwrap();
+    assert!(
+        note.starts_with(&format!("5 of {total} result(s) were not stored: the file holds {max} findings"))
+            && note.contains("Narrow `scope` or `rules`"),
+        "{note}"
+    );
+    assert_eq!(s.doc().unwrap().design.findings.len(), max);
+    // Again: what is stored is known, the rest still doesn't fit; a narrower scope has room once
+    // a finding is removed.
+    let r = ex(&mut s, "design.check.record", json!({"rules": [CLIPPED]}));
+    assert_eq!((r["added"].clone(), r["existing"].as_array().map(Vec::len), r["truncated"].as_u64()), (json!([]), Some(max), Some(5)));
+    ex(&mut s, "design.finding.remove", json!({"id": "F1"}));
+    let r = ex(&mut s, "design.check.record", json!({"rules": [CLIPPED]}));
+    assert_eq!((r["added"].as_array().map(Vec::len), r["truncated"].as_u64()), (Some(1), Some(5)), "{r}");
+    // Nothing left out: no note.
+    let mut s = Session::new();
+    mixed_page(&mut s);
+    let r = ex(&mut s, "design.check.record", json!({}));
+    assert_eq!((r["truncated"].as_u64(), r.get("note")), (Some(0), None));
+}
+
+#[test]
+fn the_default_scope_keeps_what_proto_check_reports_for_the_page() {
+    let mut s = Session::new();
+    let home = frame(&mut s, "Home", 0.0, 300.0, 400.0);
+    let gone = frame(&mut s, "Gone", 400.0, 300.0, 400.0);
+    let inner = rect(&mut s, home, [20.0, 20.0, 100.0, 40.0], json!({"name": "Inner"}));
+    // A layer lying on the page outside every frame, with an action that leads nowhere.
+    let loose = super::nid(&ex(&mut s, "shape.rectangle", json!({"x": 2000, "y": 0, "width": 100, "height": 40, "props": {"name": "Loose"}})));
+    click(&mut s, loose, json!({"type": "navigate", "dest": gone}));
+    click(&mut s, inner, json!({"type": "back"}));
+    ex(&mut s, "edit.delete", json!({"ids": [gone]}));
+    ex(&mut s, "design.stage.set", json!({"stage": "converging"}));
+    let proto = ex(&mut s, "proto.check", json!({}));
+    let reported: Vec<(String, Value)> =
+        proto["problems"].as_array().unwrap().iter().map(|p| (p["rule"].as_str().unwrap().to_string(), p["nodes"].clone())).collect();
+    assert_eq!(reported, [("flow.brokenTarget".to_string(), json!([loose])), ("flow.noStart".to_string(), json!([home]))], "{proto}");
+    // Without a scope, design.check gives the same flow findings: the one off every frame too.
+    let flow_of = |r: &Value| -> Vec<(String, Value)> {
+        r["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|f| f["rule"].as_str().unwrap().starts_with("flow."))
+            .map(|f| (f["rule"].as_str().unwrap().to_string(), f["nodes"].clone()))
+            .collect()
+    };
+    assert_eq!(flow_of(&ex(&mut s, "design.check", json!({}))), reported);
+    assert_eq!(flow_of(&ex(&mut s, "design.check", json!({"scope": []}))), reported, "an empty scope is no scope");
+    // With a scope: a finding about layers is kept when one of them is in it, and one about the
+    // page when the scope holds one of the page's top-level frames (or the page).
+    let page = s.page().unwrap();
+    assert_eq!(flow_of(&ex(&mut s, "design.check", json!({"scope": [home]}))), [("flow.noStart".to_string(), json!([home]))]);
+    assert_eq!(flow_of(&ex(&mut s, "design.check", json!({"scope": [loose]}))), [("flow.brokenTarget".to_string(), json!([loose]))]);
+    assert_eq!(flow_of(&ex(&mut s, "design.check", json!({"scope": [inner]}))), []);
+    assert_eq!(flow_of(&ex(&mut s, "design.check", json!({"scope": [page]}))), reported);
+    // The findings say what they are about when that isn't their layers.
+    let r = ex(&mut s, "design.check", json!({}));
+    let subjects: Vec<Value> = r["findings"].as_array().unwrap().iter().map(|f| f.get("subject").cloned().unwrap_or(Value::Null)).collect();
+    assert_eq!(subjects, [json!(format!("action:{loose}:0:0")), json!(format!("page:{page}"))]);
+}
+
+#[test]
+fn checks_without_a_scope_look_at_the_page_the_session_shows() {
+    let mut s = Session::new();
+    let first = s.page().unwrap();
+    let home = frame(&mut s, "Home", 0.0, 300.0, 400.0);
+    let gone = frame(&mut s, "Gone", 400.0, 300.0, 400.0);
+    let go = rect(&mut s, home, [20.0, 20.0, 100.0, 40.0], json!({"name": "Go"}));
+    click(&mut s, go, json!({"type": "navigate", "dest": gone}));
+    ex(&mut s, "edit.delete", json!({"ids": [gone]}));
+    assert_eq!(recorded(&mut s, "flow.brokenTarget"), ["F1"]);
+    let broken = |s: &mut Session| found(s, "flow.brokenTarget").len();
+    assert_eq!(broken(&mut s), 1);
+    // On a second, empty page there is nothing to find, whatever page the file was saved on.
+    let second = super::nid(&ex(&mut s, "page.add", json!({})));
+    assert_eq!(s.page().unwrap(), second);
+    for saved_on in [first, second] {
+        s.doc_mut().unwrap().current_page = Some(saved_on);
+        assert_eq!(broken(&mut s), 0, "the session shows the second page");
+    }
+    // A stored finding is rechecked where it was found, not on the page showing.
+    assert_eq!(rechecked(&mut s, "F1").1, "open");
+    ex(&mut s, "page.select", json!({"id": first}));
+    s.doc_mut().unwrap().current_page = Some(second);
+    assert_eq!(broken(&mut s), 1);
+}
+
+#[test]
+fn a_finding_stored_before_subjects_existed_stays_open_and_takes_its_subject() {
+    let mut s = Session::new();
+    let (a, b) = (frame(&mut s, "A", 0.0, 300.0, 400.0), frame(&mut s, "B", 400.0, 300.0, 400.0));
+    let go = rect(&mut s, a, [20.0, 20.0, 100.0, 40.0], json!({"name": "Go"}));
+    click(&mut s, go, json!({"type": "navigate", "dest": b}));
+    let back = rect(&mut s, b, [20.0, 20.0, 100.0, 40.0], json!({"name": "Back"}));
+    click(&mut s, back, json!({"type": "back"}));
+    // As the version before stored it: the first frame as the finding's layer, and no subject.
+    let old: figcraft_doc::design::Finding = serde_json::from_value(json!({
+        "id": "F1", "kind": "check", "rule": "flow.noStart", "severity": "minor", "nodes": [a],
+        "message": "the page has interactions but no flow starting point", "source": "check", "status": "open",
+    }))
+    .unwrap();
+    {
+        let design = std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().design);
+        design.findings.push(old);
+        design.counters.insert("F".into(), 1);
+    }
+    set(&mut s, b, json!({"x": -800}));
+    let (passed, status, _) = rechecked(&mut s, "F1");
+    assert!(!passed && status == "open");
+    assert_eq!(stored(&s, "F1").subject, format!("page:{}", s.page().unwrap()), "matched to what the rule reports now");
+    assert_eq!(ex(&mut s, "design.check.record", json!({"rules": ["flow.noStart"]}))["existing"], json!(["F1"]));
+}

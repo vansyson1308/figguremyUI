@@ -25,6 +25,8 @@ mod scenario;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use check::{PageFacts, Where, subject_where};
+
 /// The step forms `proto.simulate` and `proto.scenario.*` take, for their parameter docs.
 macro_rules! steps_doc {
     () => {
@@ -64,7 +66,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 steps_doc!(),
                 ", expect? ",
                 expect_doc!(),
-                " (checked after the last step), stopOnFailure? (default true: stop at the first step that fails)}  plays the steps headless on a copy of the file, which never changes → {passed, start, state: {screen, screenName, overlays: [{id, name}], history, variables (those the run changed), modes, variants: [{instance, component, name}], endState}, steps: [{index, action, note?, fired, effects, problem?, failures, state: {screen, screenName, overlays}}], failures (of the final expect), failedStep?, stepsTaken}. A step fails when it can't run (the layer isn't on what shows: the top overlay if one is open, else the screen), when a gesture or key sets nothing off, when an action can't run, or when its expect doesn't hold. A gesture reaches the first interaction with its trigger on the layer or a layer around it; hover and press last until the next step; wait fires every pending after-delay; scrolling, timing, devices and the player's own keys aren't simulated"
+                " (checked after the last step), stopOnFailure? (default true: stop at the first step that fails)}  plays the steps headless on a copy of the file, which never changes. The result is the simulator's: it follows the player's rules for what state comes next, and nobody watched the player do it → {passed, simulated: true, notModelled: [what the simulator leaves out], start, state: {screen, screenName, overlays: [{id, name}], history, variables (those the run changed), modes, variants: [{instance, component, name}], endState}, steps: [{index, action, note?, fired, effects, problem?, failures, state: {screen, screenName, overlays}}], failures (of the final expect), failedStep?, stepsTaken}. A step fails when it can't run (the layer isn't on what shows: the top overlay if one is open, else the screen), when a gesture or key sets nothing off, when an action can't run, or when its expect doesn't hold. A gesture reaches the first interaction with its trigger on the layer or a layer around it; hover and press last until the next step; wait fires every pending after-delay; scrolling, timing, devices and the player's own keys aren't simulated"
             ),
             false,
             simulate
@@ -77,7 +79,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 steps_doc!(),
                 ", expect? ",
                 expect_doc!(),
-                " (what must hold after the last step), purpose? (what passing shows)}  stores a walk through the prototype with what should be true along the way; every layer it names must exist → {id}"
+                " (what must hold after the last step), purpose? (what passing shows)}  stores a walk through the prototype with what should be true along the way; every layer it names must exist in the file (layers that only exist once an instance was changed to another variant can't be named: name the instance and expect its variant) → {id}"
             ),
             true,
             scenario::add
@@ -100,7 +102,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "proto.scenario.run",
             "Run scenarios",
-            "{id? (a scenario id: S1; default: every stored scenario)}  runs them headless on a copy of the file, each stopping at its first failing step → {passed (no scenario failed), total, failed, results: [{id, name, passed, failedStep? (index), failures (of that step, else of the final expect), steps (as proto.simulate), stepsTaken}]}",
+            "{id? (a scenario id: S1; default: every stored scenario)}  runs them headless on a copy of the file, each stopping at its first failing step; simulated, as proto.simulate → {passed (no scenario failed), simulated: true, notModelled: [what the simulator leaves out], total, failed, results: [{id, name, passed, failedStep? (index), failures (of that step, else of the final expect), steps (as proto.simulate), stepsTaken}]}",
             false,
             scenario::run_stored
         ),
@@ -132,6 +134,8 @@ fn simulate(s: &mut Session, p: &Value) -> Result<Value> {
     let r = run::play(sim, &steps, &expect, stop);
     let mut out = json!({
         "passed": r.passed,
+        "simulated": true,
+        "notModelled": run::NOT_MODELLED,
         "start": start,
         "state": r.state,
         "steps": run::steps_json(&steps, &r),

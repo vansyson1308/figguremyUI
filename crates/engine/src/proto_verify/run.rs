@@ -110,6 +110,16 @@ pub(super) fn play(mut sim: Sim, steps: &[Step], expect: &Expect, stop_on_failur
     Run { passed: failed_step.is_none() && failures.is_empty(), steps: reports, failed_step, failures, state: Some(sim.state()) }
 }
 
+/// What a simulated run doesn't model: said in every result, so that a pass isn't read as "the
+/// player was watched doing it".
+pub(super) const NOT_MODELLED: [&str; 5] = [
+    "animation and timing (transitions, easing, how long a delay is)",
+    "scroll position (scroll-to changes nothing; a layer scrolled or clipped out of view still takes a gesture)",
+    "drag direction",
+    "the device frame and responsive resizing (frames keep the size they have in the file)",
+    "pointer hit-testing (a gesture names its layer; what overlaps it on screen isn't considered)",
+];
+
 /// The steps of a run as `proto.simulate` reports them.
 pub(super) fn steps_json(steps: &[Step], run: &Run) -> Vec<Value> {
     run.steps

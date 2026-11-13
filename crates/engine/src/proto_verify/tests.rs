@@ -5,7 +5,7 @@
 use figcraft_doc::{Document, NodeId};
 use serde_json::{Value, json};
 
-use crate::check::Found;
+use crate::check::{Facts, Found, Scope};
 use crate::proto_sim::tests::ex;
 use crate::{EngineError, Session};
 
@@ -28,11 +28,12 @@ fn screen(v: &Value, id: NodeId) -> Value {
     v["screens"].as_array().unwrap().iter().find(|sc| sc["id"] == json!(id)).unwrap_or_else(|| panic!("no screen {id} in {v}")).clone()
 }
 
-/// What rule `rule` finds for `scope`, as `design.check` runs it.
+/// What rule `rule` finds for `scope` (none: the file's first page), as `design.check` runs it.
 fn found(doc: &Document, rule: &str, scope: &[NodeId]) -> Vec<Found> {
     let rules = crate::proto_verify::rules();
     let r = rules.iter().find(|r| r.id == rule).unwrap_or_else(|| panic!("no rule {rule}"));
-    (r.run)(doc, scope)
+    let page = doc.first_page().unwrap();
+    (r.run)(&Facts::new(doc), Scope { page, layers: scope })
 }
 
 /// The file as it would be saved, to compare before and after.
