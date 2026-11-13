@@ -22,7 +22,7 @@ fn a_misspelt_parameter_is_refused_and_named() {
     let e = err(&mut s, "comment.list", json!({"filterr": "open"}));
     assert!(e.contains("unknown parameter `filterr`") && e.contains("it takes page, filter, sort"), "{e}");
     assert_eq!(s.execute("comment.list", &json!({"filter": "open"})).unwrap()["comments"].as_array().map(Vec::len), Some(0));
-    let e = err(&mut s, "edit.undo", json!({"steps": 2, "stepz": 1}));
+    let e = err(&mut s, "select.all", json!({"steps": 2, "stepz": 1}));
     assert!(e.contains("unknown parameters `steps`, `stepz` (it takes none)"), "{e}");
 }
 

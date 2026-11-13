@@ -6,11 +6,52 @@ use figcraft_doc::{ExportFormat, NodeId};
 use figcraft_engine::{PointerEvent, PointerKind, Session, textedit};
 use serde_json::{Value, json};
 
-use crate::backend::Backend;
+use crate::backend::{Backend, error_detail};
 
 /// Headless backend: a [`Session`] with one untitled document.
 pub struct Headless {
     pub session: Session,
+    /// The detail of the last failed call ([`Backend::take_error_detail`]).
+    last_error: Option<Value>,
+    /// What `app.info` answers: made once, so a client can tell this session from another.
+    instance: String,
+}
+
+/// A failed call: its text, and what kind of failure it is (`{code, message, …}`).
+struct Fail {
+    message: String,
+    detail: Value,
+}
+
+impl Fail {
+    fn coded(code: &str, message: impl Into<String>) -> Self {
+        let message = message.into();
+        Self { detail: error_detail(code, &message), message }
+    }
+}
+
+impl From<figcraft_engine::EngineError> for Fail {
+    fn from(e: figcraft_engine::EngineError) -> Self {
+        Self { message: e.to_string(), detail: e.detail() }
+    }
+}
+
+/// A bare message is this backend's own check of a request's parameters.
+impl From<String> for Fail {
+    fn from(message: String) -> Self {
+        Self::coded("badParams", message)
+    }
+}
+
+impl From<&str> for Fail {
+    fn from(message: &str) -> Self {
+        Self::coded("badParams", message)
+    }
+}
+
+/// The note a command's result gets when it asked for UI that was dropped (`kinds`: the requests).
+fn ui_dropped(kinds: &[String]) -> String {
+    format!("dropped ({}): no window in this backend", kinds.join(", "))
 }
 
 impl Default for Headless {
@@ -51,25 +92,36 @@ impl Headless {
         if !session.live.available() {
             session.live.install(Box::new(figcraft_collab_net::NetLink::new(std::sync::Arc::new(|| {}))));
         }
-        Self { session }
+        // No window: the commands that only act on one (the prototype player) say so.
+        session.windowless = true;
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let started = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+        let instance = format!("headless-{}-{started:x}-{n}", std::process::id());
+        Self { session, last_error: None, instance }
     }
 
-    fn execute(&mut self, cmd: &str, params: &Value) -> Result<Value, String> {
+    fn execute(&mut self, cmd: &str, params: &Value) -> Result<Value, Fail> {
         self.execute_as(None, cmd, params)
     }
 
     /// A command for `agent` (an AI agent's name, `engine.execute {agent}`) or for the user.
-    fn execute_as(&mut self, agent: Option<&str>, cmd: &str, params: &Value) -> Result<Value, String> {
+    fn execute_as(&mut self, agent: Option<&str>, cmd: &str, params: &Value) -> Result<Value, Fail> {
         // What happened in a live session since the last call (latest presence only).
         self.session.live_poll();
-        let r = self.session.execute_as(agent, cmd, params).map_err(|e| e.to_string());
+        let r = self.session.execute_as(agent, cmd, params);
         self.session.live_sync();
-        // No UI: dialogs and panels requested by commands are dropped.
-        self.session.ui_requests.clear();
-        r
+        // No UI: dialogs and panels requested by commands are dropped, and a result that would
+        // otherwise read as if they had opened says so.
+        let dropped: Vec<String> = self.session.ui_requests.drain(..).map(|u| u.kind).collect();
+        let mut v = r?;
+        if let (false, Some(o)) = (dropped.is_empty(), v.as_object_mut()) {
+            o.insert("ui".into(), json!(ui_dropped(&dropped)));
+        }
+        Ok(v)
     }
 
-    fn pointer(&mut self, p: &Value) -> Result<Value, String> {
+    fn pointer(&mut self, p: &Value) -> Result<Value, Fail> {
         let zoom = self.session.ds().map(|d| d.view.zoom).unwrap_or(1.0).max(1e-6);
         let (x, y) = match (f(p, "x"), f(p, "y")) {
             (Some(x), Some(y)) => (x, y),
@@ -118,19 +170,19 @@ impl Headless {
                 }
                 events.push(PointerEvent { pressure: pr1, ..mk(PointerKind::Up, tx, ty) });
             }
-            other => return Err(format!("unknown pointer kind `{other}` (down|move|up|click|double|hover|drag)")),
+            other => return Err(format!("unknown pointer kind `{other}` (down|move|up|click|double|hover|drag)").into()),
         }
         for ev in &events {
             let r = figcraft_engine::guard::run("ui.pointer", || self.session.pointer(ev));
             self.session.ui_requests.clear();
-            r.map_err(|e| e.to_string())?;
+            r?;
         }
         Ok(
             json!({"selection": self.session.selection(), "tool": self.session.tool.tool.id(), "textEdit": self.session.ds().ok().and_then(|d| d.text_edit.clone())}),
         )
     }
 
-    fn key(&mut self, p: &Value) -> Result<Value, String> {
+    fn key(&mut self, p: &Value) -> Result<Value, Fail> {
         use figcraft_engine::keymap::{Context, Mods, Platform, lookup, normalize};
         let key = p.get("key").and_then(Value::as_str).ok_or("`key` required")?;
         let m = Mods { shift: b(p, "shift"), alt: b(p, "alt"), cmd: b(p, "cmd"), ctrl: b(p, "ctrl") };
@@ -144,18 +196,18 @@ impl Headless {
             }
             if !(m.cmd && key.len() == 1) {
                 let (word, line) = figcraft_engine::keymap::text_motion(platform, key, m);
-                textedit::key(&mut self.session, key, m.shift, word, line).map_err(|e| e.to_string())?;
+                textedit::key(&mut self.session, key, m.shift, word, line)?;
                 return Ok(json!({"ok": true, "textEdit": true}));
             }
         }
         // Vector edit mode and shape builder keys (tools, nudging points, delete, join, Enter), as
         // on the canvas.
-        if self.session.tool_key(key, m.shift, m.alt, m.cmd).map_err(|e| e.to_string())? {
+        if self.session.tool_key(key, m.shift, m.alt, m.cmd)? {
             return Ok(json!({"ok": true}));
         }
         if let Some(bd) = lookup(platform, Context::Canvas, key, m) {
             match bd.id {
-                "select.none" => self.session.escape().map_err(|e| e.to_string())?,
+                "select.none" => self.session.escape()?,
                 // Enter with a shape or frame tool chosen places one in the middle of the view.
                 "select.children" if self.session.tool.tool.draws_shape() => {
                     self.execute("tool.place", &json!({}))?;
@@ -174,7 +226,7 @@ impl Headless {
             }
             return Ok(json!({"command": bd.id, "tool": self.session.tool.tool.id()}));
         }
-        let (name, _) = normalize(key).ok_or_else(|| format!("unknown key `{key}`"))?;
+        let (name, _) = normalize(key).ok_or_else(|| Fail::from(format!("unknown key `{key}`")))?;
         match name {
             "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown" => {
                 let (dx, dy) = match name {
@@ -191,7 +243,7 @@ impl Headless {
             d if m.is_none() && d.len() == 1 && d.chars().all(|c| c.is_ascii_digit()) && self.session.prefs.number_keys_opacity => {
                 self.execute("object.opacityKeys", &json!({"digits": d}))
             }
-            _ => Err(format!("no shortcut for `{key}` with these modifiers")),
+            _ => Err(format!("no shortcut for `{key}` with these modifiers").into()),
         }
     }
 
@@ -210,14 +262,14 @@ impl Headless {
         }
     }
 
-    fn render_to(&mut self, p: &Value) -> Result<Value, String> {
+    fn render_to(&mut self, p: &Value) -> Result<Value, Fail> {
         let scale = f(p, "scale").unwrap_or(1.0);
         let ids: Vec<u64> = ids_of(p).into_iter().map(|i| i.0).collect();
-        let bytes = self.render_png(&ids, scale)?;
+        let bytes = self.render(&ids, scale)?;
         let (w, h) = crate::png_size(&bytes).unwrap_or((0, 0));
         match p.get("path").and_then(Value::as_str) {
             Some(path) => {
-                figcraft_engine::file_access::write(path, &bytes).map_err(|e| e.to_string())?;
+                figcraft_engine::file_access::write(path, &bytes)?;
                 Ok(json!({"path": path, "width": w, "height": h, "bytes": bytes.len()}))
             }
             None => Ok(json!({"format": "png", "width": w, "height": h, "data": base64::engine::general_purpose::STANDARD.encode(&bytes)})),
@@ -234,10 +286,72 @@ impl Headless {
             "message": self.session.message,
         })
     }
+
+    /// Run `f` as the request's `agent` (the AI agent a tool call is for), so that what a gesture
+    /// or typed text changes is that agent's step in the undo history, as a command's is.
+    fn as_agent<T>(&mut self, p: &Value, f: impl FnOnce(&mut Self) -> T) -> T {
+        let Some(agent) = p.get("agent").and_then(Value::as_str) else { return f(self) };
+        // The name as `engine.execute {agent}` forms it.
+        let was = self.session.agent.replace(figcraft_engine::cmd::comment::agent_author(agent));
+        let r = f(self);
+        self.session.agent = was;
+        r
+    }
+
+    /// PNG bytes of `ids` (their union), or of the current page's content when there are none.
+    fn render(&mut self, ids: &[u64], scale: f64) -> Result<Vec<u8>, Fail> {
+        let scale = if scale.is_finite() && scale > 0.0 { scale.min(64.0) } else { 1.0 };
+        let page = self.session.page()?;
+        let doc = self.session.doc()?;
+        if !ids.is_empty() {
+            let ids: Vec<NodeId> = ids.iter().map(|i| NodeId(*i)).collect();
+            if let Some(missing) = ids.iter().find(|i| !doc.contains(**i)) {
+                return Err(figcraft_engine::EngineError::NoNode(*missing).into());
+            }
+            return Ok(figcraft_engine::cmd::file::export_bytes(doc, &ids, ExportFormat::Png, scale)?);
+        }
+        let bounds = doc.page_content_bounds(page).ok_or_else(|| Fail::coded("failed", "the current page is empty: nothing to render"))?;
+        let side = bounds.width().max(bounds.height()).max(1.0);
+        let scale = scale.min(MAX_SIDE / side);
+        let view = figcraft_render::View {
+            origin: (bounds.x0, bounds.y0),
+            scale,
+            width: (bounds.width() * scale).ceil().max(1.0) as u32,
+            height: (bounds.height() * scale).ceil().max(1.0) as u32,
+        };
+        let pix = figcraft_render::render_view(doc, page, &view, &Default::default()).ok_or_else(|| Fail::coded("failed", "render failed"))?;
+        figcraft_render::encode_png(&pix).map_err(|e| Fail::coded("failed", e))
+    }
+
+    /// PNG bytes of the current page with a margin, zoomed to fit 1600 px (there is no window).
+    fn screenshot(&mut self) -> Result<Vec<u8>, Fail> {
+        let page = self.session.page()?;
+        let doc = self.session.doc()?;
+        let b = doc.page_content_bounds(page).unwrap_or(figcraft_geom::Rect::new(0.0, 0.0, 800.0, 600.0));
+        let b = b.inflate(32.0, 32.0);
+        let scale = (1600.0 / b.width().max(b.height()).max(1.0)).min(2.0);
+        let view = figcraft_render::View {
+            origin: (b.x0, b.y0),
+            scale,
+            width: (b.width() * scale).ceil().max(1.0) as u32,
+            height: (b.height() * scale).ceil().max(1.0) as u32,
+        };
+        let pix = figcraft_render::render_view(doc, page, &view, &Default::default()).ok_or_else(|| Fail::coded("failed", "render failed"))?;
+        figcraft_render::encode_png(&pix).map_err(|e| Fail::coded("failed", e))
+    }
+
+    /// Keep the detail of a failure for [`Backend::take_error_detail`] and hand on its text.
+    fn noted<T>(&mut self, r: Result<T, Fail>) -> Result<T, String> {
+        self.last_error = None;
+        r.map_err(|f| {
+            self.last_error = Some(f.detail);
+            f.message
+        })
+    }
 }
 
 impl Headless {
-    fn dispatch(&mut self, method: &str, p: Value) -> Result<Value, String> {
+    fn dispatch(&mut self, method: &str, p: Value) -> Result<Value, Fail> {
         match method {
             "engine.execute" => {
                 let cmd = p.get("command").and_then(Value::as_str).ok_or("`command` required")?.to_string();
@@ -258,31 +372,34 @@ impl Headless {
             "node.get" => {
                 let id = p.get("id").and_then(figcraft_engine::params::id_of).ok_or("`id` required (a node id)")?;
                 let depth = p.get("depth").and_then(Value::as_u64).unwrap_or(1).min(64) as usize;
-                let doc = self.session.doc().map_err(|e| e.to_string())?;
+                let doc = self.session.doc()?;
                 if !doc.contains(id) {
-                    return Err(format!("no such node {id}"));
+                    return Err(figcraft_engine::EngineError::NoNode(id).into());
                 }
                 let options = figcraft_engine::inspect::InspectOptions::parse(&p)?;
                 Ok(figcraft_engine::inspect::node_json_with_options(doc, id, depth, &options))
             }
             "ui.inspect" => Ok(self.inspect_ui()),
-            "ui.pointer" => self.pointer(&p),
-            "ui.key" => self.key(&p),
+            "ui.pointer" => self.as_agent(&p, |h| h.pointer(&p)),
+            "ui.key" => self.as_agent(&p, |h| h.key(&p)),
             "ui.type" => {
                 let text = p.get("text").and_then(Value::as_str).ok_or("`text` required")?;
                 if !self.session.ds().map(|d| d.text_edit.is_some()).unwrap_or(false) {
-                    return Err("not editing text: double-click a text layer, press Enter on it, or run text.edit.begin {id}".into());
+                    return Err(Fail::coded(
+                        "notAvailable",
+                        "not editing text: double-click a text layer, press Enter on it, or run text.edit.begin {id}",
+                    ));
                 }
-                textedit::insert(&mut self.session, text).map_err(|e| e.to_string())?;
+                self.as_agent(&p, |h| textedit::insert(&mut h.session, text))?;
                 Ok(json!({"ok": true}))
             }
             "ui.render" => self.render_to(&p),
             "ui.screenshot" => {
-                let bytes = self.screenshot_png()?;
+                let bytes = self.screenshot()?;
                 let (w, h) = crate::png_size(&bytes).unwrap_or((0, 0));
                 match p.get("path").and_then(Value::as_str) {
                     Some(path) => {
-                        figcraft_engine::file_access::write(path, &bytes).map_err(|e| e.to_string())?;
+                        figcraft_engine::file_access::write(path, &bytes)?;
                         Ok(json!({"path": path, "width": w, "height": h}))
                     }
                     None => Ok(json!({"format": "png", "width": w, "height": h, "data": base64::engine::general_purpose::STANDARD.encode(&bytes)})),
@@ -294,11 +411,29 @@ impl Headless {
                 let topics = figcraft_engine::events::topics(p.get("topics"))?;
                 // Headless has no other writer to wait for.
                 let result = self.session.events.poll(after, &topics, limit, std::time::Duration::ZERO);
-                serde_json::to_value(result).map_err(|e| e.to_string())
+                serde_json::to_value(result).map_err(|e| Fail::coded("internal", e.to_string()))
             }
+            // Which session this is: a client that reconnects can tell it was replaced.
+            "app.info" => Ok(json!({
+                "instance": self.instance,
+                "version": env!("CARGO_PKG_VERSION"),
+                "pid": std::process::id(),
+                "window": false,
+                "features": ["errorDetail", "revision"],
+            })),
             "app.quit" => Ok(json!({"ok": true})),
-            other => Err(format!("unknown method `{other}`")),
+            other => Err(Fail::coded("unknownMethod", format!("unknown method `{other}`"))),
         }
+    }
+
+    /// [`Backend::call`]: with `document` the request runs with that file in front, and the file
+    /// that was in front is put back.
+    fn call_in_document(&mut self, method: &str, p: Value) -> Result<Value, Fail> {
+        let Some(target) = p.get("document").filter(|d| !d.is_null()) else { return self.dispatch(method, p) };
+        let forward = self.session.bring_forward(target)?;
+        let r = self.dispatch(method, p);
+        self.session.put_back(forward);
+        r
     }
 }
 
@@ -306,11 +441,8 @@ impl Backend for Headless {
     /// With `document` (an `id` from `doc.list`, or an open file's path) the call acts on that
     /// file, and the file in front stays in front.
     fn call(&mut self, method: &str, p: Value) -> Result<Value, String> {
-        let Some(target) = p.get("document").filter(|d| !d.is_null()) else { return self.dispatch(method, p) };
-        let forward = self.session.bring_forward(target).map_err(|e| e.to_string())?;
-        let r = self.dispatch(method, p);
-        self.session.put_back(forward);
-        r
+        let r = self.call_in_document(method, p);
+        self.noted(r)
     }
 
     fn has_ui(&self) -> bool {
@@ -321,46 +453,17 @@ impl Backend for Headless {
         "headless (in-process engine session; no window)".into()
     }
 
+    fn take_error_detail(&mut self) -> Option<Value> {
+        self.last_error.take()
+    }
+
     fn render_png(&mut self, ids: &[u64], scale: f64) -> Result<Vec<u8>, String> {
-        let scale = if scale.is_finite() && scale > 0.0 { scale.min(64.0) } else { 1.0 };
-        let page = self.session.page().map_err(|e| e.to_string())?;
-        let doc = self.session.doc().map_err(|e| e.to_string())?;
-        if !ids.is_empty() {
-            let ids: Vec<NodeId> = ids.iter().map(|i| NodeId(*i)).collect();
-            for i in &ids {
-                if !doc.contains(*i) {
-                    return Err(format!("no such node {i}"));
-                }
-            }
-            return figcraft_engine::cmd::file::export_bytes(doc, &ids, ExportFormat::Png, scale).map_err(|e| e.to_string());
-        }
-        let bounds = doc.page_content_bounds(page).ok_or("the current page is empty: nothing to render")?;
-        let side = bounds.width().max(bounds.height()).max(1.0);
-        let scale = scale.min(MAX_SIDE / side);
-        let view = figcraft_render::View {
-            origin: (bounds.x0, bounds.y0),
-            scale,
-            width: (bounds.width() * scale).ceil().max(1.0) as u32,
-            height: (bounds.height() * scale).ceil().max(1.0) as u32,
-        };
-        let pix = figcraft_render::render_view(doc, page, &view, &Default::default()).ok_or("render failed")?;
-        figcraft_render::encode_png(&pix)
+        let r = self.render(ids, scale);
+        self.noted(r)
     }
 
     fn screenshot_png(&mut self) -> Result<Vec<u8>, String> {
-        // No window: the page with a margin, zoomed to fit 1600 px.
-        let page = self.session.page().map_err(|e| e.to_string())?;
-        let doc = self.session.doc().map_err(|e| e.to_string())?;
-        let b = doc.page_content_bounds(page).unwrap_or(figcraft_geom::Rect::new(0.0, 0.0, 800.0, 600.0));
-        let b = b.inflate(32.0, 32.0);
-        let scale = (1600.0 / b.width().max(b.height()).max(1.0)).min(2.0);
-        let view = figcraft_render::View {
-            origin: (b.x0, b.y0),
-            scale,
-            width: (b.width() * scale).ceil().max(1.0) as u32,
-            height: (b.height() * scale).ceil().max(1.0) as u32,
-        };
-        let pix = figcraft_render::render_view(doc, page, &view, &Default::default()).ok_or("render failed")?;
-        figcraft_render::encode_png(&pix)
+        let r = self.screenshot();
+        self.noted(r)
     }
 }

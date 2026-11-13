@@ -96,6 +96,8 @@ mod cursors_tests;
 #[cfg(test)]
 mod dash_pattern_tests;
 #[cfg(test)]
+mod design_context_tests;
+#[cfg(test)]
 mod design_paste_tests;
 #[cfg(test)]
 mod dev_mode_tests;
@@ -338,6 +340,7 @@ pub use home::home_recents;
 pub use home::online;
 pub use panels::assets_panel;
 pub use panels::component_panel;
+pub use panels::design_context;
 pub use panels::dev_compare;
 pub use panels::dev_mode;
 pub use panels::export_panel;
@@ -592,6 +595,8 @@ pub struct UiState {
     pub mirrored: bool,
     pub comments: comments::CommentUi,
     pub versions: versions::VersionUi,
+    /// The Design context panel (shown in the left sidebar while open) and what it last ran.
+    pub context: design_context::ContextUi,
     /// The branch review dialog, while open.
     pub branch_review: Option<branch_ui::ReviewView>,
     /// Dev Mode: annotations on the canvas and the ready-for-dev list.
@@ -748,6 +753,7 @@ impl Default for UiState {
             mirrored: false,
             comments: comments::CommentUi::default(),
             versions: versions::VersionUi::default(),
+            context: design_context::ContextUi::default(),
             branch_review: None,
             dev: dev_mode::DevUi::default(),
 
@@ -854,6 +860,9 @@ pub struct FigApp {
     pub(crate) ime: egui::ime_context::ImeContextTracker,
     /// The check for a newer release and its prompt (desktop; [`updates_ui`]).
     pub(crate) updates_rt: updates_ui::Runtime,
+    /// An id for this run of the app, made once at start (control channel `app.info`): a client
+    /// that reconnects tells from it whether it reached the same app.
+    pub instance: String,
     /// Test-only count of the one IME observation each viewport pass makes.
     #[cfg(test)]
     pub(crate) ime_observations: u32,

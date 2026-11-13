@@ -575,9 +575,16 @@ pub fn document_with_options(s: &Session, depth: usize, all_pages: bool, options
                 if all_pages || *p == ds.page { node_json_with_options(doc, *p, depth, options) } else { node_json_with_options(doc, *p, 0, options) }
             })
             .collect();
+    // The undo steps with who made each (`undo` keeps the labels alone, as it always had them).
+    let steps: Vec<Value> = s
+        .undo_steps(20)
+        .into_iter()
+        .map(|(label, author)| json!({"label": label, "author": author.unwrap_or_else(|| crate::USER_AUTHOR.into())}))
+        .collect();
     json!({
         "id": ds.uid,
         "name": doc.name,
+        "revision": ds.doc_revision(),
         "kind": doc.kind.id(),
         "path": ds.path,
         "dirty": ds.is_dirty(),
@@ -589,7 +596,7 @@ pub fn document_with_options(s: &Session, depth: usize, all_pages: bool, options
         "images": doc.images.len(),
         "colorProfile": doc.color_profile.id(),
         "textEdit": ds.text_edit,
-        "history": {"undo": s.undo_labels(20), "redo": s.undo_depth().1},
+        "history": {"undo": s.undo_labels(20), "redo": s.undo_depth().1, "steps": steps},
     })
 }
 

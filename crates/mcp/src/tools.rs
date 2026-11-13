@@ -6,24 +6,44 @@ use base64::Engine as _;
 use figcraft_engine::params::normalize_paint;
 use serde_json::{Map, Value, json};
 
-use crate::backend::{Backend, decode_data, page_children};
+use crate::backend::{Backend, decode_data, error_detail, page_children};
 
 /// The result of `tools/call`: MCP content blocks plus the `isError` flag.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ToolResult {
     pub content: Vec<Value>,
     pub is_error: bool,
+    /// MCP `structuredContent`: what a program reads beside the blocks — `document` (which
+    /// document the call read or changed: `{id, name, revision, front}`) and, for a failed call,
+    /// `error` (`{code, message, …}`). The same JSON is the last text block, for the model.
+    pub structured: Option<Value>,
 }
 
 impl ToolResult {
     pub fn text(t: impl Into<String>) -> Self {
-        Self { content: vec![json!({"type": "text", "text": t.into()})], is_error: false }
+        Self { content: vec![json!({"type": "text", "text": t.into()})], is_error: false, structured: None }
     }
     pub fn json(v: &Value) -> Self {
         Self::text(serde_json::to_string_pretty(v).unwrap_or_default())
     }
     pub fn error(t: impl Into<String>) -> Self {
-        Self { content: vec![json!({"type": "text", "text": t.into()})], is_error: true }
+        Self { content: vec![json!({"type": "text", "text": t.into()})], is_error: true, structured: None }
+    }
+    /// A failed call: the text people read first, then `{"error": detail}` for the model, and
+    /// the same as `structuredContent`.
+    pub fn failed(message: &str, detail: Value) -> Self {
+        let mut r = Self::error(message);
+        r.attach(json!({"error": detail}));
+        r
+    }
+    /// Add `extra` (an object) to `structuredContent` and, compact, as one more text block. The
+    /// blocks before it stay as they were: callers that parse the first one still can.
+    pub fn attach(&mut self, extra: Value) {
+        self.content.push(json!({"type": "text", "text": extra.to_string()}));
+        match (self.structured.as_mut().and_then(Value::as_object_mut), extra) {
+            (Some(have), Value::Object(more)) => have.extend(more),
+            (_, extra) => self.structured = Some(extra),
+        }
     }
     /// An image block followed by a JSON text block describing it.
     pub fn image(bytes: &[u8], mime: &str, info: &Value) -> Self {
@@ -33,10 +53,15 @@ impl ToolResult {
                 json!({"type": "text", "text": info.to_string()}),
             ],
             is_error: false,
+            structured: None,
         }
     }
     pub fn to_value(&self) -> Value {
-        json!({"content": self.content, "isError": self.is_error})
+        let mut v = json!({"content": self.content, "isError": self.is_error});
+        if let Some(s) = &self.structured {
+            v["structuredContent"] = s.clone();
+        }
+        v
     }
     /// The first text block (tests and the CLI).
     pub fn first_text(&self) -> &str {
@@ -93,6 +118,8 @@ fn tool(name: &str, title: &str, desc: &str, schema: Value, read_only: bool) -> 
 
 /// Tool names, in `tools/list` order.
 pub const TOOL_NAMES: &[&str] = &[
+    "get_capabilities",
+    "use_document",
     "list_commands",
     "run_command",
     "batch",
@@ -130,17 +157,33 @@ const DOCUMENT_TOOLS: &[&str] = &[
     "redo",
 ];
 
+/// The tools that act on the working document without taking `document`: they drive the canvas,
+/// which with an attached app is the tab in front (the app refuses them for a file behind it).
+const CANVAS_TOOLS: &[&str] = &["pointer", "key", "type_text"];
+
+/// The tools that change the document and take `ifRevision`.
+const CONDITIONAL_TOOLS: &[&str] = &["run_command", "batch", "create_node", "set_properties", "undo", "redo"];
+
+/// The reserved engine parameter a conditional change carries.
+const IF_REVISION: &str = "ifRevision";
+
 /// All tools, in `tools/list` order.
 pub fn tool_definitions() -> Vec<Value> {
     let mut tools = tools();
     let document = id_schema(
-        "The open file to act on: its `id` (from run_command doc.list, or the `document` open_file and inspect_document return) or its path. Default: the file in front. The tab in front stays in front; with an attached app, a screenshot of the window needs the file in front",
+        "The open file to act on: its `id` (from use_document, get_capabilities, run_command doc.list, or the `document` every result names) or its path. Default: the working document — the one the last open_file, use_document or `document` chose, never just the tab in front. Naming a file here makes it the working document. The tab in front stays in front; with an attached app, a screenshot of the window needs the file in front",
+    );
+    let if_revision = int(
+        "Make the change only if the document is still at this revision (the `revision` every result names): when somebody changed it since, nothing is changed and the error (code `conflict`) lists what was done in between",
     );
     for t in &mut tools {
-        if t.get("name").and_then(Value::as_str).is_some_and(|n| DOCUMENT_TOOLS.contains(&n))
-            && let Some(props) = t.pointer_mut("/inputSchema/properties").and_then(Value::as_object_mut)
-        {
+        let name = t.get("name").and_then(Value::as_str).unwrap_or_default().to_string();
+        let Some(props) = t.pointer_mut("/inputSchema/properties").and_then(Value::as_object_mut) else { continue };
+        if DOCUMENT_TOOLS.contains(&name.as_str()) {
             props.insert("document".into(), document.clone());
+        }
+        if CONDITIONAL_TOOLS.contains(&name.as_str()) {
+            props.insert(IF_REVISION.into(), if_revision.clone());
         }
     }
     tools
@@ -148,7 +191,30 @@ pub fn tool_definitions() -> Vec<Value> {
 
 fn tools() -> Vec<Value> {
     let empty = || obj(json!({}), &[]);
+    let others = || {
+        obj(
+            json!({"others": boolean("Also take a step somebody else made (the user, or another agent). Without it such a step is refused, naming it and its author, and nothing changes")}),
+            &[],
+        )
+    };
     vec![
+        tool(
+            "get_capabilities",
+            "Get capabilities",
+            "What this server and the app behind it can do, as JSON: `backend` (headless: an engine in this process, no window; attached: the running app), `window` and `player` (whether there is a window, and so a live prototype player), the automation `roots` files may be read from and written to, the `workingDocument` ({id, name, revision}) and the open `documents`, how many `commands` there are, the `features` that are really there (prototype simulator, flow check, scenarios, design context, the design check rules, conflict detection, structured errors), `limits` and file `formats`. Call it first, and again after an error with code `transport`.",
+            empty(),
+            true,
+        ),
+        tool(
+            "use_document",
+            "Use document",
+            "Choose the working document: the open file every later call without `document` reads and changes, whichever tab is in front. `document` is a file's `id`, its path, or \"front\" for the tab in front now. Returns the working document ({id, name, revision, front}) and the open documents. open_file and any call that names `document` choose it too; a new file made with run_command file.new, or a tab switched with doc.switch, becomes the working document only when you say so here.",
+            obj(
+                json!({"document": id_schema("A file's `id` (from get_capabilities or run_command doc.list), its path, or \"front\"")}),
+                &["document"],
+            ),
+            false,
+        ),
         tool(
             "list_commands",
             "List commands",
@@ -323,8 +389,20 @@ fn tools() -> Vec<Value> {
             obj(json!({"path": string("Output .figcraft path, or a .fig path for an experimental export copy")}), &[]),
             false,
         ),
-        tool("undo", "Undo", "Undo the last change (one command, batch or gesture). Returns {undone: bool}.", empty(), false),
-        tool("redo", "Redo", "Redo the last undone change. Returns {redone: bool}.", empty(), false),
+        tool(
+            "undo",
+            "Undo",
+            "Undo the last change (one command, batch or gesture). Returns {undone: bool}. Your undo stays in your own work: when the last step was made by the user or another agent it is refused (code `otherAuthor`), naming the step and its author; inspect_document's `history.steps` shows who made each step.",
+            others(),
+            false,
+        ),
+        tool(
+            "redo",
+            "Redo",
+            "Redo the last undone change. Returns {redone: bool}. Like undo, it takes only your own steps unless `others` is true.",
+            others(),
+            false,
+        ),
         tool(
             "pointer",
             "Pointer gesture",
@@ -413,14 +491,76 @@ impl Backend for InDocument<'_> {
     fn describe(&self) -> String {
         self.inner.describe()
     }
+
+    fn take_error_detail(&mut self) -> Option<Value> {
+        self.inner.take_error_detail()
+    }
+
+    fn app_info(&mut self) -> Option<Value> {
+        self.inner.app_info()
+    }
 }
+
+/// Why a tool call failed: the text, and what kind of failure it is when the tool itself knows
+/// (`None`: the backend's detail for this text, else a check of the arguments, code `badParams`).
+struct Failure {
+    message: String,
+    detail: Option<Value>,
+    /// The code when neither the tool nor the backend says what kind of failure this is.
+    fallback: &'static str,
+}
+
+impl Failure {
+    fn coded(code: &str, message: impl Into<String>) -> Self {
+        let message = message.into();
+        Self { detail: Some(error_detail(code, &message)), message, fallback: "failed" }
+    }
+
+    /// What a backend call said, when it isn't about the arguments (a render, an export): the
+    /// backend's own detail when it gave one, else just "it failed".
+    fn from_backend(message: String) -> Self {
+        Self { message, detail: None, fallback: "failed" }
+    }
+
+    /// A complaint about argument `param`.
+    fn param(param: &str, message: impl Into<String>) -> Self {
+        let mut f = Self::coded("badParams", message);
+        if let Some(d) = f.detail.as_mut() {
+            d["param"] = json!(param);
+        }
+        f
+    }
+}
+
+impl From<String> for Failure {
+    fn from(message: String) -> Self {
+        Self { message, detail: None, fallback: "badParams" }
+    }
+}
+
+impl From<&str> for Failure {
+    fn from(message: &str) -> Self {
+        Self::from(message.to_string())
+    }
+}
+
+type Outcome = Result<ToolResult, Failure>;
 
 fn exec(b: &mut dyn Backend, cmd: &str, params: Value) -> Result<Value, String> {
     b.call("engine.execute", json!({"command": cmd, "params": params}))
 }
 
-fn wait_for_changes(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
-    b.call("events.poll", Value::Object(a.clone())).map(|v| ToolResult::json(&v))
+/// `params` with the call's `ifRevision`, when it has one: the engine refuses the command unless
+/// the document is still at that revision.
+fn conditional(a: &Map<String, Value>, mut params: Value) -> Value {
+    if let (Some(rev), Some(o)) = (a.get(IF_REVISION).filter(|v| !v.is_null()), params.as_object_mut()) {
+        o.insert(IF_REVISION.into(), rev.clone());
+    }
+    params
+}
+
+fn wait_for_changes(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
+    Ok(b.call("events.poll", Value::Object(a.clone())).map(|v| ToolResult::json(&v))?)
 }
 
 fn args_obj(args: &Value) -> Result<Map<String, Value>, String> {
@@ -535,53 +675,410 @@ fn refuse_unknown_args(schema: &Value, args: &Value, path: &str) -> Result<(), S
     Ok(())
 }
 
-/// Run one tool. Every failure becomes an `isError` result (never a panic).
+/// What a server remembers between tool calls: the working document, the open file that calls
+/// without `document` read and change. It is chosen by `open_file`, `use_document` and any call
+/// that names `document`, and otherwise taken once from the tab in front; after that the tab in
+/// front can change (the user clicks another one) without a call landing in another file.
+#[derive(Clone, Debug, Default)]
+pub struct ToolState {
+    working: Option<Working>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct Working {
+    id: u64,
+    name: String,
+}
+
+impl ToolState {
+    /// The working document as a control call's `document` (its id), once there is one.
+    pub fn document(&self) -> Option<Value> {
+        self.working.as_ref().map(|w| json!(w.id))
+    }
+}
+
+/// One open document, as `doc.list` gives it.
+#[derive(Clone, Debug)]
+struct Open {
+    id: u64,
+    name: String,
+    /// `None` from an app that doesn't count revisions yet.
+    revision: Option<u64>,
+    front: bool,
+}
+
+/// A document's name as results carry it: one line, short enough that naming the document never
+/// pushes a response that fitted its size limit over it.
+fn short_name(name: &str) -> String {
+    name.chars().filter(|c| !c.is_control()).take(48).collect()
+}
+
+impl Open {
+    /// `{id, name, revision, front}`: what every result says about the document it is about.
+    fn identity(&self) -> Value {
+        let mut v = json!({"id": self.id, "name": short_name(&self.name), "front": self.front});
+        if let Some(r) = self.revision {
+            v["revision"] = json!(r);
+        }
+        v
+    }
+}
+
+/// The open documents. Asked without `document`, so `front` is the tab the user sees in front.
+fn open_documents(b: &mut dyn Backend) -> Result<Vec<Open>, String> {
+    let list = exec(b, "doc.list", json!({}))?;
+    Ok(list
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|d| {
+                    Some(Open {
+                        id: d.get("id")?.as_u64()?,
+                        name: d.get("name").and_then(Value::as_str).unwrap_or_default().to_string(),
+                        revision: d.get("revision").and_then(Value::as_u64),
+                        front: d.get("active").and_then(Value::as_bool).unwrap_or(false),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+/// "Name" (id 3), "Other" (id 5): the open documents in an error message.
+fn listed(docs: &[Open]) -> String {
+    match docs {
+        [] => "none".into(),
+        docs => docs.iter().map(|d| format!("\"{}\" (id {})", short_name(&d.name), d.id)).collect::<Vec<_>>().join(", "),
+    }
+}
+
+/// The id of the document a call names with `document`: a number is the id itself; a path is
+/// found by the engine, which is asked which document it is.
+fn named_document(b: &mut dyn Backend, document: &Value) -> Result<u64, Failure> {
+    let not_a_document = || Failure::param("document", format!("`document` must be an open file's id (a number) or its path, not {document}"));
+    match document {
+        Value::Number(n) => n.as_u64().ok_or_else(not_a_document),
+        Value::String(path) if !path.is_empty() => {
+            let doc = b.call("document.inspect", json!({"depth": 0, "fields": [], "document": path}))?;
+            doc.get("id").and_then(Value::as_u64).ok_or_else(|| Failure::coded("failed", "the app did not say which document that path is"))
+        }
+        _ => Err(not_a_document()),
+    }
+}
+
+/// The document a call acts on: the one it names, else the working document, else (the first
+/// time) the tab in front. `None`: no document is open.
+fn target_document(state: &ToolState, b: &mut dyn Backend, explicit: Option<&Value>) -> Result<Option<u64>, Failure> {
+    match (explicit, &state.working) {
+        (Some(document), _) => named_document(b, document).map(Some),
+        (None, Some(w)) => Ok(Some(w.id)),
+        (None, None) => Ok(open_documents(b)?.iter().find(|d| d.front).map(|d| d.id)),
+    }
+}
+
+/// Run one tool for a caller that keeps nothing between calls: each call acts on the document it
+/// names, else on the tab in front. A server uses [`call_tool_in`], which remembers the working
+/// document. Every failure becomes an `isError` result (never a panic).
 pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
+    call_tool_in(&mut ToolState::default(), b, name, args)
+}
+
+/// Run one tool. Every failure becomes an `isError` result (never a panic) that says what failed
+/// in words and as `{code, message, …}`; every result of a tool that reads or changes a document
+/// names that document (`{id, name, revision, front}`).
+pub fn call_tool_in(state: &mut ToolState, b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
+    if !TOOL_NAMES.contains(&name) {
+        let mut f = Failure::coded("unknownTool", format!("unknown tool `{name}` (tools/list has: {})", TOOL_NAMES.join(", ")));
+        if let Some(d) = f.detail.as_mut() {
+            d["tool"] = json!(name);
+        }
+        return refused(b, f);
+    }
     let mut a = match args_obj(args) {
         Ok(a) => a,
-        Err(e) => return ToolResult::error(e),
+        Err(e) => return refused(b, Failure::param("arguments", e)),
     };
     // Built once: the catalogue is the same on every call.
     static TOOLS: std::sync::LazyLock<Vec<Value>> = std::sync::LazyLock::new(tool_definitions);
     if let Some(schema) = TOOLS.iter().find(|t| t.get("name").and_then(Value::as_str) == Some(name)).and_then(|t| t.get("inputSchema"))
         && let Err(e) = refuse_unknown_args(schema, &Value::Object(a.clone()), "")
     {
-        return ToolResult::error(e);
+        return refused(b, Failure::coded("badParams", e));
     }
-    let mut targeted;
-    let b: &mut dyn Backend = match a.remove("document").filter(|d| !d.is_null()) {
-        Some(document) => {
-            targeted = InDocument { inner: b, document };
-            &mut targeted
-        }
-        None => b,
+    if a.get(IF_REVISION).is_some_and(|v| !(v.is_null() || v.is_u64())) {
+        return refused(b, Failure::param(IF_REVISION, "`ifRevision` must be a revision number (a whole number, 0 or more)"));
+    }
+    match name {
+        "get_capabilities" => return get_capabilities(state, b).unwrap_or_else(|f| refused(b, f)),
+        "use_document" => return use_document(state, b, &a).unwrap_or_else(|f| refused(b, f)),
+        _ => {}
+    }
+    let explicit = a.remove("document").filter(|d| !d.is_null());
+    let on_document = DOCUMENT_TOOLS.contains(&name) || CANVAS_TOOLS.contains(&name);
+    let target = match on_document {
+        true => match target_document(state, b, explicit.as_ref()) {
+            Ok(t) => t,
+            Err(f) => return not_open(state, b, f, None, explicit.as_ref()),
+        },
+        false => None,
     };
-    let r = match name {
-        "list_commands" => list_commands(b, &a),
-        "run_command" => run_command(b, &a),
-        "batch" => batch(b, &a),
-        "create_node" => create_node(b, &a),
-        "set_properties" => set_properties(b, &a),
-        "inspect_document" => inspect_document(b, &a),
-        "get_node" => get_node(b, &a),
-        "select" => select(b, &a),
-        "export" => export(b, &a),
-        "screenshot" => screenshot(b, &a),
-        "open_file" => open_file(b, &a),
-        "save_file" => save_file(b, &a),
-        "undo" => exec(b, "edit.undo", json!({})).map(|v| ToolResult::json(&v)),
-        "redo" => exec(b, "edit.redo", json!({})).map(|v| ToolResult::json(&v)),
-        "pointer" => pointer(b, &a),
-        "key" => key(b, &a),
-        "type_text" => type_text(b, &a),
-        "inspect_ui" => b.call("ui.inspect", json!({})).map(|v| ToolResult::json(&v)),
-        "wait_for_changes" => wait_for_changes(b, &a),
-        other => Err(format!("unknown tool `{other}` (tools/list has: {})", TOOL_NAMES.join(", "))),
+    // The file the call leaves as the working document, when it is another one than `target`.
+    let mut moved = None;
+    let outcome = match target {
+        Some(id) => run_tool(&mut InDocument { inner: b, document: json!(id) }, name, &a, &mut moved),
+        None => run_tool(b, name, &a, &mut moved),
     };
-    r.unwrap_or_else(ToolResult::error)
+    if !(on_document || name == "open_file") {
+        return outcome.unwrap_or_else(|f| refused(b, f));
+    }
+    about_document(state, b, outcome, moved.or(target), explicit.as_ref())
 }
 
-fn list_commands(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+fn run_tool(b: &mut dyn Backend, name: &str, a: &Map<String, Value>, moved: &mut Option<u64>) -> Outcome {
+    match name {
+        "list_commands" => list_commands(b, a),
+        "run_command" => run_command(b, a, moved),
+        "batch" => batch(b, a),
+        "create_node" => create_node(b, a),
+        "set_properties" => set_properties(b, a),
+        "inspect_document" => inspect_document(b, a),
+        "get_node" => get_node(b, a),
+        "select" => select(b, a),
+        "export" => export(b, a),
+        "screenshot" => screenshot(b, a),
+        "open_file" => open_file(b, a, moved),
+        "save_file" => save_file(b, a),
+        "undo" => travel(b, a, "edit.undo"),
+        "redo" => travel(b, a, "edit.redo"),
+        "pointer" => pointer(b, a),
+        "key" => key(b, a),
+        "type_text" => type_text(b, a),
+        "inspect_ui" => Ok(b.call("ui.inspect", json!({})).map(|v| ToolResult::json(&v))?),
+        "wait_for_changes" => wait_for_changes(b, a),
+        other => Err(Failure::coded("unknownTool", format!("unknown tool `{other}` (tools/list has: {})", TOOL_NAMES.join(", ")))),
+    }
+}
+
+/// What kind of failure `f` is: what the tool said, else what the backend said about this very
+/// message, else a check of the call's arguments.
+fn detail_of(b: &mut dyn Backend, f: &Failure) -> Value {
+    let from_backend = b.take_error_detail().filter(|d| d.get("message").and_then(Value::as_str) == Some(f.message.as_str()));
+    f.detail.clone().or(from_backend).unwrap_or_else(|| error_detail(f.fallback, &f.message))
+}
+
+/// The result of a call that failed without being about a document.
+fn refused(b: &mut dyn Backend, f: Failure) -> ToolResult {
+    let detail = detail_of(b, &f);
+    ToolResult::failed(&f.message, detail)
+}
+
+/// A failure that may be "that document is not open": then say which documents are, and that
+/// nothing was done anywhere. `target`: the document the call was sent to, when it got that far.
+fn not_open(state: &mut ToolState, b: &mut dyn Backend, f: Failure, target: Option<u64>, explicit: Option<&Value>) -> ToolResult {
+    let detail = detail_of(b, &f);
+    closed_or(state, b, f.message, detail, target, explicit, None)
+}
+
+/// Finish a failed call about a document: when the document it was for is not open (any more),
+/// the error says so, names it and lists the open ones; else it names the document it was for.
+fn closed_or(
+    state: &mut ToolState,
+    b: &mut dyn Backend,
+    message: String,
+    mut detail: Value,
+    target: Option<u64>,
+    explicit: Option<&Value>,
+    docs: Option<Vec<Open>>,
+) -> ToolResult {
+    let restarted = detail.get("restarted").and_then(Value::as_bool) == Some(true);
+    if restarted {
+        // Another run of the app: the ids this server remembers mean nothing there.
+        state.working = None;
+        return ToolResult::failed(&message, detail);
+    }
+    let no_document = detail.get("code").and_then(Value::as_str) == Some("noDocument") || message.starts_with("no open document ");
+    let Some(docs) = docs.or_else(|| open_documents(b).ok()) else { return ToolResult::failed(&message, detail) };
+    let open = target.and_then(|t| docs.iter().find(|d| d.id == t));
+    if let Some(d) = open {
+        detail["document"] = d.identity();
+        return ToolResult::failed(&message, detail);
+    }
+    if !no_document || docs.is_empty() && target.is_none() && explicit.is_none() {
+        return ToolResult::failed(&message, detail);
+    }
+    // Which document was meant: the one named, else the working document.
+    let working = state.working.clone().filter(|w| explicit.is_none() && target.is_none_or(|t| t == w.id));
+    let (what, document) = match (&working, explicit) {
+        (Some(w), _) => (
+            format!("the working document \"{}\" (id {}) is no longer open", short_name(&w.name), w.id),
+            json!({"id": w.id, "name": short_name(&w.name), "closed": true}),
+        ),
+        (None, Some(named)) => (format!("no open document {named}"), json!({"asked": named, "closed": true})),
+        (None, None) => (message.clone(), Value::Null),
+    };
+    let message = format!(
+        "{what}, so nothing was done. Open documents: {}. Choose one with use_document {{document}} (an id, or \"front\"), or open a file with open_file",
+        listed(&docs)
+    );
+    let mut detail = error_detail("noDocument", &message);
+    if !document.is_null() {
+        detail["document"] = document;
+    }
+    detail["documents"] = Value::Array(docs.iter().map(Open::identity).collect());
+    ToolResult::failed(&message, detail)
+}
+
+/// Finish a call that read or changed a document: remember which document it was (it is the
+/// working document from here on) and say so in the result, with the revision it is at now.
+fn about_document(state: &mut ToolState, b: &mut dyn Backend, outcome: Outcome, target: Option<u64>, explicit: Option<&Value>) -> ToolResult {
+    // The backend's word on a failure, before the next call to it replaces it.
+    let outcome = outcome.map_err(|f| {
+        let detail = detail_of(b, &f);
+        (f.message, detail)
+    });
+    if let Err((message, detail)) = &outcome
+        && detail.get("restarted").and_then(Value::as_bool) == Some(true)
+    {
+        return closed_or(state, b, message.clone(), detail.clone(), target, explicit, None);
+    }
+    let docs = open_documents(b).ok();
+    let open = target.and_then(|t| docs.as_ref()?.iter().find(|d| d.id == t).cloned());
+    if let Some(d) = &open {
+        state.working = Some(Working { id: d.id, name: d.name.clone() });
+    }
+    match outcome {
+        Ok(mut result) => {
+            match (&open, target, &docs) {
+                (Some(d), ..) => result.attach(json!({"document": d.identity()})),
+                // The call itself closed the document it ran on.
+                (None, Some(t), Some(_)) => {
+                    let name = state.working.as_ref().filter(|w| w.id == t).map(|w| short_name(&w.name));
+                    result.attach(json!({"document": {"id": t, "name": name, "closed": true}}));
+                }
+                _ => {}
+            }
+            result
+        }
+        Err((message, detail)) => closed_or(state, b, message, detail, target, explicit, docs),
+    }
+}
+
+/// `use_document`: choose the working document.
+fn use_document(state: &mut ToolState, b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
+    let asked = a
+        .get("document")
+        .filter(|d| !d.is_null())
+        .ok_or_else(|| Failure::param("document", "`document` is required: a file's id, its path, or \"front\""))?;
+    let wanted = match asked {
+        Value::String(s) if s == "front" => None,
+        other => match named_document(b, other) {
+            Ok(id) => Some(id),
+            Err(f) => return Ok(not_open(state, b, f, None, Some(asked))),
+        },
+    };
+    let docs = open_documents(b)?;
+    let chosen = match wanted {
+        Some(id) => docs.iter().find(|d| d.id == id),
+        None => docs.iter().find(|d| d.front),
+    };
+    let Some(doc) = chosen else {
+        let f = Failure::coded("noDocument", format!("no open document {asked}"));
+        let detail = detail_of(b, &f);
+        return Ok(closed_or(state, b, f.message, detail, wanted, Some(asked), Some(docs)));
+    };
+    state.working = Some(Working { id: doc.id, name: doc.name.clone() });
+    let mut result = ToolResult::json(&json!({"workingDocument": doc.identity(), "documents": docs.iter().map(Open::identity).collect::<Vec<_>>()}));
+    result.attach(json!({"document": doc.identity()}));
+    Ok(result)
+}
+
+/// `get_capabilities`: what this server and the app behind it can do. Everything in `features` is
+/// read from what the backend really has (its command list, its own answers), not assumed.
+fn get_capabilities(state: &mut ToolState, b: &mut dyn Backend) -> Outcome {
+    let commands = b.call("engine.commands", json!({}))?;
+    let commands = commands.as_array().cloned().unwrap_or_default();
+    let doc_of = |id: &str| {
+        commands.iter().find(|c| c.get("id").and_then(Value::as_str) == Some(id)).map(|c| c.get("params").and_then(Value::as_str).unwrap_or_default())
+    };
+    let has = |id: &str| doc_of(id).is_some();
+    let attached = b.has_ui();
+    let docs = open_documents(b)?;
+    // The working document is settled here, so what this answer says is what later calls use.
+    if state.working.as_ref().is_none_or(|w| !docs.iter().any(|d| d.id == w.id))
+        && let Some(front) = docs.iter().find(|d| d.front)
+    {
+        state.working = Some(Working { id: front.id, name: front.name.clone() });
+    }
+    let working = state.working.as_ref().and_then(|w| docs.iter().find(|d| d.id == w.id)).map(Open::identity);
+    // The design check rules this build runs (none without the design commands).
+    let checks: Vec<Value> = match has("design.check.rules") {
+        true => exec(b, "design.check.rules", json!({}))
+            .ok()
+            .and_then(|r| r.as_array().map(|a| a.iter().filter_map(|r| r.get("id").cloned()).collect()))
+            .unwrap_or_default(),
+        false => Vec::new(),
+    };
+    let app = b.app_info();
+    let app_feature =
+        |name: &str| app.as_ref().and_then(|i| i.get("features")).and_then(Value::as_array).is_some_and(|f| f.iter().any(|x| x == name));
+    // An attached app from before revisions has no `revision` in doc.list, and takes `ifRevision`
+    // as an unknown parameter: only an engine that documents it detects conflicts.
+    let revisions = doc_of("doc.list").is_some_and(|d| d.contains("revision"));
+    let roots = figcraft_engine::file_access::current().map(|r| r.to_json());
+    let out = json!({
+        "product": "FigCraft",
+        "version": env!("CARGO_PKG_VERSION"),
+        "protocol": crate::server::PROTOCOL_VERSION,
+        "backend": if attached { "attached" } else { "headless" },
+        "window": attached,
+        "player": attached,
+        "app": app,
+        "roots": roots,
+        "workingDocument": working,
+        "documents": docs.iter().map(Open::identity).collect::<Vec<_>>(),
+        "commands": commands.len(),
+        "features": {
+            "prototypeSimulator": has("proto.simulate"),
+            "scenarios": has("proto.scenario.run"),
+            "flowCheck": has("proto.check"),
+            "designContext": has("design.get"),
+            "checks": checks,
+            "workingDocument": true,
+            "conflictDetection": revisions,
+            "historyAuthors": doc_of("edit.undo").is_some_and(|d| d.contains("others")),
+            "structuredErrors": true,
+            "engineErrorCodes": !attached || app_feature("errorDetail"),
+            "appIdentity": !attached || app.as_ref().is_some_and(|i| i.get("instance").is_some()),
+        },
+        "limits": {
+            "maxLineBytes": crate::server::MAX_LINE,
+            "maxResponseBytes": MAX_RESPONSE,
+            "maxScreenshotSide": 8192,
+            "historySteps": 20,
+        },
+        "formats": {
+            "open": ["figcraft", "json", "fig", "jam", "sketch", "penpot", "svg", "png", "jpg", "gif", "webp", "bmp", "tiff"],
+            "save": ["figcraft", "fig"],
+            "export": ["png", "jpg", "svg", "webp", "pdf", "xml", "fig"],
+        },
+    });
+    let mut result = ToolResult::json(&out);
+    if let Some(w) = working {
+        result.attach(json!({"document": w}));
+    }
+    Ok(result)
+}
+
+/// `undo` / `redo`: one step back or forward, the caller's own unless it says `others`.
+fn travel(b: &mut dyn Backend, a: &Map<String, Value>, cmd: &str) -> Outcome {
+    let mut params = json!({});
+    if let Some(others) = a.get("others").filter(|v| !v.is_null()) {
+        params["others"] = others.clone();
+    }
+    Ok(exec(b, cmd, conditional(a, params)).map(|v| ToolResult::json(&v))?)
+}
+
+fn list_commands(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
     let filter = s_arg(a, "filter")?.map(str::to_lowercase).unwrap_or_default();
     let all = b.call("engine.commands", json!({}))?;
     let list: Vec<Value> = all
@@ -624,30 +1121,51 @@ fn list_commands(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResu
     Ok(ToolResult::text(out))
 }
 
-fn run_command(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+fn run_command(b: &mut dyn Backend, a: &Map<String, Value>, moved: &mut Option<u64>) -> Outcome {
     let cmd = req_s(a, "command")?;
     let params = match a.get("params") {
         None | Some(Value::Null) => json!({}),
         Some(v @ Value::Object(_)) => v.clone(),
-        Some(_) => return Err("`params` must be an object".into()),
+        Some(_) => return Err(Failure::param("params", "`params` must be an object")),
     };
     let mut params = params;
     friendly_params(&mut params);
-    exec(b, cmd, params).map(|v| ToolResult::json(&v))
+    let v = exec(b, cmd, conditional(a, params))?;
+    // The reverted file is the same document to the caller, under the id the engine gave it anew.
+    if cmd == "file.revert" {
+        *moved = v.get("id").and_then(Value::as_u64);
+    }
+    Ok(ToolResult::json(&v))
 }
 
-fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
-    let Some(Value::Array(cmds)) = a.get("commands") else { return Err("`commands` must be an array of {command, params}".into()) };
+/// A step of a batch that is wrong before anything runs: which step, and the command it names.
+fn bad_step(step: usize, command: Option<&str>, message: String) -> Failure {
+    let mut f = Failure::coded("badParams", message);
+    if let Some(d) = f.detail.as_mut() {
+        d["step"] = json!(step);
+        if let Some(c) = command {
+            d["command"] = json!(c);
+        }
+    }
+    f
+}
+
+fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
+    let Some(Value::Array(cmds)) = a.get("commands") else {
+        return Err(Failure::param("commands", "`commands` must be an array of {command, params}"));
+    };
     if cmds.is_empty() {
-        return Err("`commands` is empty".into());
+        return Err(Failure::param("commands", "`commands` is empty"));
     }
     let mut steps = Vec::with_capacity(cmds.len());
     for (i, c) in cmds.iter().enumerate() {
-        let Some(cmd) = c.get("command").and_then(Value::as_str) else { return Err(format!("step {i}: `command` must be a string")) };
+        let Some(cmd) = c.get("command").and_then(Value::as_str) else {
+            return Err(bad_step(i, None, format!("step {i}: `command` must be a string")));
+        };
         let params = match c.get("params") {
             None | Some(Value::Null) => json!({}),
             Some(v @ Value::Object(_)) => v.clone(),
-            Some(_) => return Err(format!("step {i} ({cmd}): `params` must be an object")),
+            Some(_) => return Err(bad_step(i, Some(cmd), format!("step {i} ({cmd}): `params` must be an object"))),
         };
         let mut params = params;
         friendly_params(&mut params);
@@ -662,10 +1180,10 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, Stri
     if let Some(mode) = a.get("onError") {
         params["onError"] = mode.clone();
     }
-    exec(b, "command.batch", params).map(|v| ToolResult::json(&v))
+    Ok(exec(b, "command.batch", conditional(a, params)).map(|v| ToolResult::json(&v))?)
 }
 
-fn create_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+fn create_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
     req_s(a, "type")?;
     for k in ["x", "y", "width", "height"] {
         n_arg(a, k)?;
@@ -674,7 +1192,7 @@ fn create_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult
         && !p.is_object()
         && !p.is_null()
     {
-        return Err("`props` must be an object".into());
+        return Err(Failure::param("props", "`props` must be an object"));
     }
     let mut params = Map::new();
     for k in ["type", "x", "y", "width", "height", "parent", "index", "name", "text", "path", "points", "closed", "props", "select"] {
@@ -685,16 +1203,16 @@ fn create_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult
     if let Some(Value::Object(p)) = params.get_mut("props") {
         normalize_props(p);
     }
-    let r = exec(b, "node.create", Value::Object(params))?;
-    let id = r.get("id").cloned().ok_or("node.create returned no id")?;
+    let r = exec(b, "node.create", conditional(a, Value::Object(params)))?;
+    let id = r.get("id").cloned().ok_or_else(|| Failure::coded("internal", "node.create returned no id"))?;
     let node = b.call("node.get", json!({"id": id, "depth": 0}))?;
     Ok(ToolResult::json(&json!({"id": id, "node": node})))
 }
 
-fn set_properties(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+fn set_properties(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
     let props = match a.get("props") {
         Some(Value::Object(p)) if !p.is_empty() => p.clone(),
-        _ => return Err("`props` must be a non-empty object".into()),
+        _ => return Err(Failure::param("props", "`props` must be a non-empty object")),
     };
     let mut props = props;
     normalize_props(&mut props);
@@ -702,11 +1220,11 @@ fn set_properties(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolRes
     let ids = ids_arg(a, "ids")?;
     if let Some(ids) = &ids {
         if ids.is_empty() {
-            return Err("`ids` is empty".into());
+            return Err(Failure::param("ids", "`ids` is empty"));
         }
         params["ids"] = json!(ids);
     }
-    let warnings = exec(b, "node.set", params)?.get("warnings").cloned();
+    let warnings = exec(b, "node.set", conditional(a, params))?.get("warnings").cloned();
     let ids = match ids {
         Some(i) => i,
         None => b
@@ -791,7 +1309,7 @@ fn inspection_options(a: &Map<String, Value>) -> Result<Value, String> {
     Ok(options)
 }
 
-fn inspect_document(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+fn inspect_document(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
     let depth = n_arg(a, "depth")?.unwrap_or(4.0).clamp(0.0, 64.0) as u64;
     let all = match a.get("allPages") {
         None | Some(Value::Null) => false,
@@ -864,7 +1382,7 @@ fn inspect_document(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolR
 /// fifteen thousand children answers with 10.5 MiB at depth 1, over the buffer the report in #912
 /// is about, and no depth makes that smaller because the width is at depth 1. So the subtree is
 /// cut by depth first, as the document's is, and then by a window over the children.
-fn get_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+fn get_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
     let id = id_arg(a.get("id").ok_or("`id` is required")?)?;
     let depth = n_arg(a, "depth")?.unwrap_or(1.0).clamp(0.0, 64.0) as u64;
     let offset = n_arg(a, "offset")?.unwrap_or(0.0).max(0.0).min(u32::MAX as f64) as usize;
@@ -873,7 +1391,11 @@ fn get_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, S
 
     let (value, wire) = node_at(b, id, depth, &options)?;
     if value.is_null() {
-        return Err(format!("no such layer {id}"));
+        let mut f = Failure::coded("noSuchNode", format!("no such layer {id}"));
+        if let Some(d) = f.detail.as_mut() {
+            d["node"] = json!(id);
+        }
+        return Err(f);
     }
     if wire <= budget && offset == 0 {
         return Ok(ToolResult::json(&value));
@@ -918,8 +1440,11 @@ fn get_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, S
     if used_wire + MARKER_RESERVE > budget {
         // Even with every child left out, the layer's own fields (a very long name, say) pass the
         // limit: an answer would be larger than the caller can read, so there is none.
-        return Err(format!(
-            "layer {id} takes {used_wire} bytes on the wire without its children, more than fit in maxBytes {max_bytes}; ask again with a larger `maxBytes`"
+        return Err(Failure::param(
+            "maxBytes",
+            format!(
+                "layer {id} takes {used_wire} bytes on the wire without its children, more than fit in maxBytes {max_bytes}; ask again with a larger `maxBytes`"
+            ),
         ));
     }
     // Children left out after the window were cut by size; a window that only `offset` moved, of a
@@ -1017,7 +1542,7 @@ fn with_marker(mut value: Value, cut: Cut, max_bytes: usize, over: bool, childre
     value
 }
 
-fn select(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+fn select(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
     let ids = ids_arg(a, "ids")?.ok_or("`ids` is required (an empty array deselects)")?;
     if ids.is_empty() {
         exec(b, "select.none", json!({}))?;
@@ -1028,7 +1553,7 @@ fn select(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, Str
     Ok(ToolResult::json(&json!({"selection": sel})))
 }
 
-fn export(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+fn export(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
     let mut params = Map::new();
     if let Some(ids) = ids_arg(a, "ids")? {
         params.insert("ids".into(), json!(ids));
@@ -1036,7 +1561,7 @@ fn export(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, Str
     let format = s_arg(a, "format")?.map(str::to_ascii_lowercase);
     if let Some(f) = &format {
         if !["png", "jpg", "jpeg", "svg", "webp", "pdf", "xml", "fig"].contains(&f.as_str()) {
-            return Err(format!("unknown format `{f}` (png|jpg|svg|webp|pdf|xml|fig)"));
+            return Err(Failure::param("format", format!("unknown format `{f}` (png|jpg|svg|webp|pdf|xml|fig)")));
         }
         params.insert("format".into(), json!(f));
     }
@@ -1070,11 +1595,11 @@ fn export(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, Str
     }
     if let Some(p) = s_arg(a, "path")? {
         params.insert("path".into(), json!(p));
-        return exec(b, "file.export", Value::Object(params)).map(|v| ToolResult::json(&v));
+        return Ok(exec(b, "file.export", Value::Object(params)).map(|v| ToolResult::json(&v))?);
     }
     let r = exec(b, "file.export", Value::Object(params))?;
     let fmt = r.get("format").and_then(Value::as_str).unwrap_or("png").to_string();
-    let bytes = decode_data(&r)?;
+    let bytes = decode_data(&r).map_err(Failure::from_backend)?;
     match fmt.as_str() {
         "png" => {
             let (w, h) = png_info(&bytes);
@@ -1099,12 +1624,12 @@ fn export(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, Str
     }
 }
 
-fn screenshot(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+fn screenshot(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
     let id = a.get("window").and_then(Value::as_u64);
     if (id.is_some() || matches!(a.get("window"), Some(Value::Bool(true)))) && b.has_ui() {
         let bytes = match id {
-            Some(id) => b.window_png(id)?,
-            None => b.screenshot_png()?,
+            Some(id) => b.window_png(id).map_err(Failure::from_backend)?,
+            None => b.screenshot_png().map_err(Failure::from_backend)?,
         };
         let (w, h) = png_info(&bytes);
         return Ok(ToolResult::image(&bytes, "image/png", &json!({"source": "window", "width": w, "height": h})));
@@ -1115,13 +1640,13 @@ fn screenshot(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult,
         return Err("`scale` must be positive".into());
     }
     let ids = ids_arg(a, "ids")?.unwrap_or_default();
-    let measured = if ids.is_empty() { page_children(b)? } else { ids.clone() };
+    let measured = if ids.is_empty() { page_children(b).map_err(Failure::from_backend)? } else { ids.clone() };
     let mut scale = req;
     if let Some((x0, y0, x1, y1)) = bounds_of(b, &measured) {
         let side = (x1 - x0).max(y1 - y0).max(1e-6);
         scale = scale.min(max / side);
     }
-    let mut bytes = b.render_png(&ids, scale)?;
+    let mut bytes = b.render_png(&ids, scale).map_err(Failure::from_backend)?;
     let (mut w, mut h) = png_info(&bytes);
     // Layer bounds leave out effects (shadows) and overflow of unclipped frames, but the render
     // includes them: shrink to the measured image until it fits `maxSize` (rounding can add a pixel).
@@ -1131,7 +1656,7 @@ fn screenshot(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult,
             break;
         }
         scale *= max / side;
-        bytes = b.render_png(&ids, scale)?;
+        bytes = b.render_png(&ids, scale).map_err(Failure::from_backend)?;
         (w, h) = png_info(&bytes);
     }
     Ok(ToolResult::image(
@@ -1141,28 +1666,31 @@ fn screenshot(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult,
     ))
 }
 
-fn open_file(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+/// `open_file`: the file opens in front and is the working document from here on (`moved`).
+fn open_file(b: &mut dyn Backend, a: &Map<String, Value>, moved: &mut Option<u64>) -> Outcome {
     let path = req_s(a, "path")?;
     let mut params = json!({"path": path});
     match a.get("variables") {
         None | Some(Value::Null) => {}
         Some(v @ (Value::String(_) | Value::Object(_))) => params["variables"] = v.clone(),
-        Some(_) => return Err("`variables` must be a path or the local variables JSON object".into()),
+        Some(_) => return Err(Failure::param("variables", "`variables` must be a path or the local variables JSON object")),
     }
     if let Some(reload) = a.get("reload").filter(|v| !v.is_null()) {
         params["reload"] = reload.clone();
     }
     let r = exec(b, "file.open", params)?;
+    // The opened file is in front now: read it there, and say which document it is.
     let doc = b.call("document.inspect", json!({"depth": 1}))?;
+    *moved = r.get("id").or_else(|| doc.get("id")).and_then(Value::as_u64);
     Ok(ToolResult::json(&json!({"opened": r, "document": doc})))
 }
 
-fn save_file(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+fn save_file(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
     let params = match s_arg(a, "path")? {
         Some(p) => json!({"path": p}),
         None => json!({}),
     };
-    exec(b, "file.save", params).map(|v| ToolResult::json(&v))
+    Ok(exec(b, "file.save", params).map(|v| ToolResult::json(&v))?)
 }
 
 fn mods(a: &Map<String, Value>, out: &mut Map<String, Value>) -> Result<(), String> {
@@ -1178,7 +1706,7 @@ fn mods(a: &Map<String, Value>, out: &mut Map<String, Value>) -> Result<(), Stri
     Ok(())
 }
 
-fn pointer(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+fn pointer(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
     let x = n_arg(a, "x")?.ok_or("`x` is required")?;
     let y = n_arg(a, "y")?.ok_or("`y` is required")?;
     let kind = s_arg(a, "kind")?.unwrap_or("click");
@@ -1203,24 +1731,28 @@ fn pointer(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, St
         }
     }
     mods(a, &mut p)?;
-    b.call("ui.pointer", Value::Object(p)).map(|v| ToolResult::json(&v))
+    Ok(b.call("ui.pointer", Value::Object(p)).map(|v| ToolResult::json(&v))?)
 }
 
-fn key(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+fn key(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
     let k = req_s(a, "key")?;
     let mut p = Map::new();
     p.insert("key".into(), json!(k));
     mods(a, &mut p)?;
-    b.call("ui.key", Value::Object(p)).map(|v| ToolResult::json(&v))
+    Ok(b.call("ui.key", Value::Object(p)).map(|v| ToolResult::json(&v))?)
 }
 
-fn type_text(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+fn type_text(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
     let text = req_s(a, "text")?;
     match a.get("id").filter(|v| !v.is_null()) {
         Some(id) => {
             let id = id_arg(id)?;
             exec(b, "text.edit.begin", json!({"id": id}))?;
-            let typed = b.call("ui.type", json!({"text": text}));
+            // What the backend says about a failure is kept now: the next call replaces it.
+            let typed = b.call("ui.type", json!({"text": text})).map_err(|message| {
+                let detail = b.take_error_detail();
+                Failure { message, detail, fallback: "failed" }
+            });
             // Always leave edit mode, even when typing failed.
             let ended = exec(b, "text.edit.end", json!({}));
             typed?;
@@ -1228,6 +1760,6 @@ fn type_text(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, 
             let node = b.call("node.get", json!({"id": id, "depth": 0}))?;
             Ok(ToolResult::json(&json!({"ok": true, "node": node})))
         }
-        None => b.call("ui.type", json!({"text": text})).map(|v| ToolResult::json(&v)),
+        None => Ok(b.call("ui.type", json!({"text": text})).map(|v| ToolResult::json(&v))?),
     }
 }

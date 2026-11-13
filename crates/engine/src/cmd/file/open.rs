@@ -56,7 +56,14 @@ pub(super) fn open_recent(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"files": files}))
 }
 
+/// `file.open`: the file in a tab (a new one, or the one it is open in), and which document that
+/// is ([`with_document`]).
 pub(crate) fn open(s: &mut Session, p: &Value) -> Result<Value> {
+    let out = open_tab(s, p)?;
+    Ok(with_document(s, out))
+}
+
+fn open_tab(s: &mut Session, p: &Value) -> Result<Value> {
     let variables = variables_param("file.open", p)?;
     if string(p, "path").is_none()
         && let Some(d) = string(p, "data")
@@ -120,12 +127,16 @@ pub(super) fn revert(s: &mut Session) -> Result<()> {
     let (loaded, _) = load_path(&path, None)?;
     let i = s.active;
     let uid = s.ds()?.uid;
+    let actor = s.agent.clone();
     if let Some(slot) = s.docs.get_mut(i) {
-        *slot = DocState::new(loaded.doc, Some(path.clone()))
+        let mut fresh = DocState::new(loaded.doc, Some(path.clone()))
             .with_versions(loaded.versions)
             .with_branches(loaded.branches)
             .with_images_left_in_file(&path, loaded.images_past_budget);
-        slot.on_disk = on_disk;
+        fresh.on_disk = on_disk;
+        // The same file as far as a caller is concerned: reading it again is its next revision.
+        fresh.continue_revisions(slot, "Revert to saved", actor.as_deref());
+        *slot = fresh;
     }
     // Edits on its branch tabs are reverted too.
     crate::branches::close_tabs(s, uid, None);

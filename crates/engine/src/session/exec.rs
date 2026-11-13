@@ -1,7 +1,8 @@
 use super::{
-    Arc, CommandSpec, Document, ENDS_PREVIEW, EngineError, Node, NodeId, PREVIEW_READ_ONLY, Result, Session, Value, bad, board, branches, cmd,
-    components, events, find_command, guard, library, normalize, params, textpreview,
+    Arc, CommandSpec, DocState, Document, ENDS_PREVIEW, EngineError, Node, NodeId, PREVIEW_READ_ONLY, Result, Session, Value, bad, board, branches,
+    cmd, components, events, find_command, guard, library, normalize, params, textpreview,
 };
+use crate::error::bad_param;
 
 /// Whether a command, or a batch wrapping one, imports a file passed as Base64 `data`.
 fn command_carries_import_bytes(id: &str, params: &Value) -> bool {
@@ -23,7 +24,44 @@ pub(crate) fn finite_check_candidates(doc: &Document, before: &Document) -> Vec<
     doc.changed_ids(before, usize::MAX).unwrap_or_default()
 }
 
+/// The reserved parameter every command takes: the revision the active document must be at.
+pub const IF_REVISION: &str = "ifRevision";
+
+/// A command's `ifRevision` (none, or `null`: unconditional) and, when it had one, its params
+/// without it.
+fn conditional(id: &str, params: &Value) -> Result<(Option<u64>, Option<Value>)> {
+    let Some(given) = params.get(IF_REVISION) else { return Ok((None, None)) };
+    let expected = match given {
+        Value::Null => None,
+        v => Some(v.as_u64().ok_or_else(|| bad_param(id, IF_REVISION, "`ifRevision` must be a revision number (a whole number, 0 or more)"))?),
+    };
+    let mut own = params.clone();
+    if let Some(o) = own.as_object_mut() {
+        o.remove(IF_REVISION);
+    }
+    Ok((expected, Some(own)))
+}
+
 impl Session {
+    /// Refuse command `id` unless the active document is at revision `expected` (`ifRevision`).
+    fn check_revision(&self, id: &str, expected: u64) -> Result<()> {
+        let ds = self.ds()?;
+        // Inside a group the steps before this one don't count: the group is one change, and each
+        // step is checked against the document the group started from.
+        let actual = ds.recorded_revision();
+        if expected == actual {
+            return Ok(());
+        }
+        let since = ds.changes_since(expected).into_iter().filter(|c| c.revision <= actual).collect();
+        Err(EngineError::Conflict(Box::new(crate::error::Conflict {
+            cmd: id.to_string(),
+            document: (ds.uid, ds.doc.name.clone()),
+            expected,
+            actual,
+            since,
+        })))
+    }
+
     /// Append a live event with the active document's identity (nothing without one). Inside a
     /// [`Session::grouped`] call the event is buffered and committed only when the group succeeds.
     fn record_event(&mut self, kind: &str, data: Value) {
@@ -68,8 +106,30 @@ impl Session {
 
     /// Run a command by id. Mutations become one undo step; a failure or panic leaves the document
     /// as it was.
+    ///
+    /// Every command takes the reserved parameter `ifRevision` (a number): the command runs only
+    /// when the active document is at that revision ([`DocState::doc_revision`]), and is refused
+    /// with [`EngineError::Conflict`] when somebody changed the document since the caller read it.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
+        // A command that runs other commands is one change with them, counted when it ends.
+        let outermost = self.executing == 0;
+        self.executing += 1;
+        let result = self.execute_command(id, params);
+        self.executing = if outermost { 0 } else { self.executing.saturating_sub(1) };
+        result
+    }
+
+    /// Whether what runs now is a change of its own for the document's revision: not a step of a
+    /// group and not a command another command runs (those are counted with what they are part of).
+    pub(super) fn counts_alone(&self) -> bool {
+        self.group_depth == 0 && self.executing <= 1
+    }
+
+    fn execute_command(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
+        // Taken out before the command's own parameters are checked: it is every command's.
+        let (if_revision, own) = conditional(id, params)?;
+        let params = own.as_ref().unwrap_or(params);
         crate::cmd::refuse_unknown_params(id, params)?;
         board::refuse_on_board(self, id)?;
         // Revert replaces the document's uid: refuse before ending previews or syncing branches.
@@ -78,6 +138,14 @@ impl Session {
         }
         branches::sync(self);
         self.apply_view_prefs();
+        // A change nothing recorded gets its revision before this command can make the next one.
+        // Not inside a group or another command: those make one change, counted when they end.
+        if self.counts_alone() {
+            self.docs.iter_mut().for_each(DocState::settle_revision);
+        }
+        if let Some(expected) = if_revision {
+            self.check_revision(id, expected)?;
+        }
         if textpreview::COMMANDS.contains(&id) {
             // A live preview is no edit: no undo step, normalisation or rollback here.
             let r = guard::run(id, || (spec.run)(self, params));
@@ -95,6 +163,9 @@ impl Session {
             ds.end_preview();
         }
         let before = self.ds().ok().map(|d| (d.doc.clone(), d.selection.clone(), d.page, d.uid));
+        // The revision this command starts from (a command of its own, not a step of a group):
+        // whatever it does is one change, and none when it fails.
+        let revision_before = self.ds().ok().filter(|_| self.counts_alone()).map(DocState::revision_mark);
         // Cut and copy write the clipboard before a later check can refuse the command.
         let clipboard_before = self.clipboard.clone();
         // An inner command of a batch can panic while the outer group is still open; remember the
@@ -115,7 +186,7 @@ impl Session {
             });
         match &result {
             Ok(_) => {
-                self.after_command(spec, before);
+                self.after_command(spec, before, revision_before.as_ref());
                 self.apply_view_prefs();
                 if spec.history && id != "edit.repeat" {
                     self.last_command = Some((id.to_string(), params.clone()));
@@ -139,6 +210,10 @@ impl Session {
                     ds.doc = doc;
                     ds.selection = sel;
                     ds.page = page;
+                    // What a group or an undo inside it counted is taken back with the edit.
+                    if let Some(mark) = revision_before {
+                        ds.restore_revision(mark);
+                    }
                 }
                 self.clipboard = clipboard_before;
             }
@@ -240,7 +315,13 @@ impl Session {
     }
 
     /// Bookkeeping after a successful command (normalised already): push undo, bump revision.
-    fn after_command(&mut self, spec: &CommandSpec, before: Option<(Arc<Document>, Vec<NodeId>, NodeId, u64)>) {
+    /// `counted_from`: the revision the command started from, when it is a command of its own.
+    fn after_command(
+        &mut self,
+        spec: &CommandSpec,
+        before: Option<(Arc<Document>, Vec<NodeId>, NodeId, u64)>,
+        counted_from: Option<&crate::doc_state::RevisionMark>,
+    ) {
         let Some((bdoc, bsel, bpage, uid)) = before else {
             if let Ok(ds) = self.ds_mut() {
                 ds.revision += 1;
@@ -251,6 +332,11 @@ impl Session {
         let edit = !Arc::ptr_eq(&ds.doc, &bdoc) && ds.interaction.is_none();
         ds.clean_selection();
         ds.revision += 1;
+        // A batch, an undo or a redo inside the command counted its change already: what the
+        // command did to the document after that (normalising it) is the same change.
+        if edit && counted_from.is_some_and(|mark| mark.counted_since(ds)) {
+            ds.same_revision(false);
+        }
         if edit {
             self.record(uid, spec.history.then_some(spec.label), bdoc, bsel, bpage);
         }
@@ -259,11 +345,22 @@ impl Session {
     /// Record an edit of document `uid` (it was `before`, shown with `selection` on `page`) as one
     /// undo step called `label` (`None`: not undoable). On a live session's document the edit is
     /// synced and the step is the user's own ([`live`]); otherwise it is a snapshot of `before`.
+    ///
+    /// This is where an edit is committed, so it is also where the document gets its next
+    /// revision ([`DocState::doc_revision`]) and the step its author (the agent the command runs
+    /// for, else the user). A group's edits are one change, counted when the group ends.
     pub(crate) fn record(&mut self, uid: u64, label: Option<&str>, before: Arc<Document>, selection: Vec<NodeId>, page: NodeId) {
+        let grouped = self.group_depth > 0;
+        let author = self.agent.clone();
+        // Undo and redo count themselves: the command around them has nothing left to count.
+        if self.counts_alone()
+            && let Some(ds) = self.docs.iter_mut().find(|d| d.uid == uid && d.unrecorded_change())
+        {
+            ds.committed(label.unwrap_or("Edit"), author.as_deref());
+        }
         if self.live_doc(uid) {
             return self.live_edit(uid, label);
         }
-        let grouped = self.group_depth > 0;
         if let (Some(label), Some(ds)) = (label, self.docs.iter_mut().find(|d| d.uid == uid)) {
             // A group becomes one step at its end: its edits add to the step it already pushed,
             // so a long batch keeps one snapshot, not one per edit (#1099).
@@ -271,7 +368,7 @@ impl Session {
                 ds.history.redo.clear();
                 return;
             }
-            ds.push_undo(label, before, selection, page);
+            ds.push_undo(label, author.as_deref(), before, selection, page);
             if grouped {
                 ds.history.group_step = Some(ds.history.undo.len());
             }

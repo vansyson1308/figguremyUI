@@ -432,6 +432,8 @@ pub fn run_script(script: &str, input: Option<&str>, out: Option<&str>) -> CliRe
         }
         None => (Session::new(), 0),
     };
+    // No window here: a step that only presents a prototype fails instead of reporting success.
+    s.windowless = true;
     // One undo step and all-or-nothing, the way the same commands behave through `command.batch`
     // (MCP, the control channel, plugins): `{"$step": n}` and `{"$ref": "name"}` resolve against the
     // steps before it, and a step that fails takes the whole script back instead of leaving the
@@ -450,9 +452,14 @@ pub fn run_script(script: &str, input: Option<&str>, out: Option<&str>) -> CliRe
     if let Err(e) = outcome {
         let cmd = steps.get(failed_at).map_or("", |step| step.command.as_str());
         let i = failed_at;
-        println!("{}", json!({"step": i, "command": cmd, "ok": false, "error": e.to_string(), "rolledBack": true}));
+        // The error names its step itself; here the step is said once, in front.
+        let why = match &e {
+            figcraft_engine::EngineError::Step { error, .. } => error.to_string(),
+            other => other.to_string(),
+        };
+        println!("{}", json!({"step": i, "command": cmd, "ok": false, "error": why, "errorDetail": e.detail(), "rolledBack": true}));
         // Plugin-supplied text: escape terminal controls and line breaks.
-        eprintln!("error: step {i} ({}) failed: {}", plain(cmd), plain(&e.to_string()));
+        eprintln!("error: step {i} ({}) failed: {}", plain(cmd), plain(&why));
         eprintln!("the script's document changes were rolled back");
         return Ok(ExitCode::from(1));
     }

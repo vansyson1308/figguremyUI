@@ -14,7 +14,17 @@ one request object per line, one reply line per request, in order.
 request:  {"id": 1, "method": "engine.execute", "params": {...}}
 reply:    {"id": 1, "ok": true, "result": ...}
           {"id": 1, "ok": false, "error": "message"}
+          {"id": 1, "ok": false, "error": "message", "errorDetail": {"code": "noSuchNode", "message": "message", "node": 41}}
 ```
+
+`errorDetail` (**app side pending**: the headless MCP backend sends it; the desktop app still
+replies with `error` alone) says what kind of failure `error` is, for a program: `{code, message}`
+plus, where the error knows them, `command`, `param`, `node`, `step`, `expected`, `actual`,
+`since`, `document`, `label`, `author`. It is `figcraft_engine::EngineError::detail()` for an
+engine error, and `{"code": "badParams" | "unknownMethod" | "failed", "message"}` for one the
+control handler raises itself. The codes are listed in [mcp.md](mcp.md) (Errors). A client reads it
+when it is there and otherwise takes the error as `{"code": "error", "message"}`; `error` stays
+the text it always was.
 
 Requests are queued and run on the UI thread at the start of the next frame, so replies reflect the
 real UI state. A request that the UI doesn't answer within 60 s gets a timeout error that says what
@@ -128,7 +138,21 @@ naming it and the ones it takes, never ignored; `ids` and `id` are always taken.
 `agent` (a string, next to `command`) runs the command for an AI agent of that name, as the MCP
 server does with its client's name: comments it makes are signed "<agent> (agent)" ("AI agent" for
 an empty name), marked `"agent": true`, and keep their own read state. Without it the command acts
-as the user (the name from Preferences).
+as the user (the name from Preferences). The undo step a command makes remembers that author
+(`document.inspect`: `history.steps`, `[{label, author}]`, `author` the agent's signed name or
+`user`), and an agent's `edit.undo` / `edit.redo` take only its own steps: one made by the user or
+another agent is refused, naming the step and its author, unless the params say `others: true`.
+
+**Revisions and conditional changes.** Every open document has a `revision`: 1 when it was opened,
+one more for every committed change (an edit, a batch, a finished gesture, an undo or redo, a
+reload from disk, a change from a live session; not reading, selecting or saving). It is in
+`document.inspect`, in each entry of `doc.list`, and in what `file.open`, `file.new` and
+`file.revert` return (with the document's `id`). Every command takes the reserved parameter
+`ifRevision` in its `params`: the command runs only when the document it acts on is at that
+revision, and is otherwise refused without changing anything, with an error that says the expected
+and the actual revision and lists the changes made in between with their authors (`errorDetail`:
+`{"code": "conflict", "expected", "actual", "since": [{revision, label, author}], "document"}`).
+The steps of a `command.batch` are checked against the revision the batch started from.
 
 ```json
 {"id":1,"method":"engine.execute","params":{"command":"shape.rectangle","params":{"x":10,"y":10,"width":100,"height":50}}}
@@ -256,6 +280,22 @@ whether a click where nothing reacts flashes them (`hotspotHints`) and they are 
 (`inspected`), whether its bars are hidden (`hideUi`), and the link an Open link notice waits to open (`linkNotice`, else `null`) (`null`
 when nothing plays). `presentOptions` holds the options the next presentation
 starts with (`scale`, `deviceFrame`, `comments`, `hotspotHints`, `inspect`, `hideUi`).
+`designContext` is the Design context panel as the person sees it (the left sidebar, opened from
+the rail, View ▸ Panels ▸ Design context or `view.designContext {section?, on?}`): whether it is
+`open`, its `rect` in window points, the `section` showing (`brief`, `assumptions`, `decisions`,
+`flow`, `findings` or `alternatives`), the file's `stage` and `briefRevision`, `counts`
+(`assumptions`, `decisions`, `proposedDecisions`, `scenarios`, `endStates`, `findings`,
+`openFindings`, `alternatives`), the `form` open in it (`assumption`, `decision`, `finding`,
+`findingAction`, `alternative`, `alternativeMember`, `alternativeSet`, `choose`, else `null`), what
+the engine last `refused` there (`{about, message}`: the entry or form and the engine's error as
+shown, else `null`), the entry a followed link points out (`highlight`), what refers to the
+selected layer (`selected`: `{node, refs}` with `design.forNode`'s answer), and the results it
+shows, each with `stale: true` once the file has changed since: `scenarioRun` (`{passed, total,
+failed, results: [{id, passed, failedStep, failures}]}`), `flowCheck` (`{problems: [{rule,
+severity, nodes, message}], screens}`), `checks` (`{findings: [{rule, severity, nodes, message}],
+summary, skipped: [rule ids], stage}`), `recorded` (what `design.check.record` last answered) and
+`compare` (`{set, members, warnings}`); each is `null` until it has been run in the panel. The
+panel reads the file every frame, so what a command changes shows on the next one.
 `textPreview` is true while a live text preview shows on the canvas (a hovered text style or named
 instance, a dragged axis slider; see `text.preview` in [mcp.md](mcp.md)).
 `focus` is keyboard navigation's state: the `region` with the keyboard (`toolbar`, `layers`,
@@ -297,6 +337,15 @@ tools, a press on a frame's or section's name label (as the canvas last drew it,
 frame's top edge) selects and drags that frame; a double-click there renames the frame in place in
 the desktop app (the name field opens over the label).
 
+`ui.pointer`, `ui.key` and `ui.type` act on the editor's canvas. While the presenter plays a
+prototype over it they are refused, with an error that says a prototype is playing and where the
+input goes instead, rather than selecting and editing layers of a canvas nobody sees: send the
+player's input with `ui.input` (window points; `ui.inspect` → `presenter.hotspots` gives each
+reacting layer's rect), or play the prototype without a window with the `proto.simulate` command.
+With the preview pane open the canvas still shows, so they work as usual; only a `ui.pointer` given
+in screen points (`sx`, `sy`) that lands on the pane is refused, since it would reach the canvas
+under the pane.
+
 ```json
 {"id":4,"method":"engine.execute","params":{"command":"tool.set","params":{"tool":"ellipse"}}}
 {"id":5,"method":"ui.pointer","params":{"kind":"drag","x":200,"y":200,"to":[300,260],"shift":true}}
@@ -310,12 +359,17 @@ tool, `ArrowUp`/`ArrowDown` open the previous/next thread of the Comments panel'
 (returns `{"comment": id}`). While text is being edited, the text shortcuts (Bold, alignment,
 size steps, Save…) run and other keys go to the text editor. Shortcuts follow the platform the app
 runs on (`cmd` is Cmd on macOS and Ctrl elsewhere; on macOS `ctrl` is the separate Control key).
-Returns `{"command": id}` for shortcuts.
+Returns `{"command": id}` for shortcuts. Refused while the presenter plays (see `ui.pointer`).
 
 ### `ui.type {text}`
 
 Type into the text being edited (start editing with a double-click, `text.edit.begin {id}`, or the
-text tool).
+text tool). Refused while the presenter plays (see `ui.pointer`).
+
+`ui.pointer`, `ui.key` and `ui.type` take `agent` like `engine.execute` (**app side pending**: the
+headless MCP backend reads it; the desktop app ignores it, so there a gesture an agent makes is
+recorded as the user's undo step): what the gesture or the typed text changes is then that agent's
+step in the undo history.
 
 ### `ui.input {events}`
 
@@ -434,6 +488,27 @@ command does the same.
 
 Closing a window closes its files, asking first when one has unsaved changes; the main window
 closing while others are open takes over one of them, and closing the last window quits.
+
+### `app.info {}`
+
+Which run of the app answers: `{"instance", "version", "pid"}`, plus `window` and `features` where
+the app says them. `instance` is 32 hex digits made once when the app starts; it stays the same for
+as long as that process runs and differs in every other run, so a client that reconnects (or finds
+the port answered by something else) can tell whether it reached the same app, with the same open
+files and undo history, or another one. `version` is the app's version and `pid` its process id
+(0 in the browser). It needs no open file.
+
+```json
+{"id":1,"method":"app.info"}
+{"id":1,"result":{"instance":"5f0c2a9e41d7b3a86e1f0c2a9e41d7b3","pid":41327,"version":"0.18.1"}}
+```
+
+`features` lists what this app's control channel does beyond the first protocol (`errorDetail`:
+failed replies carry it; `revision`: documents count revisions and commands take `ifRevision`); an
+app that leaves it out does neither. A client that reconnects asks again: when `instance` differs,
+the app was restarted, and every document id, node id and revision the client holds is stale.
+`figcraft-cli mcp --attach` asks on each new connection and fails the first tool call after a
+restart, once, with code `transport`; an app that doesn't know `app.info` is used as before.
 
 ### `app.quit {}`
 

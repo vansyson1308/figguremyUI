@@ -108,6 +108,7 @@ impl FigApp {
         state["pendingOpens"] = json!(self.ui.pending_opens.len());
         state["missingFonts"] = json!(self.ui.missing_fonts.as_ref().map(missing_fonts::Shown::inspect));
         state["presentTabs"] = tabs::present_tabs_inspect(self);
+        state["designContext"] = crate::design_context::inspect(self);
         state["frameTimes"] = self.frame_stats.times();
         state
     }

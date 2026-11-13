@@ -5,7 +5,8 @@ use figcraft_color::{BlendMode, Color, Paint};
 use figcraft_doc::NodeId;
 use serde_json::{Value, json};
 
-use crate::{EngineError, Result, Session, bad};
+use crate::error::bad_param;
+use crate::{EngineError, Result, Session};
 
 pub fn get<'a>(p: &'a Value, key: &str) -> Option<&'a Value> {
     p.get(key).filter(|v| !v.is_null())
@@ -36,14 +37,14 @@ pub fn num_or(p: &Value, key: &str, d: f64) -> f64 {
 }
 
 pub fn req_num(cmd: &str, p: &Value, key: &str) -> Result<f64> {
-    num(p, key).ok_or_else(|| bad(cmd, format!("`{key}` must be a number")))
+    num(p, key).ok_or_else(|| bad_param(cmd, key, format!("`{key}` must be a number")))
 }
 
 /// A list index from params: a whole number, never negative (no casting -1 to 0).
 pub fn req_index(cmd: &str, p: &Value, key: &str) -> Result<usize> {
     let k = req_num(cmd, p, key)?;
     if !(0.0..1e9).contains(&k) || k.fract() != 0.0 {
-        return Err(bad(cmd, format!("`{key}` out of range")));
+        return Err(bad_param(cmd, key, format!("`{key}` out of range")));
     }
     Ok(k as usize)
 }
@@ -58,7 +59,7 @@ pub fn string(p: &Value, key: &str) -> Option<String> {
 }
 
 pub fn req_string(cmd: &str, p: &Value, key: &str) -> Result<String> {
-    string(p, key).ok_or_else(|| bad(cmd, format!("`{key}` must be a string")))
+    string(p, key).ok_or_else(|| bad_param(cmd, key, format!("`{key}` must be a string")))
 }
 
 pub fn boolean(p: &Value, key: &str) -> Option<bool> {
@@ -92,7 +93,7 @@ pub fn id(p: &Value, key: &str) -> Option<NodeId> {
 }
 
 pub fn req_id(cmd: &str, p: &Value, key: &str) -> Result<NodeId> {
-    id(p, key).ok_or_else(|| bad(cmd, format!("`{key}` must be a node id")))
+    id(p, key).ok_or_else(|| bad_param(cmd, key, format!("`{key}` must be a node id")))
 }
 
 /// The offending value for an error message, cut to a few dozen characters so a huge param
@@ -113,7 +114,7 @@ fn shown(v: &Value) -> String {
 pub fn opt_id(cmd: &str, p: &Value, key: &str) -> Result<Option<NodeId>> {
     match get(p, key) {
         None | Some(Value::Null) => Ok(None),
-        Some(v) => id_of(v).map(Some).ok_or_else(|| bad(cmd, format!("`{key}` must be a node id (got {})", shown(v)))),
+        Some(v) => id_of(v).map(Some).ok_or_else(|| bad_param(cmd, key, format!("`{key}` must be a node id (got {})", shown(v)))),
     }
 }
 
@@ -143,17 +144,17 @@ pub fn req_targets(cmd: &str, s: &Session, p: &Value) -> Result<Vec<NodeId>> {
     match get(p, "ids") {
         Some(Value::Array(a)) => {
             if let Some(v) = a.iter().find(|v| id_of(v).is_none()) {
-                return Err(bad(cmd, format!("`ids`: every entry must be a node id (got {})", shown(v))));
+                return Err(bad_param(cmd, "ids", format!("`ids`: every entry must be a node id (got {})", shown(v))));
             }
         }
         Some(Value::Null) | None => {
             if let Some(v) = get(p, "id").filter(|v| !v.is_null())
                 && id_of(v).is_none()
             {
-                return Err(bad(cmd, format!("`id` must be a node id (got {})", shown(v))));
+                return Err(bad_param(cmd, "id", format!("`id` must be a node id (got {})", shown(v))));
             }
         }
-        Some(v) => return Err(bad(cmd, format!("`ids` must be an array (got {})", shown(v)))),
+        Some(v) => return Err(bad_param(cmd, "ids", format!("`ids` must be an array (got {})", shown(v)))),
     }
     let t = targets(s, p);
     if t.is_empty() {
@@ -282,7 +283,7 @@ pub fn blend(p: &Value, key: &str) -> Option<BlendMode> {
 pub fn parse<T: serde::de::DeserializeOwned>(cmd: &str, p: &Value, key: &str) -> Result<Option<T>> {
     match get(p, key) {
         None => Ok(None),
-        Some(v) => serde_json::from_value(v.clone()).map(Some).map_err(|e| bad(cmd, format!("`{key}`: {e}"))),
+        Some(v) => serde_json::from_value(v.clone()).map(Some).map_err(|e| bad_param(cmd, key, format!("`{key}`: {e}"))),
     }
 }
 

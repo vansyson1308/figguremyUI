@@ -1,6 +1,6 @@
 use super::{
-    Done, FigApp, LeftTab, MobilePanel, NodeId, PANEL_DEFAULT, RightTab, Value, comments, dev_compare, dialogs, home, import_report, json, layers,
-    live, menus, missing_fonts, plugins_ui, present, tabs, updates_ui, versions,
+    Done, FigApp, LeftTab, MobilePanel, NodeId, PANEL_DEFAULT, RightTab, Value, comments, design_context, dev_compare, dialogs, home, import_report,
+    json, layers, live, menus, missing_fonts, plugins_ui, present, tabs, updates_ui, versions,
 };
 
 impl FigApp {
@@ -13,8 +13,23 @@ impl FigApp {
 
     /// Run a command, surfacing errors as a toast. Returns the result.
     pub fn run(&mut self, id: &str, params: Value) -> Option<Value> {
+        self.execute(id, &params).map_err(|e| self.failed(id, &e)).ok()
+    }
+
+    /// [`run`](Self::run) for a panel that shows what the engine refused next to what was asked
+    /// (a form's field, an entry's buttons) instead of in a toast: the error comes back as text.
+    pub fn try_run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        self.execute(id, &params).map_err(|e| {
+            let msg = e.to_string();
+            log::info!("{id}: {}", msg.escape_debug());
+            msg
+        })
+    }
+
+    /// Run a command for the user and do what the app owes every command it runs.
+    fn execute(&mut self, id: &str, params: &Value) -> figcraft_engine::Result<Value> {
         let layers_generation = self.session.clipboard.layers_generation;
-        let r = self.session.execute(id, &params);
+        let r = self.session.execute(id, params);
         self.clear_comment_draft_after_tool_set(id, r.is_ok());
         self.handle_ui_requests();
         self.invalidate_synthetic_copy(layers_generation);
@@ -22,7 +37,7 @@ impl FigApp {
         // `file.open`/`file.close`). Record that presentation before returning, so an in-flight
         // screenshot admitted on the old file cannot accept pixels from the new one.
         self.observe_presentation();
-        r.map_err(|e| self.failed(id, &e)).ok()
+        r
     }
 
     /// A programmatic command that changed the engine clipboard never wrote the system clipboard:
@@ -170,8 +185,13 @@ impl FigApp {
                     self.ui.left_tab = LeftTab::Assets;
                     self.ui.open_left_panel();
                     self.ui.versions = Default::default();
+                    design_context::close(self);
                 }
-                "panel.versionHistory" => versions::open(self),
+                "panel.versionHistory" => {
+                    design_context::close(self);
+                    versions::open(self);
+                }
+                "panel.designContext" => design_context::request(self, &r.data),
                 "view.devCompare" => {
                     self.ui.dev.compare = dev_compare::CompareView::requested(&r.data);
                 }

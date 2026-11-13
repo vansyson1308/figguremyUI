@@ -100,14 +100,35 @@ pub fn rail(app: &mut FigApp, ui: &mut Ui) {
     y += 44.0;
     ui.painter().line_segment([pos2(r.min.x + 18.0, y), pos2(r.max.x - 18.0, y)], Stroke::new(1.0, t.border));
     y += 12.0;
-    let items =
-        [(Icon::Page, tr("File"), Some(LeftTab::File)), (Icon::Assets, tr("Assets"), Some(LeftTab::Assets)), (Icon::Styles, tr("Variables"), None)];
-    for (icon, label, tab) in items {
+    // What a rail button shows: a tab of the left panel, the Variables window, or the design
+    // context in the left panel's place.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Shows {
+        Tab(LeftTab),
+        Variables,
+        Context,
+    }
+    let items = [
+        (Icon::Page, tr("File"), tr("File"), Shows::Tab(LeftTab::File)),
+        (Icon::Assets, tr("Assets"), tr("Assets"), Shows::Tab(LeftTab::Assets)),
+        (Icon::Styles, tr("Variables"), tr("Variables"), Shows::Variables),
+        (Icon::Brief, tr("Context"), tr("Design context: the brief, decisions, scenarios and findings"), Shows::Context),
+    ];
+    for (icon, label, tip, shows) in items {
         let ir = Rect::from_center_size(pos2(r.center().x, y + 18.0), vec2(40.0, 36.0));
         let hit = Rect::from_min_max(pos2(r.min.x, y), pos2(r.max.x, y + 56.0));
-        let resp = ui.interact(hit, ui.scope_id().with(("rail", label)), Sense::click()).tip(label);
-        let active = tab.is_some_and(|tb| tb == app.ui.left_tab && !app.ui.left_collapsed && !app.ui.versions.open);
-        if tab.is_some() {
+        let resp = ui.interact(hit, ui.scope_id().with(("rail", label)), Sense::click()).tip(tip);
+        let panel_shown = !app.ui.left_collapsed;
+        let active = match shows {
+            Shows::Tab(tb) => tb == app.ui.left_tab && panel_shown && !app.ui.versions.open && !app.ui.context.open,
+            Shows::Context => app.ui.context.open && panel_shown,
+            Shows::Variables => false,
+        };
+        let tab = match shows {
+            Shows::Tab(tb) => Some(tb),
+            _ => None,
+        };
+        if shows != Shows::Variables {
             a11y::tab(&resp, label, active);
         }
         if active {
@@ -129,6 +150,15 @@ pub fn rail(app: &mut FigApp, ui: &mut Ui) {
                         app.ui.open_left_panel();
                     }
                     app.ui.versions = Default::default();
+                    crate::design_context::close(app);
+                }
+                None if shows == Shows::Context => {
+                    // The button shows the design context, and puts the layers back when it does.
+                    if active {
+                        crate::design_context::close(app);
+                    } else {
+                        crate::design_context::open(app, None);
+                    }
                 }
                 None => {
                     app.ui.variables.get_or_insert_with(Default::default);
@@ -142,6 +172,10 @@ pub fn rail(app: &mut FigApp, ui: &mut Ui) {
 /// Draw the left panel: versions when open, otherwise the file/Assets header with in-place
 /// file rename and collapse control, followed by Pages and Layers or the Assets panel.
 pub fn left_panel(app: &mut FigApp, ui: &mut Ui) {
+    if app.ui.context.open {
+        crate::design_context::panel(app, ui);
+        return;
+    }
     if app.ui.versions.open {
         crate::versions::panel(app, ui);
         return;

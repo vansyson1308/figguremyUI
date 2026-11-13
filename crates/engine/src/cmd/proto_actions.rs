@@ -262,7 +262,7 @@ fn expr_json(cmd: &str, e: &Expr) -> Result<Value> {
 
 /// Expressions in a new action must work: set variable names a variable and its expression gives
 /// a value it can hold; conditions give true or false.
-fn check_action(cmd: &str, vars: &Variables, a: &Action) -> Result<()> {
+pub(super) fn check_action(cmd: &str, vars: &Variables, a: &Action) -> Result<()> {
     for x in walk(std::slice::from_ref(a)) {
         match x {
             Action::SetVariable { variable, expr, .. } => {

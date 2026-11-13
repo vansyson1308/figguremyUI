@@ -213,13 +213,19 @@ To keep going past a failed command, make a step a `command.batch` with `"onErro
 ([MCP server](mcp.md) has the rules). The script itself stays all-or-nothing: if a
 later top-level step fails, that batch's edits are rolled back with everything else.
 
-A failing step prints one line with `"ok": false`, the error and `"rolledBack": true`, writes
-nothing (`--out` is not saved, and the session's documents go back to how the script found them),
-and exits with code 1:
+A failing step prints one line with `"ok": false`, the error (as text, and as `errorDetail`: its
+stable `code` and what it is about, see [MCP server: Errors](mcp.md#errors)) and
+`"rolledBack": true`, writes nothing (`--out` is not saved, and the session's documents go back to
+how the script found them), and exits with code 1:
 
 ```text
-{"step":1,"command":"node.set","ok":false,"error":"no such node 99999","rolledBack":true}
+{"step":1,"command":"node.set","ok":false,"error":"no such node 99999","errorDetail":{"code":"noSuchNode","command":"node.set","message":"step 1 (node.set): no such node 99999","node":99999,"step":1},"rolledBack":true}
 ```
+
+A script runs without a window, so a step that only presents a prototype (`proto.present`,
+`proto.preview`) fails with code `unsupportedHere` instead of reporting success. A step may carry
+`ifRevision` in its params like any command (see [MCP server](mcp.md), Working document, revisions
+and conflicts).
 
 `--out` saves the result by extension like `convert`.
 

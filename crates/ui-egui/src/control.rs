@@ -10,6 +10,10 @@
 //! - `ui.pointer {kind: down|move|up|click|double|hover|drag, x, y (page) | sx, sy (screen), to?, shift?, alt?, cmd?}`
 //! - `ui.key {key, shift?, cmd?, alt?}` — a shortcut as if typed on the canvas
 //! - `ui.type {text}` — type into the text being edited
+//!
+//!   `ui.pointer`, `ui.key` and `ui.type` act on the editor's canvas and are refused while the
+//!   presenter covers it (`ui.input` reaches the player; `proto.simulate` plays without a window)
+//!
 //! - `ui.input {events: [{move|down|up: [x, y], button?} | {key, shift?, alt?, cmd?} | {text} | {leave}
 //!   | {hold: {alt?, shift?, cmd?}} | {gamepad: "A" | "Gamepad A" | 0}]}` — raw pointer and key events
 //!   for the next frame, as if from the window (panels, popovers); `hold` keeps modifier keys down
@@ -24,6 +28,8 @@
 //!   window), written to `path` or returned as base64 `data`
 //! - `window.new {path?, index?}` → `{window}` / `window.list {}` / `window.focus {id}` — several
 //!   windows (desktop)
+//! - `app.info {}` → `{instance, version, pid}`: which run of the app this is (`instance` is made
+//!   once at start and differs between runs)
 //! - `app.quit {}`
 //!
 //! Any method takes `window` (an id from `window.list`) to run in that window, with its tabs and
@@ -1513,10 +1519,18 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             }
             Ok(v)
         }
-        "ui.pointer" => pointer(app, p),
-        "ui.key" => ui_key(app, ctx, p),
+        "app.info" => Ok(json!({"instance": app.instance, "version": env!("CARGO_PKG_VERSION"), "pid": process_id()})),
+        "ui.pointer" => {
+            not_while_playing(app, ctx, method, p)?;
+            pointer(app, p)
+        }
+        "ui.key" => {
+            not_while_playing(app, ctx, method, p)?;
+            ui_key(app, ctx, p)
+        }
         "ui.input" => ui_input(app, ctx, p),
         "ui.type" => {
+            not_while_playing(app, ctx, method, p)?;
             let text = p.get("text").and_then(Value::as_str).ok_or("`text` required")?;
             figcraft_engine::textedit::insert(&mut app.session, text).map_err(|e| e.to_string())?;
             Ok(json!({"ok": true}))
@@ -1554,6 +1568,63 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
         }
         other => Err(format!("unknown method `{other}`")),
     }
+}
+
+/// This process's id, for `app.info` (a browser has none: 0).
+fn process_id() -> u32 {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::process::id()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        0
+    }
+}
+
+/// An id for this run of the app, made once when it starts (`app.info`): a client that reconnects
+/// tells from it whether it reached the same app or another one. It mixes the hasher keys the
+/// process got from the system, the clock, the process id and an address; it identifies a run, it
+/// keeps nothing secret.
+pub(crate) fn new_instance_id() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    let nanos = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let here = 0u8;
+    let part = |salt: u64| {
+        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+        h.write_u64(salt);
+        h.write_u128(nanos);
+        h.write_u32(process_id());
+        h.write_usize(std::ptr::from_ref(&here) as usize);
+        h.finish()
+    };
+    format!("{:016x}{:016x}", part(1), part(2))
+}
+
+/// Where input for a playing prototype goes instead of the canvas methods.
+const PLAYER_INPUT: &str = "send the player's input with `ui.input` (raw pointer and key events in window points; `ui.inspect` gives the \
+                            player's `hotspots`), or read what the prototype does without a window with the `proto.simulate` command";
+
+/// `ui.pointer`, `ui.key` and `ui.type` act on the editor's canvas. While a prototype plays over
+/// it they would edit the selection of a canvas nobody sees, so they are refused, with where the
+/// input belongs. The preview pane leaves the canvas in view: only a pointer given in screen
+/// points that lands on the pane (it would reach the canvas under it) is refused.
+fn not_while_playing(app: &FigApp, ctx: &Context, method: &str, p: &Value) -> Result<(), String> {
+    if app.ui.present.is_some() {
+        return Err(format!(
+            "a prototype is playing: `{method}` acts on the editor's canvas, which the presenter covers, so nothing was done; {PLAYER_INPUT}; an Escape key through `ui.input` closes the presenter"
+        ));
+    }
+    let on_pane = || {
+        let at = egui::pos2(p.get("sx")?.as_f64()? as f32, p.get("sy")?.as_f64()? as f32);
+        ctx.memory(|m| m.area_rect(crate::present::pane_id())).filter(|r| r.contains(at))
+    };
+    if method == "ui.pointer" && app.ui.preview.is_some() && p.get("x").and_then(Value::as_f64).is_none() && on_pane().is_some() {
+        return Err(format!(
+            "a prototype is playing in the preview pane at that point: `{method}` acts on the editor's canvas under the pane, so nothing was done; {PLAYER_INPUT}"
+        ));
+    }
+    Ok(())
 }
 
 fn pointer(app: &mut FigApp, p: &Value) -> Result<Value, String> {
@@ -1625,3 +1696,6 @@ mod capture_tests;
 
 #[cfg(test)]
 mod document_tests;
+
+#[cfg(test)]
+mod playing_tests;

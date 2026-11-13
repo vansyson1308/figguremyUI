@@ -158,6 +158,34 @@ fn fire_pads(p: &mut Presenter, doc: &Document, root: NodeId, pads: &[String], n
     false
 }
 
+/// The press is over: forget it. True when the pointer dragged while it was down.
+fn end_press(p: &mut Presenter) -> bool {
+    p.press = None;
+    p.press_hits.clear();
+    p.drag_scroll = None;
+    std::mem::take(&mut p.dragged)
+}
+
+/// The button came up over `hits` (the hotspots under the pointer, top-most first): a mouse up,
+/// then a click when the pointer didn't drag. A layer with both plays both, the mouse up first.
+/// Each is looked up in the player's document as it is by then: a press that just reverted, or
+/// the mouse up's own actions, may have changed which interactions a layer plays (an instance
+/// is back on the variant it showed before the press). True when one of them did something.
+fn release(p: &mut Presenter, hits: &[(NodeId, Rect)], dragged: bool, now: f64, root: NodeId) -> bool {
+    let pick = |p: &Presenter, want: Trigger| -> Option<(NodeId, usize, Rect)> {
+        let doc = p.doc.as_ref()?;
+        hits.iter().find_map(|(id, r)| find_trigger(doc, *id, |t| *t == want).map(|k| (*id, k, *r)))
+    };
+    let mut did = false;
+    if let Some((id, k, r)) = pick(p, Trigger::MouseUp) {
+        did |= p.gesture(id, k, Some(r), now, root);
+    }
+    if !dragged && let Some((id, k, r)) = pick(p, Trigger::OnClick) {
+        did |= p.fire(id, k, Some(r), now);
+    }
+    did
+}
+
 /// Pointer, wheel, keys and timers. `over_area`: the pointer is over the player; `keys_on`: the
 /// player takes the keyboard; `pane`: it plays in the preview pane (which always fits).
 pub(super) struct InputMode {
@@ -208,7 +236,17 @@ pub(super) fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, mode: In
     if let Some(tmp) = &p.temp {
         let leave = if tmp.press { released || !down } else { pos.is_none_or(|q| !tmp.rect.contains(q)) };
         if leave {
+            // The release that ends a press is still a release: a mouse up and, when the pointer
+            // didn't drag, a click. What shows now is the pressed state (another screen, another
+            // variant), so the layers it lands on are those the press began on, as they sit once
+            // the press has reverted, that the pointer is still over.
+            let lifted = tmp.press && released && p.press.is_some();
             p.revert(now);
+            if lifted {
+                let under: Vec<(NodeId, Rect)> = p.press_hits.iter().filter(|(_, r)| pos.is_some_and(|q| r.contains(q))).copied().collect();
+                let dragged = end_press(p);
+                release(p, &under, dragged, now, root);
+            }
             return;
         }
     }
@@ -267,6 +305,7 @@ pub(super) fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, mode: In
     // Press / drag / release.
     if pressed && pos.is_some() && over_area {
         p.press = pos;
+        p.press_hits.clone_from(&hits);
         p.dragged = false;
         // Pressing catches a fling (one springing back from past an end carries on).
         let overscrolled = |f: &Fling| p.doc.as_ref().is_some_and(|b| clamp_scroll(p.offset(f.target), p.limits(b, f.target)) != p.offset(f.target));
@@ -328,21 +367,11 @@ pub(super) fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, mode: In
     // Dragging scrolls with the pointer; past the ends it stretches.
     drag_scrolls(p, ctx, l, down, pos);
     if released && p.press.is_some() {
-        let dragged = p.dragged;
-        p.press = None;
-        p.dragged = false;
-        p.drag_scroll = None;
-        if let Some((id, k, r)) = pick(&|t| *t == Trigger::MouseUp)
-            && p.gesture(id, k, Some(r), now, root)
-        {
+        let dragged = end_press(p);
+        if release(p, &hits, dragged, now, root) {
             return;
         }
         if !dragged {
-            if let Some((id, k, r)) = pick(&|t| *t == Trigger::OnClick)
-                && p.fire(id, k, Some(r), now)
-            {
-                return;
-            }
             // A widget's clickable part calls its plugin back (after the frame, with the session).
             if let Some(q) = pos
                 && let Some(t) = layer_at(doc, root, &place, q).and_then(|hit| figcraft_engine::widgets::target_at(doc, hit, place.page(q)))

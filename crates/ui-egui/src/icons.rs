@@ -131,6 +131,9 @@ icons! {
     Eyedropper,
     Code,
     Assets,
+    /// The design context (the brief and what follows from it): a sheet with a point made at
+    /// its top and the lines that follow under it.
+    Brief,
     /// Libraries: an open book.
     Library,
     Layers,
