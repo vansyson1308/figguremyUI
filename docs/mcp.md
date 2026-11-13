@@ -1478,9 +1478,9 @@ Headless (one session, no windows) and in the browser the two commands do nothin
  "roots": null,
  "workingDocument": {"id": 1, "name": "Untitled", "revision": 1, "front": true},
  "documents": [{"id": 1, "name": "Untitled", "revision": 1, "front": true}],
- "commands": 676,
- "features": {"prototypeSimulator": false, "scenarios": false, "flowCheck": false,
-              "designContext": true, "checks": ["contrast.text", "contrast.unmeasured", "text.clipped", "…"],
+ "commands": 685,
+ "features": {"prototypeSimulator": true, "scenarios": true, "flowCheck": true,
+              "designContext": true, "checks": ["contrast.text", "contrast.unmeasured", "text.clipped", "…", "flow.brokenTarget", "…", "scenario.fails", "…"],
               "workingDocument": true, "conflictDetection": true, "historyAuthors": true,
               "structuredErrors": true, "engineErrorCodes": true, "appIdentity": true},
  "limits": {"maxLineBytes": 33554432, "maxResponseBytes": 8388608, "maxScreenshotSide": 8192, "historySteps": 20},
@@ -1488,8 +1488,8 @@ Headless (one session, no windows) and in the browser the two commands do nothin
              "save": ["figcraft", "fig"], "export": ["png", "jpg", "svg", "webp", "pdf", "xml", "fig"]}}
 ```
 
-(The numbers and the `false` features are this build's: a build with the prototype simulator
-answers `prototypeSimulator: true`.)
+(The numbers are this build's, which has 17 check rules: the design rules and the flow and scenario
+rules. An app from before the simulator answers `prototypeSimulator: false`.)
 
 - `backend` is `headless` (an engine in the server's process: no window, so no prototype player)
   or `attached` (the running app). `window` and `player` say the same as booleans; `app` is what an
