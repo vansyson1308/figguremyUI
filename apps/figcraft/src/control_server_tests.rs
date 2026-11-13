@@ -42,7 +42,8 @@ fn rejects_an_oversized_unterminated_frame_without_dispatch() {
     // Generate bytes as they are written; no giant input string and no terminating newline.
     std::io::copy(&mut std::io::repeat(b' ').take((MAX_LINE + 1) as u64), &mut client).unwrap();
     let mut reader = BufReader::new(client);
-    assert_eq!(reply(&mut reader), json!({"id": null, "ok": false, "error": "message too large"}));
+    let detail = json!({"code": "badParams", "message": "message too large"});
+    assert_eq!(reply(&mut reader), json!({"id": null, "ok": false, "error": "message too large", "errorDetail": detail}));
     assert_eq!(reader.read(&mut [0]).unwrap(), 0);
     worker.join().unwrap().unwrap();
     assert!(pending.lock().unwrap().is_empty());
@@ -146,7 +147,8 @@ fn full_queue_rejects_before_dispatch_and_ui_queue_stays_bounded() {
     let worker = std::thread::spawn(move || serve(server, q, context(), Duration::from_secs(5)));
     client.write_all(b"{\"id\":1,\"method\":\"engine.execute\"}\n").unwrap();
     let mut reader = BufReader::new(client);
-    assert_eq!(reply(&mut reader), json!({"id": 1, "ok": false, "error": "control request queue is full"}));
+    let detail = json!({"code": "failed", "message": "control request queue is full"});
+    assert_eq!(reply(&mut reader), json!({"id": 1, "ok": false, "error": "control request queue is full", "errorDetail": detail}));
     assert_eq!(pending.lock().unwrap().len(), MAX_QUEUED_REQUESTS);
     ui_queue.clear();
     drain_queue(&pending, &mut ui_queue);
