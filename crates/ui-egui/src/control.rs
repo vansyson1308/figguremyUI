@@ -3,13 +3,22 @@
 //! callback; [`drain`] admits and answers the UI-only work inside a real frame so replies reflect
 //! the drawn UI. Methods:
 //!
-//! - `engine.execute {command, params}` — run any command (no dialogs open)
+//! - `engine.execute {command, params, agent?}` — run any command (no dialogs open: a command
+//!   whose dialog was dropped answers with its result, an object result gaining
+//!   `"ui": "dropped (<kinds>)"`)
 //! - `engine.commands {}` — every command with its params doc
 //! - `document.inspect {depth?, allPages?}` / `node.get {id, depth?}`
 //! - `ui.inspect {}` — panel/tab/tool state, canvas rect, timings
 //! - `ui.pointer {kind: down|move|up|click|double|hover|drag, x, y (page) | sx, sy (screen), to?, shift?, alt?, cmd?}`
 //! - `ui.key {key, shift?, cmd?, alt?}` — a shortcut as if typed on the canvas
 //! - `ui.type {text}` — type into the text being edited
+//!
+//!   `ui.pointer`, `ui.key` and `ui.type` act on the editor's canvas and are refused while the
+//!   presenter covers it (`ui.input` reaches the player; `proto.simulate` plays without a window).
+//!   They take `agent` as `engine.execute` does: what the gesture changes is that agent's undo step,
+//!   and `ifRevision`, checked before they act; like `engine.execute`'s, their replies carry the
+//!   `revision` and `revisionDocument` they left
+//!
 //! - `ui.input {events: [{move|down|up: [x, y], button?} | {key, shift?, alt?, cmd?} | {text} | {leave}
 //!   | {hold: {alt?, shift?, cmd?}} | {gamepad: "A" | "Gamepad A" | 0}]}` — raw pointer and key events
 //!   for the next frame, as if from the window (panels, popovers); `hold` keeps modifier keys down
@@ -24,7 +33,14 @@
 //!   window), written to `path` or returned as base64 `data`
 //! - `window.new {path?, index?}` → `{window}` / `window.list {}` / `window.focus {id}` — several
 //!   windows (desktop)
+//! - `app.info {}` → `{instance, version, pid, window: true, features}`: which run of the app this
+//!   is (`instance` is made once at start and differs between runs) and what its control channel
+//!   does beyond the first protocol (`errorDetail`, `revision`, `canvasIfRevision`)
 //! - `app.quit {}`
+//!
+//! A failed request's reply carries what kind of failure it is ([`ControlReply::detail`], written
+//! as `errorDetail`): the engine's error detail, or `badParams` / `unknownMethod` / `failed` for
+//! the handler's own.
 //!
 //! Any method takes `window` (an id from `window.list`) to run in that window, with its tabs and
 //! panels; without it, requests go to the window last in front. `engine.execute`,
@@ -43,6 +59,76 @@ use crate::FigApp;
 pub struct ControlReply {
     pub id: Value,
     pub result: Result<Value, String>,
+    /// For a failed request, what kind of failure it is (`errorDetail`: `{code, message, …}`, the
+    /// engine's [`figcraft_engine::EngineError::detail`] or the handler's own code). `None`: the
+    /// transport writes `{"code": "failed", "message"}`.
+    pub detail: Option<Value>,
+    /// For `engine.execute` (and `ui.pointer`, `ui.key`, `ui.type`): the revision of the document
+    /// the request acted on, read right after it ran in the same request (written next to
+    /// `result` as `revision`), so a client needn't read it in another request that could include
+    /// somebody else's change.
+    pub revision: Option<u64>,
+    /// The id (`doc.list`'s) of the document [`revision`](Self::revision) belongs to (written as
+    /// `revisionDocument`): the request's `document`, or the tab in front, or the file a command
+    /// opened or made.
+    pub revision_document: Option<u64>,
+}
+
+impl ControlReply {
+    /// A reply that carries no detail of its own (a success, or a failure the transport codes).
+    pub fn new(id: Value, result: Result<Value, String>) -> Self {
+        Self { id, result, detail: None, revision: None, revision_document: None }
+    }
+
+    /// A reply with what kind of failure it is and the revision the request left (`(document,
+    /// revision)`), as [`handle`] keeps them in the app.
+    pub(crate) fn of(id: Value, result: Result<Value, String>, detail: Option<Value>, revision: Option<(u64, u64)>) -> Self {
+        Self { id, result, detail, revision: revision.map(|(_, r)| r), revision_document: revision.map(|(d, _)| d) }
+    }
+
+    /// The `errorDetail` a failed reply is written with: its own, else `{"code": "failed",
+    /// "message"}`. `None` for a success.
+    pub fn error_detail(&self) -> Option<Value> {
+        let message = self.result.as_ref().err()?;
+        let mut d = self.detail.clone().filter(|d| d.get("code").is_some_and(Value::is_string)).unwrap_or_else(|| json!({"code": "failed"}));
+        // The text is the reply's `error`, always.
+        d["message"] = json!(message);
+        Some(d)
+    }
+}
+
+/// A failed control method: its text, and what kind of failure it is (`errorDetail`).
+pub(crate) struct Failure {
+    message: String,
+    detail: Value,
+}
+
+impl Failure {
+    /// A failure the handler raises itself, with its `code` (`badParams`, `unknownMethod`,
+    /// `failed`).
+    pub(crate) fn coded(code: &str, message: impl Into<String>) -> Self {
+        let message = message.into();
+        Self { detail: json!({"code": code, "message": message}), message }
+    }
+}
+
+impl From<figcraft_engine::EngineError> for Failure {
+    fn from(e: figcraft_engine::EngineError) -> Self {
+        Self { message: e.to_string(), detail: e.detail() }
+    }
+}
+
+/// A bare message is the handler's own check of the request's parameters.
+impl From<String> for Failure {
+    fn from(message: String) -> Self {
+        Self::coded("badParams", message)
+    }
+}
+
+impl From<&str> for Failure {
+    fn from(message: &str) -> Self {
+        Self::coded("badParams", message)
+    }
 }
 
 /// Which side has finished a control request.
@@ -362,7 +448,7 @@ fn current_spec(ctx: &Context, viewport: egui::ViewportId) -> Option<CaptureSpec
 
 /// Send one reply carrying the request id, ignoring a disconnected receiver.
 fn reply(r: &mut ShotRequest, result: Result<Value, String>) {
-    let _ = r.reply.send(ControlReply { id: r.id.clone(), result });
+    let _ = r.reply.send(ControlReply::new(r.id.clone(), result));
 }
 
 /// Admit a screenshot request. Geometry is filled in on the next UI pass; until then the request
@@ -373,7 +459,7 @@ fn admit(app: &mut FigApp, r: ControlRequest, window: u64, now: f64) {
     let ControlRequest { id, method: _, params, reply: tx, state } = r;
     if app.capture.shots.len() >= MAX_SHOTS {
         if !canceled {
-            let _ = tx.send(ControlReply { id, result: Err(format!("too many screenshots are pending (at most {MAX_SHOTS})")) });
+            let _ = tx.send(ControlReply::new(id, Err(format!("too many screenshots are pending (at most {MAX_SHOTS})"))));
         }
         return;
     }
@@ -381,7 +467,7 @@ fn admit(app: &mut FigApp, r: ControlRequest, window: u64, now: f64) {
     let (document, presentation) = app.windows.presentation(&app.session, window);
     if let Err(e) = front_only(&app.session, Some(document), "ui.screenshot", &params) {
         if !canceled {
-            let _ = tx.send(ControlReply { id, result: Err(e) });
+            let _ = tx.send(ControlReply::of(id, Err(e.message), Some(e.detail), None));
         }
         return;
     }
@@ -526,7 +612,7 @@ pub fn background(app: &mut FigApp, ctx: &Context) {
         }
         let target = r.params.get("window").and_then(Value::as_u64).unwrap_or(app.windows.focused);
         if !app.windows.exists(target) {
-            let _ = r.reply.send(ControlReply { id: r.id, result: Err(format!("no window {target}")) });
+            let _ = r.reply.send(ControlReply::new(r.id, Err(format!("no window {target}"))));
             continue;
         }
         let is_hidden = hidden(ctx, target) || stopped_drawing(app, ctx, target, now);
@@ -555,7 +641,7 @@ pub fn background(app: &mut FigApp, ctx: &Context) {
         }
         if r.method == "window.new" {
             let error = format!("window {target} is minimised or hidden: `window.new` needs it on screen");
-            let _ = r.reply.send(ControlReply { id: r.id, result: Err(error) });
+            let _ = r.reply.send(ControlReply::new(r.id, Err(error)));
             continue;
         }
         if !r.begin() {
@@ -564,6 +650,8 @@ pub fn background(app: &mut FigApp, ctx: &Context) {
         // Outside a frame, so outside the frame's guard: within the window's swap, a panic still
         // ends in recovery copies and leaves every window its own state.
         let prefs = app.session.prefs.clone();
+        // A request that panicked is a bug: `internal` until `handle` says otherwise.
+        app.control_error = Some(json!({"code": "internal"}));
         let res = crate::windows::as_window(app, target, |app| {
             let mut res = Err("internal error".to_string());
             // Every control-channel gesture is fenced from the user's system clipboard.
@@ -573,6 +661,7 @@ pub fn background(app: &mut FigApp, ctx: &Context) {
             app.control_synthetic = before;
             res
         });
+        let (detail, revision) = (app.control_error.take(), app.control_revision.take());
         // A preference the command changed (the interface size, the theme) applies as each
         // window's next frame begins; no frame's end-of-frame check ran here, so ask every window.
         if app.session.prefs != prefs {
@@ -580,7 +669,10 @@ pub fn background(app: &mut FigApp, ctx: &Context) {
                 ctx.request_repaint_of(crate::windows::viewport(id));
             }
         }
-        let _ = r.reply.send(ControlReply { id: r.id, result: res.unwrap_or_else(|| Err(format!("no window {target}"))) });
+        let _ = match res {
+            Some(result) => r.reply.send(ControlReply::of(r.id, result, detail, revision)),
+            None => r.reply.send(ControlReply::new(r.id, Err(format!("no window {target}")))),
+        };
     }
     // A window a request still waits for is checked again soon: if it draws, its frame answers;
     // if it doesn't (minimised under Wayland), the next logic pass does.
@@ -769,7 +861,7 @@ fn route_queued(app: &mut FigApp, ctx: &Context, viewport: egui::ViewportId, now
             ctx.request_repaint_of(crate::windows::viewport(target));
             app.control_queue.push(r);
         } else {
-            let _ = r.reply.send(ControlReply { id: r.id, result: Err(format!("no window {target}")) });
+            let _ = r.reply.send(ControlReply::new(r.id, Err(format!("no window {target}"))));
         }
         return;
     }
@@ -785,13 +877,15 @@ fn route_queued(app: &mut FigApp, ctx: &Context, viewport: egui::ViewportId, now
     let before = app.control_synthetic;
     app.control_synthetic = true;
     let res = handle(app, ctx, &r.method, &r.params);
+    let (detail, revision) = (app.control_error.take(), app.control_revision.take());
     app.control_synthetic = before;
+    let reply = ControlReply::of(r.id, res, detail, revision);
     if r.method == "ui.input" && std::mem::take(&mut app.control_input_queued) {
         // Acknowledge once the pass that applies the batch is presented, never from a sizing
         // pass whose input is thrown away.
-        app.input_acks.push(crate::PendingAck { viewport, tx: r.reply, reply: ControlReply { id: r.id, result: res } });
+        app.input_acks.push(crate::PendingAck { viewport, tx: r.reply, reply });
     } else {
-        let _ = r.reply.send(ControlReply { id: r.id, result: res });
+        let _ = r.reply.send(reply);
     }
     ctx.request_repaint();
 }
@@ -973,7 +1067,7 @@ fn commit_shot(
             Err("the window didn't deliver a screenshot in time (is it visible?)".into())
         };
         // Enqueue before the gate is released and before `Replied` is visible to the transport.
-        let _ = reply.send(ControlReply { id: id.clone(), result });
+        let _ = reply.send(ControlReply::new(id.clone(), result));
     })
     .is_some()
 }
@@ -993,7 +1087,7 @@ fn b(p: &Value, k: &str) -> bool {
     p.get(k).and_then(Value::as_bool).unwrap_or(false)
 }
 
-fn ui_key(app: &mut FigApp, ctx: &Context, p: &Value) -> Result<Value, String> {
+fn ui_key(app: &mut FigApp, ctx: &Context, p: &Value) -> Result<Value, Failure> {
     let key = p.get("key").and_then(Value::as_str).ok_or("`key` required")?;
     let m = figcraft_engine::keymap::Mods { shift: b(p, "shift"), alt: b(p, "alt"), cmd: b(p, "cmd"), ctrl: b(p, "ctrl") };
     let platform = crate::shortcuts::platform();
@@ -1005,7 +1099,7 @@ fn ui_key(app: &mut FigApp, ctx: &Context, p: &Value) -> Result<Value, String> {
             return Ok(json!({"command": bd.id}));
         }
         let (word, line) = figcraft_engine::keymap::text_motion(platform, key, m);
-        figcraft_engine::textedit::key(&mut app.session, key, m.shift, word, line).map_err(|e| e.to_string())?;
+        figcraft_engine::textedit::key(&mut app.session, key, m.shift, word, line).map_err(Failure::from)?;
         return Ok(json!({"ok": true}));
     }
     // The keyboard selection box and pick select take their keys first, as on the keyboard.
@@ -1016,7 +1110,7 @@ fn ui_key(app: &mut FigApp, ctx: &Context, p: &Value) -> Result<Value, String> {
         }
     }
     // Vector edit mode and shape builder keys (tools, nudging points, delete, join, Enter).
-    if app.session.tool_key(key, m.shift, m.alt, m.cmd).map_err(|e| e.to_string())? {
+    if app.session.tool_key(key, m.shift, m.alt, m.cmd).map_err(Failure::from)? {
         return Ok(json!({"ok": true}));
     }
     // The Comment tool's arrows step through the comment threads.
@@ -1041,7 +1135,7 @@ fn ui_key(app: &mut FigApp, ctx: &Context, p: &Value) -> Result<Value, String> {
             // placement crosshair, as the window's key path does.
             if app.session.selection().is_empty() && app.session.tool.tool.draws_shape() && !app.session.tool.dev_mode && !(m.cmd || m.ctrl || m.alt)
             {
-                return app.session.execute("tool.crosshair", &json!({"dx": dx, "dy": dy, "big": m.shift})).map_err(|e| e.to_string());
+                return app.session.execute("tool.crosshair", &json!({"dx": dx, "dy": dy, "big": m.shift})).map_err(Failure::from);
             }
             // Otherwise, with nothing selected the arrows pan the view, as the window's own key path does.
             let (cmd, params) = if app.session.selection().is_empty() {
@@ -1062,9 +1156,9 @@ fn ui_key(app: &mut FigApp, ctx: &Context, p: &Value) -> Result<Value, String> {
             };
             // Dev Mode only inspects, as the window's key path says.
             if crate::menus::dev_mode_refuses(app, cmd) {
-                return Err("Developer Mode only inspects: switch to Design to edit".into());
+                return Err(Failure::coded("failed", "Developer Mode only inspects: switch to Design to edit"));
             }
-            app.session.execute(cmd, &params).map_err(|e| e.to_string())
+            app.session.execute(cmd, &params).map_err(Failure::from)
         }
         _ => {
             // Number keys: opacity (two in quick succession make an exact percentage). A
@@ -1072,7 +1166,7 @@ fn ui_key(app: &mut FigApp, ctx: &Context, p: &Value) -> Result<Value, String> {
             let now = app.clock.now();
             match egui::Key::from_name(name) {
                 Some(k) if m.is_none() && crate::shortcuts::opacity_digit(app, k, now) => Ok(json!({"opacity": true})),
-                _ => Err(format!("no shortcut `{key}`")),
+                _ => Err(format!("no shortcut `{key}`").into()),
             }
         }
     }
@@ -1440,9 +1534,9 @@ fn document_of(p: &Value) -> Option<&Value> {
 
 /// Run `f` with the request's `document` in front and the user's tab back afterwards, else on the
 /// tab in front (the same swap a command run in the background makes).
-fn in_document<T>(app: &mut FigApp, p: &Value, f: impl FnOnce(&mut Session) -> Result<T, String>) -> Result<T, String> {
+fn in_document<T>(app: &mut FigApp, p: &Value, f: impl FnOnce(&mut Session) -> Result<T, Failure>) -> Result<T, Failure> {
     let Some(target) = document_of(p) else { return f(&mut app.session) };
-    let forward = app.session.bring_forward(target).map_err(|e| e.to_string())?;
+    let forward = app.session.bring_forward(target)?;
     let r = f(&mut app.session);
     app.session.put_back(forward);
     r
@@ -1450,35 +1544,73 @@ fn in_document<T>(app: &mut FigApp, p: &Value, f: impl FnOnce(&mut Session) -> R
 
 /// A method that acts on the tab in front (`front`, a document uid) refuses a `document` naming
 /// another file instead of quietly acting on the wrong one.
-fn front_only(session: &Session, front: Option<u64>, method: &str, p: &Value) -> Result<(), String> {
+fn front_only(session: &Session, front: Option<u64>, method: &str, p: &Value) -> Result<(), Failure> {
     let Some(target) = document_of(p) else { return Ok(()) };
-    if Some(session.document_uid(target).map_err(|e| e.to_string())?) == front {
+    if Some(session.document_uid(target)?) == front {
         return Ok(());
     }
-    Err(format!("`{method}` acts on the tab in front: `document` can name another open file only for {}", DOCUMENT_METHODS.join(", ")))
+    Err(Failure::from(format!("`{method}` acts on the tab in front: `document` can name another open file only for {}", DOCUMENT_METHODS.join(", "))))
 }
 
-/// Handle one control method (also used by tests and the headless snapshot tool).
+/// Handle one control method (also used by tests and the headless snapshot tool). A failure's
+/// text is the error; what kind of failure it is (`errorDetail`) is kept in `app.control_error`
+/// for the reply (`None` after a success).
 pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Result<Value, String> {
+    app.control_revision = None;
+    match run_method(app, ctx, method, p) {
+        Ok(v) => {
+            app.control_error = None;
+            Ok(v)
+        }
+        Err(f) => {
+            app.control_error = Some(f.detail);
+            Err(f.message)
+        }
+    }
+}
+
+/// [`handle`], with what kind of failure each error is.
+fn run_method(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Result<Value, Failure> {
     if !DOCUMENT_METHODS.contains(&method) {
         front_only(&app.session, app.session.ds().ok().map(|d| d.uid), method, p)?;
     }
+    person_only(method, p)?;
     match method {
         "engine.execute" => {
             let cmd = p.get("command").and_then(Value::as_str).ok_or("`command` required")?;
             let params = p.get("params").cloned().unwrap_or(json!({}));
             let layers_generation = app.session.clipboard.layers_generation;
             let agent = p.get("agent").and_then(Value::as_str);
-            let r = in_document(app, p, |s| s.execute_as(agent, cmd, &params).map_err(|e| e.to_string()));
+            // The revision of the file the command acted on, read right after it ran, in the same
+            // request: the reply's `revision` (a later read could include somebody else's change).
+            let mut revision = None;
+            let r = in_document(app, p, |s| {
+                let r = s.execute_as(agent, cmd, &params);
+                revision = front_revision(s);
+                Ok(r?)
+            });
+            app.control_revision = revision;
             app.clear_comment_draft_after_tool_set(cmd, r.is_ok());
             app.invalidate_synthetic_copy(layers_generation);
-            // Programmatic calls never open dialogs.
-            app.session.ui_requests.retain(|u| !u.kind.starts_with("dialog."));
+            // Programmatic calls never open dialogs; a result that would read as if one had
+            // opened says it was dropped.
+            let mut dropped = Vec::new();
+            app.session.ui_requests.retain(|u| {
+                let dialog = u.kind.starts_with("dialog.");
+                if dialog {
+                    dropped.push(u.kind.clone());
+                }
+                !dialog
+            });
             app.handle_ui_requests();
             // A programmatic `doc.switch` changes the presented file just like a tab click: the
             // capture generation must see it even though this path bypasses `FigApp::run`.
             app.observe_presentation();
-            r
+            let mut v = r?;
+            if let (false, Some(o)) = (dropped.is_empty(), v.as_object_mut()) {
+                o.insert("ui".into(), json!(format!("dropped ({})", dropped.join(", "))));
+            }
+            Ok(v)
         }
         "engine.commands" => Ok(Value::Array(
             figcraft_engine::all_commands()
@@ -1495,16 +1627,20 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             let id = p.get("id").and_then(figcraft_engine::params::id_of).ok_or("`id` required")?;
             let depth = p.get("depth").and_then(Value::as_u64).unwrap_or(1) as usize;
             let options = figcraft_engine::inspect::InspectOptions::parse(p)?;
-            in_document(app, p, |s| {
-                s.doc().map(|d| figcraft_engine::inspect::node_json_with_options(d, id, depth, &options)).map_err(|e| e.to_string())
-            })
+            // While a person previews a version, the layer read is the version's: it says so.
+            in_document(app, p, |s| Ok(figcraft_engine::inspect::node_in_session(s, id, depth, &options)?))
         }
         "window.new" => {
             let index = p.get("index").and_then(Value::as_u64).map(|i| i as usize);
-            crate::windows::open(app, ctx, index, p.get("path").and_then(Value::as_str), None).map(|id| json!({"window": id}))
+            crate::windows::open(app, ctx, index, p.get("path").and_then(Value::as_str), None)
+                .map(|id| json!({"window": id}))
+                .map_err(|e| Failure::coded("failed", e))
         }
         "window.list" => Ok(crate::windows::list(app)),
-        "window.focus" => crate::windows::focus(app, ctx, p.get("id").and_then(Value::as_u64).ok_or("`id` required")?),
+        "window.focus" => {
+            let id = p.get("id").and_then(Value::as_u64).ok_or("`id` required")?;
+            crate::windows::focus(app, ctx, id).map_err(|e| Failure::coded("failed", e))
+        }
         "ui.inspect" => {
             let mut v = app.inspect();
             // The name of the control with the keyboard (what a screen reader announces).
@@ -1513,12 +1649,39 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             }
             Ok(v)
         }
-        "ui.pointer" => pointer(app, p),
-        "ui.key" => ui_key(app, ctx, p),
-        "ui.input" => ui_input(app, ctx, p),
+        // `window`: this app shows windows (the prototype player among them); `features`: what
+        // its control channel does beyond the first protocol.
+        "app.info" => Ok(json!({
+            "instance": app.instance,
+            "version": env!("CARGO_PKG_VERSION"),
+            "pid": process_id(),
+            "window": true,
+            "features": FEATURES,
+        })),
+        // A gesture or typed text for an AI agent (`agent`, as `engine.execute` takes it) is that
+        // agent's step in the undo history, as its commands are.
+        // With `ifRevision` it is refused, before anything happens, unless the file in front is at
+        // that revision; the reply names the revision the gesture left, as `engine.execute`'s does.
+        "ui.pointer" => {
+            not_while_playing(app, ctx, method, p)?;
+            let r = if_revision(app, method, p).and_then(|()| as_agent(app, p, |app| pointer(app, p)));
+            app.control_revision = front_revision(&app.session);
+            r
+        }
+        "ui.key" => {
+            not_while_playing(app, ctx, method, p)?;
+            let r = if_revision(app, method, p).and_then(|()| as_agent(app, p, |app| ui_key(app, ctx, p)));
+            app.control_revision = front_revision(&app.session);
+            r
+        }
+        "ui.input" => Ok(ui_input(app, ctx, p)?),
         "ui.type" => {
+            not_while_playing(app, ctx, method, p)?;
             let text = p.get("text").and_then(Value::as_str).ok_or("`text` required")?;
-            figcraft_engine::textedit::insert(&mut app.session, text).map_err(|e| e.to_string())?;
+            let r = if_revision(app, method, p)
+                .and_then(|()| as_agent(app, p, |app| figcraft_engine::textedit::insert(&mut app.session, text)).map_err(Failure::from));
+            app.control_revision = front_revision(&app.session);
+            r?;
             Ok(json!({"ok": true}))
         }
         "ui.menu.invoke" => {
@@ -1545,18 +1708,144 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             if !ids.is_empty() {
                 params["ids"] = json!(ids);
             }
-            in_document(app, p, |s| s.execute("file.export", &params).map_err(|e| e.to_string()))
+            in_document(app, p, |s| Ok(s.execute("file.export", &params)?))
         }
         "app.quit" => {
             app.ui.quit = true;
             ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Close);
             Ok(json!({"ok": true}))
         }
-        other => Err(format!("unknown method `{other}`")),
+        other => Err(Failure::coded("unknownMethod", format!("unknown method `{other}`"))),
     }
 }
 
-fn pointer(app: &mut FigApp, p: &Value) -> Result<Value, String> {
+/// What this app's control channel does beyond the first protocol (`app.info`): failed replies
+/// say what kind of failure they are (`errorDetail`), documents count revisions that commands
+/// can be made conditional on (`revision`, `ifRevision`), and the canvas methods (`ui.pointer`,
+/// `ui.key`, `ui.type`) check `ifRevision` too, in the request that acts (`canvasIfRevision`).
+const FEATURES: [&str; 3] = ["errorDetail", "revision", "canvasIfRevision"];
+
+/// The document in front and its revision, read right after a request acted on it: the reply's
+/// `revisionDocument` and `revision`.
+fn front_revision(s: &Session) -> Option<(u64, u64)> {
+    s.ds().ok().map(|d| (d.uid, d.doc_revision()))
+}
+
+/// The reserved `ifRevision` of a canvas method (`ui.pointer`, `ui.key`, `ui.type`): refused,
+/// before the gesture, key or text does anything, unless the document in front is at that
+/// revision (checked as a command's `ifRevision` is, code `conflict`). A gesture changes the
+/// document outside a command, so this is the only place the condition can be checked in the
+/// same request that acts.
+fn if_revision(app: &mut FigApp, method: &str, p: &Value) -> Result<(), Failure> {
+    let Some(v) = p.get("ifRevision").filter(|v| !v.is_null()) else { return Ok(()) };
+    let Some(expected) = v.as_u64() else {
+        let mut f = Failure::coded("badParams", "`ifRevision` must be a revision number (a whole number, 0 or more)");
+        f.detail["param"] = json!("ifRevision");
+        return Err(f);
+    };
+    Ok(app.session.require_revision(method, expected)?)
+}
+
+/// Run `f` as the AI agent the request names (`agent`), else as the user: what
+/// [`Session::acting_as`] does, for a gesture that needs the whole app (a pointer through the
+/// canvas tools, a key through the shortcuts), with the name formed as `execute_as` forms it.
+/// Whoever was acting before is put back however `f` ends: with an error, and with a panic,
+/// which goes on to the frame's guard (so the next request isn't taken for the agent's).
+pub(crate) fn as_agent<T>(app: &mut FigApp, p: &Value, f: impl FnOnce(&mut FigApp) -> T) -> T {
+    let agent = p.get("agent").and_then(Value::as_str).map(figcraft_engine::cmd::comment::agent_author);
+    let was = std::mem::replace(&mut app.session.agent, agent);
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&mut *app)));
+    app.session.agent = was;
+    match r {
+        Ok(v) => v,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
+/// The methods that act as the person at the window: raw input reaches every control (an
+/// Accept button among them), a menu item and a panel setting are the person's choices.
+const PERSON_ONLY: [&str; 3] = ["ui.input", "ui.menu.invoke", "ui.set"];
+
+/// `ui.input`, `ui.menu.invoke` and `ui.set` aren't taken for an AI agent (`agent`): what they
+/// do would be the person's, not the agent's, and could accept what only a person accepts.
+fn person_only(method: &str, p: &Value) -> Result<(), Failure> {
+    if !PERSON_ONLY.contains(&method) || p.get("agent").is_none_or(Value::is_null) {
+        return Ok(());
+    }
+    let mut f = Failure::coded(
+        "badParams",
+        format!(
+            "`{method}` acts as the person at the window (raw input can press any button, Accept among them), so it isn't run for an AI agent (`agent`); nothing was done. Run commands with `engine.execute` and `agent`, and canvas gestures with `ui.pointer`, `ui.key` and `ui.type` and `agent`"
+        ),
+    );
+    f.detail["param"] = json!("agent");
+    Err(f)
+}
+
+/// This process's id, for `app.info` (a browser has none: 0).
+fn process_id() -> u32 {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::process::id()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        0
+    }
+}
+
+/// An id for this run of the app, made once when it starts (`app.info`): a client that reconnects
+/// tells from it whether it reached the same app or another one. It mixes the hasher keys the
+/// process got from the system, the clock, the process id and an address; it identifies a run, it
+/// keeps nothing secret.
+pub(crate) fn new_instance_id() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    let nanos = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let here = 0u8;
+    let part = |salt: u64| {
+        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+        h.write_u64(salt);
+        h.write_u128(nanos);
+        h.write_u32(process_id());
+        h.write_usize(std::ptr::from_ref(&here) as usize);
+        h.finish()
+    };
+    format!("{:016x}{:016x}", part(1), part(2))
+}
+
+/// Where input for a playing prototype goes instead of the canvas methods.
+const PLAYER_INPUT: &str = "send the player's input with `ui.input` (raw pointer and key events in window points; `ui.inspect` gives the \
+                            player's `hotspots`), or read what the prototype does without a window with the `proto.simulate` command";
+
+/// `ui.pointer`, `ui.key` and `ui.type` act on the editor's canvas. While a prototype plays over
+/// it they would edit the selection of a canvas nobody sees, so they are refused, with where the
+/// input belongs. The preview pane leaves the canvas in view: only a pointer given in screen
+/// points that lands on the pane (it would reach the canvas under it) is refused.
+fn not_while_playing(app: &FigApp, ctx: &Context, method: &str, p: &Value) -> Result<(), Failure> {
+    if app.ui.present.is_some() {
+        return Err(Failure::coded(
+            "failed",
+            format!(
+                "a prototype is playing: `{method}` acts on the editor's canvas, which the presenter covers, so nothing was done; {PLAYER_INPUT}; an Escape key through `ui.input` closes the presenter"
+            ),
+        ));
+    }
+    let on_pane = || {
+        let at = egui::pos2(p.get("sx")?.as_f64()? as f32, p.get("sy")?.as_f64()? as f32);
+        ctx.memory(|m| m.area_rect(crate::present::pane_id())).filter(|r| r.contains(at))
+    };
+    if method == "ui.pointer" && app.ui.preview.is_some() && p.get("x").and_then(Value::as_f64).is_none() && on_pane().is_some() {
+        return Err(Failure::coded(
+            "failed",
+            format!(
+                "a prototype is playing in the preview pane at that point: `{method}` acts on the editor's canvas under the pane, so nothing was done; {PLAYER_INPUT}"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn pointer(app: &mut FigApp, p: &Value) -> Result<Value, Failure> {
     let zoom = app.session.ds().map(|d| d.view.zoom).unwrap_or(1.0);
     let at = |x: Option<f64>, y: Option<f64>, sx: Option<f64>, sy: Option<f64>| -> Option<(f64, f64)> {
         match (x, y, sx, sy) {
@@ -1587,7 +1876,7 @@ fn pointer(app: &mut FigApp, p: &Value) -> Result<Value, String> {
     // A drag's pressure goes from `pressure` to `pressureTo`.
     let (pr0, pr1) = (pressure("pressure"), pressure("pressureTo").or(pressure("pressure")));
     let kind = p.get("kind").and_then(Value::as_str).unwrap_or("click");
-    let run = |app: &mut FigApp, ev: PointerEvent| app.session.pointer(&ev).map_err(|e| e.to_string());
+    let run = |app: &mut FigApp, ev: PointerEvent| app.session.pointer(&ev).map_err(Failure::from);
     match kind {
         "down" => run(app, mk(PointerKind::Down, x, y))?,
         "move" => run(app, mk(PointerKind::Move, x, y))?,
@@ -1611,7 +1900,7 @@ fn pointer(app: &mut FigApp, p: &Value) -> Result<Value, String> {
             }
             run(app, PointerEvent { pressure: pr1, ..mk(PointerKind::Up, tx, ty) })?;
         }
-        other => return Err(format!("unknown pointer kind `{other}`")),
+        other => return Err(format!("unknown pointer kind `{other}`").into()),
     }
     app.handle_ui_requests();
     Ok(json!({"selection": app.session.selection(), "tool": app.session.tool.tool.id()}))
@@ -1625,3 +1914,9 @@ mod capture_tests;
 
 #[cfg(test)]
 mod document_tests;
+
+#[cfg(test)]
+mod playing_tests;
+
+#[cfg(test)]
+mod protocol_tests;

@@ -80,7 +80,20 @@ impl Session {
     /// Install a document that came from the session (others' edits): the selection, page and view
     /// stay where they can, and the undo history isn't touched.
     pub fn apply_remote(&mut self, uid: u64, doc: Arc<Document>) {
+        self.install_synced(uid, doc, "Change from the live session", None);
+    }
+
+    /// [`Session::apply_remote`], remembered as `label` by `author` when it changes the document
+    /// (your own undo or redo in the session comes through here too). A document that says the
+    /// same as the one shown (the server only confirmed your edit) is no change, so the document
+    /// keeps its revision.
+    pub(crate) fn install_synced(&mut self, uid: u64, doc: Arc<Document>, label: &str, author: Option<&str>) {
         let Some(old) = self.docs.iter().find(|d| d.uid == uid).map(|d| d.doc.clone()) else { return };
+        let differs = !Arc::ptr_eq(&old, &doc) && *old != *doc;
+        if let Some(ds) = self.docs.iter_mut().find(|d| d.uid == uid) {
+            // What changed before this without being recorded is a change of its own.
+            ds.settle_revision();
+        }
         // Edits merged from others can close a loop of components containing each other.
         let changed = crate::derived::changed_nodes(&doc, &old);
         if let Some(names) = crate::components::new_cycle(&old, &doc, changed.iter()) {
@@ -99,6 +112,10 @@ impl Session {
         }
         ds.clean_selection();
         ds.revision += 1;
+        // A gesture in progress keeps its own snapshot: its commit counts what it ends with.
+        if ds.interaction.is_none() {
+            if differs { ds.committed(label, author) } else { ds.same_revision(false) }
+        }
     }
 
     /// Your presence in the active document's session now: its page, selection, viewport and

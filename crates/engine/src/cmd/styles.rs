@@ -172,7 +172,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "variable.set",
             "Set variable value",
-            "{variable, mode? (name or id; default first), value | {alias: variable} (same type, no loops) | {alpha} | {mix} (colour variables; shapes as in variable.create; no loops)}",
+            "{variable (its id, `Collection/name`, or a name only one variable has), mode? (name or id; default first), value | {alias: variable} (same type, no loops) | {alpha} | {mix} (colour variables; shapes as in variable.create; no loops)}",
             true,
             var_set
         ),
@@ -184,7 +184,7 @@ pub fn specs() -> Vec<CommandSpec> {
             |s, p| {
                 let v = req_string("variable.delete", p, "variable")?;
                 let doc = s.doc_mut()?;
-                let var = doc.variables.get(&v).ok_or_else(|| bad("variable.delete", "no such variable"))?;
+                let var = doc.variables.find(&v).map_err(|e| bad("variable.delete", e))?;
                 if var.extends.is_some() {
                     return Err(bad("variable.delete", "an inherited variable stays while the collection it extends has it"));
                 }
@@ -197,7 +197,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "variable.bind",
             "Bind variable",
-            "{ids?, field (fill|stroke (first paint)|fills/<i>/color|strokes/<i>/color|fills/<i>/stops/<j>/color (gradient stops)|effects/<i>/<offsetX|offsetY|radius|startRadius|spread|color|lightAngle|lightIntensity|refraction|depth|dispersion|splay> (glass: `radius` is its frost; intensity, refraction, dispersion and splay in percent)|layoutGrids/<i>/<size|count|gutter|offset>|componentProperties/<name> (instances: boolean/text properties; variant properties take string variables naming a value)|width|height|opacity (percent)|cornerRadius|gap|paddingHorizontal|characters|visible|fontSize…; list indices bottom first), variable (null unbinds)}",
+            "{ids?, field (fill|stroke (first paint)|fills/<i>/color|strokes/<i>/color|fills/<i>/stops/<j>/color (gradient stops)|effects/<i>/<offsetX|offsetY|radius|startRadius|spread|color|lightAngle|lightIntensity|refraction|depth|dispersion|splay> (glass: `radius` is its frost; intensity, refraction, dispersion and splay in percent)|layoutGrids/<i>/<size|count|gutter|offset>|componentProperties/<name> (instances: boolean/text properties; variant properties take string variables naming a value)|width|height|opacity (percent)|cornerRadius|gap|paddingHorizontal|characters|visible|fontSize…; list indices bottom first), variable (its id, `Collection/name`, or a name only one variable has; null unbinds)}",
             true,
             bind
         ),
@@ -510,7 +510,7 @@ fn bind_style(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(EngineError::Disabled(cmd.into(), crate::library::READ_ONLY.into()));
     }
     let var = match string(p, "variable") {
-        Some(v) => Some(doc.variables.get(&v).map(|x| (x.id.clone(), x.kind)).ok_or_else(|| bad(cmd, "no such variable"))?),
+        Some(v) => Some(doc.variables.find(&v).map(|x| (x.id.clone(), x.kind)).map_err(|e| bad(cmd, e))?),
         None => None,
     };
     let Some(style) = doc.styles.get_mut(idx) else { return Err(bad(cmd, "no such style")) };
@@ -852,7 +852,7 @@ pub fn bind(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = req_targets(cmd, s, p)?;
     let doc = s.doc_mut()?;
     let vid = match &var {
-        Some(v) => Some(doc.variables.get(v).map(|x| x.id.clone()).ok_or_else(|| bad(cmd, "no such variable"))?),
+        Some(v) => Some(doc.variables.find(v).map(|x| x.id.clone()).map_err(|e| bad(cmd, e))?),
         None => None,
     };
     bind_variable(cmd, doc, &ids, &field, vid.as_deref())?;
@@ -1028,7 +1028,8 @@ fn var_create(s: &mut Session, p: &Value) -> Result<Value> {
     // variable yet, so they can't loop).
     for val in values.values_mut() {
         if let VariableValue::Alias(a) = val {
-            let t = doc.variables.get(a).filter(|t| t.kind == kind).ok_or_else(|| bad(cmd, format!("no {} variable `{a}` to alias", kind.id())))?;
+            let t =
+                doc.variables.find(a).ok().filter(|t| t.kind == kind).ok_or_else(|| bad(cmd, format!("no {} variable `{a}` to alias", kind.id())))?;
             *a = t.id.clone();
         }
     }
@@ -1061,7 +1062,7 @@ pub fn var_set(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "variable.set";
     let v = req_string(cmd, p, "variable")?;
     let doc = s.doc_mut()?;
-    let var = doc.variables.get(&v).cloned().ok_or_else(|| bad(cmd, "no such variable"))?;
+    let var = doc.variables.find(&v).cloned().map_err(|e| bad(cmd, e))?;
     let coll = doc.variables.collection_by_id(&var.collection).cloned().ok_or_else(|| bad(cmd, "variable has no collection"))?;
     let mode = match string(p, "mode") {
         Some(m) => coll.find_mode(&m).map(|x| x.id.clone()).ok_or_else(|| bad(cmd, "no such mode"))?,

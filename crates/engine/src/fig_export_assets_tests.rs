@@ -143,6 +143,28 @@ fn a_text_styles_paragraph_values_come_back_from_a_fig_file() {
     assert_eq!(layer.styles.text.as_deref(), Some(st.id.as_str()));
 }
 
+/// The warnings about variables, modes, styles or prototype settings a `.fig` export of an example
+/// may give: limits of the format that `docs/file-format-parity.md` ("Export to `.fig`
+/// (experimental)", "Left out, with a warning each") documents, each matched exactly. Any other
+/// warning that names a variable, collection, mode or style fails (one that says they were lost
+/// above all); warnings about other things (effects…) are not this test's business, as before.
+const DOCUMENTED_FIG_LIMITS: &[&str] = &[
+    // "a page's prototype device settings (device, rotation, colour, custom size, responsive)".
+    "prototype device settings were left out",
+    // "variable bindings the format has no field for (component properties, arc fields, font
+    // weight: written as the values they give)": the binding goes, the value it gives stays.
+    "variables bound to properties the format has no field for were written as their values",
+    // "set-variable, set-variable-mode and conditional actions".
+    "variable and conditional prototype actions were left out",
+];
+
+/// The binding keys `.fig` has no field for, which the export writes as the value they give
+/// (`crates/format/src/fig/export/assets.rs`, `bound`): component properties, arc fields and font
+/// weight, as `docs/file-format-parity.md` lists them.
+fn written_as_value(key: &str) -> bool {
+    key.starts_with("componentProperties/") || key.starts_with("arc") || key == "fontWeight"
+}
+
 #[test]
 fn every_example_keeps_its_variables_and_styles() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
@@ -151,19 +173,45 @@ fn every_example_keeps_its_variables_and_styles() {
         let mut s = Session::new();
         run(&mut s, "file.open", json!({"path": p.to_string_lossy()}));
         let before = outline(s.doc().unwrap());
-        let counts = |d: &Document| (d.variables.collections.len(), d.variables.variables.len(), d.styles.len());
-        let had = counts(s.doc().unwrap());
+        // Collections, their modes, variables and styles, by name: a round trip gives new ids.
+        let assets = |d: &Document| {
+            let collections: Vec<(String, Vec<String>)> =
+                d.variables.collections.iter().map(|c| (c.name.clone(), c.modes.iter().map(|m| m.name.clone()).collect())).collect();
+            let variables: Vec<String> = d.variables.variables.iter().map(|v| v.name.clone()).collect();
+            let styles: Vec<String> = d.styles.iter().map(|x| x.name.clone()).collect();
+            (collections, variables, styles)
+        };
+        let had = assets(s.doc().unwrap());
+        let value_bound = value_bindings(s.doc().unwrap());
+        let given = values_at(s.doc().unwrap(), &value_bound);
+        let baked = !value_bound.is_empty();
         let out = std::env::temp_dir().join(format!("figcraft-fig-assets-{}-{}.fig", std::process::id(), p.file_stem().unwrap().to_string_lossy()));
         let r = run(&mut s, "file.export", json!({"format": "fig", "path": out.to_string_lossy()}));
-        let warnings = r["warnings"].to_string();
-        assert!(!warnings.contains("variable") && !warnings.contains("style"), "{}: {warnings}", p.display());
+        let warnings: Vec<String> =
+            r["warnings"].as_array().map(|w| w.iter().filter_map(|w| w.as_str().map(str::to_string)).collect()).unwrap_or_default();
+        for w in &warnings {
+            let about_assets = ["variable", "collection", "mode", "style", "prototype"].iter().any(|k| w.contains(k));
+            assert!(!about_assets || DOCUMENTED_FIG_LIMITS.contains(&w.as_str()), "{}: a warning that isn't a documented limit: {w}", p.display());
+        }
+        // The documented "written as their values" warning only for bindings it documents.
+        let said_baked = warnings.iter().any(|w| w == DOCUMENTED_FIG_LIMITS[1]);
+        assert_eq!(said_baked, baked, "{}: {warnings:?}", p.display());
         run(&mut s, "file.open", json!({"path": out.to_string_lossy()}));
         let _ = std::fs::remove_file(&out);
-        assert_eq!(counts(s.doc().unwrap()), had, "{}", p.display());
+        assert_eq!(assets(s.doc().unwrap()), had, "{}", p.display());
+        // What a binding written as its value gave is what the layer has now.
+        assert_eq!(values_at(s.doc().unwrap(), &value_bound), given, "{}", p.display());
         // Names, paints, bindings, modes and style links (the format's tests compare the geometry,
-        // which 32-bit floats round).
+        // which 32-bit floats round). A binding written as its value isn't there to compare: the
+        // value it gave is, in the paints and sizes around it.
         let links = |lines: &[String]| -> Vec<String> {
-            lines.iter().map(|l| format!("{} |{}", l.split(" (").next().unwrap_or(""), l.split(" fill ").nth(1).unwrap_or(""))).collect()
+            lines
+                .iter()
+                .map(|l| {
+                    let rest = l.split(" fill ").nth(1).unwrap_or("");
+                    format!("{} |{}", l.split(" (").next().unwrap_or(""), without_value_bindings(rest))
+                })
+                .collect()
         };
         let after = outline(s.doc().unwrap());
         assert_eq!(after.len(), before.len(), "{}", p.display());
@@ -171,6 +219,49 @@ fn every_example_keeps_its_variables_and_styles() {
             assert_eq!(a, b, "{}", p.display());
         }
     }
+}
+
+/// The layers with a binding written as its value, depth-first: (position in the walk, binding).
+fn value_bindings(doc: &Document) -> Vec<(usize, String)> {
+    walk(doc).iter().enumerate().flat_map(|(i, n)| n.bound.keys().filter(|k| written_as_value(k)).map(move |k| (i, k.clone()))).collect()
+}
+
+/// What the layer at each position of the walk shows for each binding: its name, the component
+/// property's value and, for an instance, the variant it shows (which a variant property picks).
+fn values_at(doc: &Document, at: &[(usize, String)]) -> Vec<String> {
+    let layers = walk(doc);
+    at.iter()
+        .map(|(i, key)| {
+            let Some(n) = layers.get(*i) else { return format!("no layer {i}") };
+            match &n.kind {
+                NodeKind::Instance { component, props } => {
+                    let prop = key.strip_prefix("componentProperties/").and_then(|k| props.get(k)).map(Value::to_string);
+                    format!("{:?} {key} = {prop:?} showing {:?}", n.name, doc.node(*component).map(|c| c.name.clone()))
+                }
+                _ => format!("{:?} {key} on a {}", n.name, n.kind.type_name()),
+            }
+        })
+        .collect()
+}
+
+fn walk(doc: &Document) -> Vec<&figcraft_doc::Node> {
+    doc.pages.iter().flat_map(|p| doc.subtree(*p)).filter_map(|i| doc.node(i)).collect()
+}
+
+/// An outline line's `bound [...]` part without the bindings written as their values.
+fn without_value_bindings(line: &str) -> String {
+    let Some((head, rest)) = line.split_once("bound [") else { return line.to_string() };
+    let Some((list, tail)) = rest.split_once("] modes ") else { return line.to_string() };
+    let kept: Vec<&str> = list
+        .split("), (")
+        .map(|e| e.trim_matches(|c| c == '(' || c == ')'))
+        .filter(|e| !e.is_empty())
+        .filter(|e| {
+            let key = e.split(", ").next().unwrap_or("").trim_matches('"');
+            !written_as_value(key)
+        })
+        .collect();
+    format!("{head}bound [{}] modes {tail}", kept.iter().map(|e| format!("({e})")).collect::<Vec<_>>().join(", "))
 }
 
 /// A component holding an instance of a variant, under a name of its own: opened from a `.fig`

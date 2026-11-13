@@ -104,7 +104,10 @@ Do not ask for it, and do not stop when it is absent.
 - Demo and test content is synthetic or public domain; never personal photos or data.
 - Code and original assets are MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`, `NOTICE`). The
   ArtCraft logos in `docs/brand/` are trademarks, not open source, under
-  `docs/brand/LICENSE-brand.txt`: never modify them or use them outside FigCraft.
+  `docs/brand/LICENSE-brand.txt`: never modify them. This repository is a fork of FigCraft, and
+  that licence does not let a fork use the marks or present itself as an ArtCraft product: do not
+  show them in the app, the README or the docs. Plain-text credit ("based on FigCraft by the
+  ArtCraft team") is allowed and is kept in About, `NOTICE` and the README.
 - If the provenance of an asset is unclear, don't add it.
 
 ### Never crash

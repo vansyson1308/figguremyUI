@@ -13,6 +13,7 @@ mod board_mindmap;
 mod board_route;
 pub mod colors;
 pub mod comments;
+pub mod design;
 pub mod facilitation;
 pub mod geometry;
 pub mod handoff;
@@ -250,6 +251,15 @@ pub struct Document {
     /// Ended votes' results kept in the file, oldest first (at most [`VOTE_HISTORY_MAX`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub vote_history: Vec<VoteRecord>,
+    /// The brief, assumptions, decisions, scenarios, findings and alternatives (see [`design`]).
+    /// Read leniently: a context that can't be read doesn't stop the file from opening (see
+    /// [`design::read_stored`]; the loader reports what was left out).
+    #[serde(default, skip_serializing_if = "design_is_empty", deserialize_with = "design::read_stored")]
+    pub design: Arc<design::DesignContext>,
+}
+
+fn design_is_empty(d: &Arc<design::DesignContext>) -> bool {
+    d.is_empty()
 }
 
 impl Default for Document {
@@ -293,6 +303,7 @@ impl Document {
             vote: None,
             votes: BTreeMap::new(),
             vote_history: Vec::new(),
+            design: Arc::default(),
         }
     }
 

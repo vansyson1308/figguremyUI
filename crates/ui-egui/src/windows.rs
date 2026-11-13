@@ -180,8 +180,7 @@ pub(crate) fn fail_input_acks(app: &mut FigApp, viewport: ViewportId) {
     let mut kept = Vec::new();
     for ack in app.input_acks.drain(..) {
         if ack.viewport == viewport {
-            let _ =
-                ack.tx.send(crate::ControlReply { id: ack.reply.id, result: Err("the document changed before the input could be applied".into()) });
+            let _ = ack.tx.send(crate::ControlReply::new(ack.reply.id, Err("the document changed before the input could be applied".into())));
         } else {
             kept.push(ack);
         }

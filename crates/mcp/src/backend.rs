@@ -21,6 +21,28 @@ pub trait Backend {
     /// Short human description ("headless", "attached to 127.0.0.1:7979").
     fn describe(&self) -> String;
 
+    /// The machine-readable form of the error the last failed call returned, taken once:
+    /// `{code, message, …}` as [`figcraft_engine::EngineError::detail`] builds it, with `message`
+    /// the text that call's `Err` carried. `None` when the backend has nothing more than the text.
+    fn take_error_detail(&mut self) -> Option<Value> {
+        None
+    }
+
+    /// The revision of the document the last call acted on, read right after it in the same
+    /// request, taken once: `(document id, revision)`. A command's reply carries it (the engine's
+    /// `engine.execute`; headless, also a gesture, key or typed text), so a result can name the
+    /// revision it belongs to without a second read that could include somebody else's change.
+    /// `None` when the backend didn't say (an app from before this).
+    fn take_revision(&mut self) -> Option<(u64, u64)> {
+        None
+    }
+
+    /// What the app at the other end says about itself (`app.info`: `{instance, version, …}`),
+    /// when there is one and it answers the question.
+    fn app_info(&mut self) -> Option<Value> {
+        None
+    }
+
     /// PNG bytes of the document: `ids` (in page coordinates, their union) or, when empty, the
     /// current page's content. The default goes through `ui.render`, the PNG coming back as data.
     fn render_png(&mut self, ids: &[u64], scale: f64) -> Result<Vec<u8>, String> {
@@ -80,6 +102,11 @@ pub fn decode_data(v: &Value) -> Result<Vec<u8>, String> {
 /// 256 MiB as base64 (192 MiB PNGs); anything longer is refused without reading the rest.
 const MAX_REPLY: usize = 512 * 1024 * 1024;
 
+/// An error as a program reads it: `{code, message}` (see `docs/mcp.md`, "Errors").
+pub fn error_detail(code: &str, message: &str) -> Value {
+    json!({"code": code, "message": message})
+}
+
 /// A running FigCraft app, reached through its loopback control port (`figcraft --control PORT`).
 pub struct Attached {
     addr: String,
@@ -89,12 +116,37 @@ pub struct Attached {
     max_reply: usize,
     /// How long the app is asked to wait for each request; `None`: its own 60 s.
     timeout: Option<Duration>,
+    /// Ask each new connection which app it reached (`app.info`); off in tests of the wire alone.
+    identify: bool,
+    /// The connection in use was asked.
+    identified: bool,
+    /// What the app said about itself the last time it was asked (`None`: it doesn't know the
+    /// question, as apps from before `app.info` don't).
+    info: Option<Value>,
+    /// The `instance` of the app this backend first talked to.
+    instance: Option<String>,
+    /// The detail of the last failed call ([`Backend::take_error_detail`]).
+    last_error: Option<Value>,
+    /// What the last reply said about the revision ([`Backend::take_revision`]).
+    last_revision: Option<(u64, u64)>,
 }
 
 impl Attached {
     /// Connect to `addr` (e.g. `127.0.0.1:7979`), failing fast when nothing is listening.
     pub fn connect(addr: &str) -> std::io::Result<Self> {
-        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1, max_reply: MAX_REPLY, timeout: None };
+        let mut r = Self {
+            addr: addr.to_string(),
+            conn: None,
+            next_id: 1,
+            max_reply: MAX_REPLY,
+            timeout: None,
+            identify: true,
+            identified: false,
+            info: None,
+            instance: None,
+            last_error: None,
+            last_revision: None,
+        };
         r.reconnect()?;
         Ok(r)
     }
@@ -118,6 +170,7 @@ impl Attached {
 
     fn reconnect(&mut self) -> std::io::Result<()> {
         self.conn = None;
+        self.identified = false;
         let mut last = std::io::Error::new(std::io::ErrorKind::NotFound, format!("cannot resolve {}", self.addr));
         for sa in self.addr.to_socket_addrs()? {
             match TcpStream::connect_timeout(&sa, Duration::from_millis(800)) {
@@ -171,8 +224,49 @@ impl Attached {
     }
 }
 
-impl Backend for Attached {
-    fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
+/// A failure of the connection itself, as text and as its detail (code `transport`).
+fn transport(message: String) -> (String, Value) {
+    let detail = error_detail("transport", &message);
+    (message, detail)
+}
+
+impl Attached {
+    /// Ask the app on this connection which app it is (`app.info` → `{instance, …}`, `instance`
+    /// made when the app started). An app that doesn't know the method is taken as it always was:
+    /// nothing is known about it, and nothing is checked. `Err`: the app is not the one this
+    /// backend first talked to (it was restarted), or the question got no answer.
+    fn identify(&mut self) -> Result<(), (String, Value)> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let line = json!({"id": id, "method": "app.info", "params": {}}).to_string();
+        let reply = self.roundtrip(&line).map_err(|e| {
+            self.conn = None;
+            transport(format!("FigCraft app at {} did not say which app it is: {e} (the request was not sent)", self.addr))
+        })?;
+        self.identified = true;
+        let v: Value = serde_json::from_str(reply.trim()).unwrap_or(Value::Null);
+        let answered = v.get("ok").and_then(Value::as_bool) == Some(true);
+        self.info = v.get("result").filter(|r| answered && r.is_object()).cloned();
+        let Some(now) = self.info.as_ref().and_then(|i| i.get("instance")).and_then(Value::as_str).map(str::to_string) else { return Ok(()) };
+        match self.instance.replace(now.clone()) {
+            Some(first) if first != now => {
+                let (message, mut detail) = transport(format!(
+                    "the FigCraft app at {} was restarted: this is another run of the app than the one this server talked to before, so the \
+                     document ids, node ids and revisions from earlier calls are stale. The request was not sent. Look again (get_capabilities, \
+                     inspect_document) before going on",
+                    self.addr
+                ));
+                detail["restarted"] = json!(true);
+                Err((message, detail))
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// One request, its failure as text and as its detail.
+    fn request(&mut self, method: &str, params: Value) -> Result<Value, (String, Value)> {
+        self.last_revision = None;
+        let params_document = params.get("document").and_then(Value::as_u64);
         let id = self.next_id;
         self.next_id += 1;
         let mut line = json!({"id": id, "method": method, "params": params});
@@ -182,23 +276,61 @@ impl Backend for Attached {
         let line = line.to_string();
         if self.conn.is_none() || self.stale() {
             self.reconnect().map_err(|e| {
-                format!("FigCraft app at {} is not reachable: {e} (request was not sent; start it with `figcraft --control PORT`)", self.addr)
+                transport(format!(
+                    "FigCraft app at {} is not reachable: {e} (request was not sent; start it with `figcraft --control PORT`)",
+                    self.addr
+                ))
             })?;
+        }
+        // A new connection may be to another run of the app: ask before anything is sent to it.
+        if self.identify && !self.identified {
+            self.identify()?;
         }
         // A lost reply does not mean the app failed to apply the request.
         let reply = self.roundtrip(&line).map_err(|e| {
             self.conn = None;
-            format!(
+            transport(format!(
                 "FigCraft control call `{method}` at {} failed: {e}; the operation may have completed. Inspect the document before retrying.",
                 self.addr
-            )
+            ))
         })?;
-        let v: Value = serde_json::from_str(reply.trim()).map_err(|e| format!("bad reply from the app: {e}"))?;
+        let v: Value = serde_json::from_str(reply.trim()).map_err(|e| transport(format!("bad reply from the app: {e}")))?;
+        // The app writes the revision of the document the command acted on next to the result:
+        // the document the request named (`revisionDocument` when the app says which one).
+        let said = v.get("revisionDocument").and_then(Value::as_u64).or(params_document);
+        self.last_revision = v.get("revision").and_then(Value::as_u64).zip(said).map(|(rev, doc)| (doc, rev));
         if v.get("ok").and_then(Value::as_bool) == Some(true) {
-            Ok(v.get("result").cloned().unwrap_or(Value::Null))
-        } else {
-            Err(v.get("error").and_then(Value::as_str).unwrap_or("unknown error").to_string())
+            return Ok(v.get("result").cloned().unwrap_or(Value::Null));
         }
+        let message = v.get("error").and_then(Value::as_str).unwrap_or("unknown error").to_string();
+        // An app that says what the error is (`errorDetail`) is believed; one from before that
+        // gives only the text.
+        let known = v.get("errorDetail").filter(|d| d.get("code").is_some_and(Value::is_string));
+        let mut detail = known.cloned().unwrap_or_else(|| error_detail("error", &message));
+        detail["message"] = json!(message);
+        Err((message, detail))
+    }
+}
+
+impl Backend for Attached {
+    fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        self.last_error = None;
+        self.request(method, params).map_err(|(message, detail)| {
+            self.last_error = Some(detail);
+            message
+        })
+    }
+
+    fn take_error_detail(&mut self) -> Option<Value> {
+        self.last_error.take()
+    }
+
+    fn take_revision(&mut self) -> Option<(u64, u64)> {
+        self.last_revision.take()
+    }
+
+    fn app_info(&mut self) -> Option<Value> {
+        self.info.clone()
     }
 
     fn has_ui(&self) -> bool {

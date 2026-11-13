@@ -96,6 +96,14 @@ pub(super) fn load_with(
     Ok((loaded, rest))
 }
 
+/// The image files `file.open` opens as an image layer on a page of its own.
+pub const IMAGE_FORMATS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"];
+
+/// What `file.open` reads, by extension: the native file, REST API file JSON, `.fig` and FigJam
+/// `.jam`, `.sketch`, Penpot, SVG (as vectors) and the [`IMAGE_FORMATS`] (what `load_any` takes).
+pub const OPEN_FORMATS: &[&str] =
+    &["figcraft", "json", "fig", "jam", "sketch", "penpot", "svg", "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"];
+
 fn load_any(
     bytes: &[u8],
     name_hint: &str,
@@ -124,7 +132,7 @@ fn load_any(
             font_notes.append(&mut notes); // Show missing-font details first in the UI toast.
             Ok((figcraft_format::Loaded { issues: font_notes, ..doc.into() }, true))
         }
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tif" | "tiff" => {
+        e if IMAGE_FORMATS.contains(&e) => {
             let mut doc = Document::new(file_stem(name_hint));
             let page = doc.first_page().ok_or(EngineError::NoDocument)?;
             let (hash, w, h) = crate::cmd::create::add_readable_image(&mut doc, bytes.to_vec()).map_err(EngineError::Other)?;

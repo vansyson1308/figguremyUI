@@ -274,7 +274,8 @@ fn revert_offline_file_works_while_another_file_is_live_and_after_leaving() {
     s.execute("file.revert", &json!({})).unwrap();
     assert_eq!(s.doc().unwrap().name, offline_path.file_stem().unwrap().to_string_lossy());
     assert!(!s.ds().unwrap().is_dirty());
-    assert_eq!(s.ds().unwrap().versions.len(), 1);
+    // The unsaved rename went into the version history first.
+    assert_eq!(s.ds().unwrap().versions.iter().map(|v| v.name.as_str()).collect::<Vec<_>>(), ["Saved", "Before revert"]);
     assert_eq!(s.live_of(uid).doc_uid, Some(uid));
     assert_eq!(script.lock().unwrap().left, 0);
     s.execute("doc.switch", &json!({"index": 0})).unwrap();
@@ -282,7 +283,8 @@ fn revert_offline_file_works_while_another_file_is_live_and_after_leaving() {
     s.execute("file.revert", &json!({})).unwrap();
     assert_eq!(s.doc().unwrap().name, path.file_stem().unwrap().to_string_lossy());
     assert!(!s.ds().unwrap().is_dirty());
-    assert_eq!(s.ds().unwrap().versions.len(), 1);
+    // The unsaved rename went into the version history first.
+    assert_eq!(s.ds().unwrap().versions.iter().map(|v| v.name.as_str()).collect::<Vec<_>>(), ["Saved", "Before revert"]);
     assert_eq!(s.live().doc_uid, None);
     assert_eq!(script.lock().unwrap().left, 1);
     std::fs::remove_file(path).unwrap();

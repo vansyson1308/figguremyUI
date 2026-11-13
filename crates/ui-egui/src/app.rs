@@ -4,9 +4,9 @@ use super::services::{DialogFuture, PickFuture, Picked, RepaintWaker, Services};
 use super::state::{LEFT_PANEL, LeftTab, MOBILE_STRIP, MobilePanel, NARROW_WIDTH, PANEL_DEFAULT, RIGHT_PANEL, RightTab, TitleBar, fit_panels};
 use super::{
     Arc, Done, FigApp, NodeId, OsStr, Path, PathBuf, PendingAck, PendingDialog, Poll, Session, TaskContext, UiState, Value, Waker, a11y, branch_ui,
-    canvas, cjk, comments, cursors, dev_compare, dialogs, frame_stats, home, home_recents, i18n, icons, import_report, json, layers, live, menus,
-    missing_fonts, online, plugins_ui, present, render_worker, right, selection_spacing, shortcuts, style_picker, tabs, theme, toolbar, ui_scale,
-    updates_ui, variable_ui, versions, widgets, windows,
+    canvas, cjk, comments, cursors, design_context, dev_compare, dialogs, frame_stats, home, home_recents, i18n, icons, import_report, json, layers,
+    live, menus, missing_fonts, online, plugins_ui, present, render_worker, right, selection_spacing, shortcuts, style_picker, tabs, theme, toolbar,
+    ui_scale, updates_ui, variable_ui, versions, widgets, windows,
 };
 
 mod clipboard;
@@ -63,6 +63,9 @@ impl FigApp {
             ui_frame_stamp: None,
             ime: egui::ime_context::ImeContextTracker::new(),
             updates_rt: updates_ui::Runtime::default(),
+            instance: crate::control::new_instance_id(),
+            control_error: None,
+            control_revision: None,
             #[cfg(test)]
             ime_observations: 0,
         }
@@ -324,11 +327,14 @@ impl FigApp {
         }
         // The panels are as wide as asked, less in a window too small for them and the canvas.
         let left_open = !hidden && !minimized && if narrow { mobile == Some(MobilePanel::Left) } else { !self.ui.left_collapsed };
+        // The design context is sentences, not layer names: its panel is drawn wider than the
+        // narrowest the layers take (the width asked for is kept for when it closes).
+        let left_asked = if self.ui.context.open { self.ui.left_width.max(design_context::MIN_WIDTH) } else { self.ui.left_width };
         let (left_w, right_w) = if narrow {
             let w = (ui.available_width() - MOBILE_STRIP).max(0.0);
             (if left_open { w } else { 0.0 }, w)
         } else {
-            fit_panels(ui.available_width(), left_open.then_some(self.ui.left_width), right_open.then_some(self.ui.right_width))
+            fit_panels(ui.available_width(), left_open.then_some(left_asked), right_open.then_some(self.ui.right_width))
         };
         let rows = ui.available_rect_before_wrap().y_range();
         let mut edges: Vec<(&str, f32, f32, f32)> = Vec::new();
@@ -349,6 +355,7 @@ impl FigApp {
                 .frame(egui::Frame::NONE.fill(t.panel).stroke(egui::Stroke::new(1.0, t.border)))
                 .show(ui, |ui| {
                     let label = match self.ui.left_tab {
+                        _ if self.ui.context.open => i18n::tr("Design context"),
                         _ if self.ui.versions.open => i18n::tr("Version history"),
                         LeftTab::File => i18n::tr("Layers"),
                         LeftTab::Assets => i18n::tr("Assets"),

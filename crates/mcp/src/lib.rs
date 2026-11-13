@@ -13,6 +13,10 @@
 //! Entry points: [`Server::serve`] (stdio loop) and [`Server::handle_line`] (one message).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+/// The product's name as this server gives it (`get_capabilities.product`, `serverInfo.title`):
+/// one constant, so a rename changes it in one place.
+pub const PRODUCT_NAME: &str = "FigCraft";
+
 mod backend;
 mod headless;
 mod prompts;
@@ -23,12 +27,12 @@ mod tools;
 #[cfg(test)]
 mod gradient_tests;
 
-pub use backend::{Attached, Backend, decode_data, page_children};
+pub use backend::{Attached, Backend, decode_data, error_detail, page_children};
 pub use headless::Headless;
 pub use prompts::{PROMPTS, PromptArg, PromptDef};
-pub use resources::{COMMAND_TEMPLATE, COMMANDS_URI, DOC_URI, NODE_TEMPLATE};
+pub use resources::{COMMAND_TEMPLATE, COMMANDS_URI, DESIGN_URI, DOC_URI, FINDINGS_URI, FLOW_URI, NODE_TEMPLATE, SCENARIOS_URI};
 pub use server::{INSTRUCTIONS, PROTOCOL_VERSION, SUPPORTED_VERSIONS, Server};
-pub use tools::{TOOL_NAMES, ToolResult, call_tool, tool_definitions};
+pub use tools::{TOOL_NAMES, ToolResult, ToolState, call_tool, call_tool_in, tool_definitions};
 
 /// Width and height of a PNG from its IHDR chunk.
 pub fn png_size(bytes: &[u8]) -> Option<(u32, u32)> {

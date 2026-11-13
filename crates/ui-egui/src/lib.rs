@@ -5,12 +5,20 @@
 //! below this crate knows about egui, so the frontend can be replaced.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+/// Where this build comes from: its source, issues and releases. This is a fork of FigCraft; it is
+/// not FigCraft's own build, so help, About and updates point here, never at the upstream project.
+pub const FORK_URL: &str = "https://github.com/vansyson1308/figguremyUI";
+
 /// FigCraft as craft-update knows it, with its 128 px icon and accent colour: the update
-/// prompt shows both, and an AppImage's menu entry gets the icon.
+/// prompt shows both, and an AppImage's menu entry gets the icon. The updater looks for this
+/// fork's releases only (`repo`), so a build of the fork is never replaced by an upstream FigCraft
+/// release, and it is not presented as made by the upstream team.
 #[cfg(not(target_arch = "wasm32"))]
 pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
     icon_png: Some(include_bytes!("../../../assets/app-icon/hicolor/128x128/apps/ai.storyteller.figcraft.png")),
     accent: Some([0x02, 0xda, 0x96]),
+    repo: "vansyson1308/figguremyUI",
+    developer: "the fork's contributors",
     ..craft_update::suite::FIGCRAFT
 };
 
@@ -95,6 +103,8 @@ mod crop_image_tests;
 mod cursors_tests;
 #[cfg(test)]
 mod dash_pattern_tests;
+#[cfg(test)]
+mod design_context_tests;
 #[cfg(test)]
 mod design_paste_tests;
 #[cfg(test)]
@@ -189,6 +199,8 @@ mod menu_overflow_tests;
 mod mirror_tests;
 #[cfg(test)]
 mod missing_fonts_tests;
+#[cfg(test)]
+mod multiline_field_tests;
 #[cfg(test)]
 mod naming_tests;
 #[cfg(test)]
@@ -338,6 +350,7 @@ pub use home::home_recents;
 pub use home::online;
 pub use panels::assets_panel;
 pub use panels::component_panel;
+pub use panels::design_context;
 pub use panels::dev_compare;
 pub use panels::dev_mode;
 pub use panels::export_panel;
@@ -592,6 +605,8 @@ pub struct UiState {
     pub mirrored: bool,
     pub comments: comments::CommentUi,
     pub versions: versions::VersionUi,
+    /// The Design context panel (shown in the left sidebar while open) and what it last ran.
+    pub context: design_context::ContextUi,
     /// The branch review dialog, while open.
     pub branch_review: Option<branch_ui::ReviewView>,
     /// Dev Mode: annotations on the canvas and the ready-for-dev list.
@@ -748,6 +763,7 @@ impl Default for UiState {
             mirrored: false,
             comments: comments::CommentUi::default(),
             versions: versions::VersionUi::default(),
+            context: design_context::ContextUi::default(),
             branch_review: None,
             dev: dev_mode::DevUi::default(),
 
@@ -854,6 +870,15 @@ pub struct FigApp {
     pub(crate) ime: egui::ime_context::ImeContextTracker,
     /// The check for a newer release and its prompt (desktop; [`updates_ui`]).
     pub(crate) updates_rt: updates_ui::Runtime,
+    /// An id for this run of the app, made once at start (control channel `app.info`): a client
+    /// that reconnects tells from it whether it reached the same app.
+    pub instance: String,
+    /// What kind of failure the last control request that failed was (`errorDetail`:
+    /// `{code, message, …}`), kept by [`control::handle`] for the reply it sends.
+    pub(crate) control_error: Option<serde_json::Value>,
+    /// The file the last `engine.execute` (or canvas method) acted on and its revision, read right
+    /// after it ran (the reply's `revisionDocument` and `revision`).
+    pub(crate) control_revision: Option<(u64, u64)>,
     /// Test-only count of the one IME observation each viewport pass makes.
     #[cfg(test)]
     pub(crate) ime_observations: u32,

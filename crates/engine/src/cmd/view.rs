@@ -370,6 +370,28 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("view.assets", "Assets panel", "{}", false, |s, _| ui(s, "panel.assets")),
         spec!("view.design", "Design panel", "{}", false, |s, _| ui(s, "panel.design")),
         spec!("view.prototype", "Prototype panel", "{}", false, |s, _| ui(s, "panel.prototype")),
+        spec!(
+            "view.designContext",
+            "Design context",
+            "{section?: brief|assumptions|decisions|flow|findings|alternatives, on? (false closes it)}  shows the file's design context in the app, for a person to read and edit: the brief, assumptions, decisions, scenarios and flow, findings, alternatives (design.get reads the same; a no-op headless)",
+            false,
+            |s, p| {
+                const SECTIONS: [&str; 6] = ["brief", "assumptions", "decisions", "flow", "findings", "alternatives"];
+                let section = match p.get("section") {
+                    None | Some(Value::Null) => None,
+                    Some(Value::String(x)) if SECTIONS.contains(&x.as_str()) => Some(x.clone()),
+                    Some(other) => {
+                        let shown = figcraft_format::clip(&other.to_string(), 40);
+                        return Err(crate::bad(
+                            "view.designContext",
+                            format!("`section`: no section {shown}; the sections are {}", SECTIONS.join(", ")),
+                        ));
+                    }
+                };
+                s.request_ui("panel.designContext", json!({"section": section, "on": boolean(p, "on")}));
+                ok()
+            }
+        ),
         spec!("view.designPrototype", "Switch between Design and Prototype", "{}", false, |s, _| ui(s, "panel.designPrototype")),
         spec!("view.devMode", "Developer Mode", "{}", false, |s, _| ui(s, "panel.devMode")),
         spec!("view.leftSidebar", "Show/Hide left sidebar", "{}", false, |s, _| ui(s, "panel.leftSidebar")),

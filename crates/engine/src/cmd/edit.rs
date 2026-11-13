@@ -111,8 +111,20 @@ fn node_find(s: &mut Session, p: &Value) -> Result<Value> {
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        spec!("edit.undo", "Undo", "{}", false, |s, _| Ok(json!({"undone": s.undo()?}))),
-        spec!("edit.redo", "Redo", "{}", false, |s, _| Ok(json!({"redone": s.redo()?}))),
+        spec!(
+            "edit.undo",
+            "Undo",
+            "{others? (for an AI agent: true also undoes a step somebody else made — the user or another agent; without it such an undo is refused, naming the step and its author)} → {undone}",
+            false,
+            |s, p| {
+                refuse_others_step(s, p, "edit.undo")?;
+                Ok(json!({"undone": s.undo()?}))
+            }
+        ),
+        spec!("edit.redo", "Redo", "{others? (as for edit.undo: an AI agent redoes only its own steps without it)} → {redone}", false, |s, p| {
+            refuse_others_step(s, p, "edit.redo")?;
+            Ok(json!({"redone": s.redo()?}))
+        }),
         spec!("edit.delete", "Delete", "{ids?}", true, delete),
         spec!(
             "edit.duplicate",
@@ -340,7 +352,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("node.get", "Get layer", "{id, fields?: [node keys], outline?: bool (not with fields)}", false, |s, p| {
             let i = req_id("node.get", p, "id")?;
             let options = crate::inspect::InspectOptions::parse(p).map_err(|e| bad("node.get", e))?;
-            Ok(crate::inspect::node_json_with_options(s.doc()?, i, 1, &options))
+            crate::inspect::node_in_session(s, i, 1, &options)
         }),
         spec!(
             "node.find",
@@ -520,11 +532,14 @@ pub fn specs() -> Vec<CommandSpec> {
                 Some(Value::Array(a)) => {
                     let mut out = Vec::new();
                     for (i, c) in a.iter().enumerate() {
-                        let cmd =
-                            c.get("command").and_then(Value::as_str).ok_or_else(|| bad("command.batch", format!("step {i} has no `command`")))?;
-                        crate::batch::refuse_unknown_step_keys(i, c)?;
+                        let cmd = c
+                            .get("command")
+                            .and_then(Value::as_str)
+                            .ok_or_else(|| bad("command.batch", format!("step {i} has no `command`")).located(i, ""))?;
+                        crate::batch::refuse_unknown_step_keys(i, c).map_err(|e| e.located(i, cmd))?;
                         let params = c.get("params").cloned().unwrap_or(json!({}));
-                        out.push(BatchStep { name: crate::batch::step_name(i, c)?, ..BatchStep::new(cmd, params) });
+                        let name = crate::batch::step_name(i, c).map_err(|e| e.located(i, cmd))?;
+                        out.push(BatchStep { name, ..BatchStep::new(cmd, params) });
                     }
                     out
                 }
@@ -540,6 +555,38 @@ pub fn specs() -> Vec<CommandSpec> {
             (spec.run)(s, &p)
         }),
     ]
+}
+
+/// An AI agent's undo or redo (`cmd`) stays in its own work: refuse it when the step it would
+/// take is somebody else's, unless the call says `others: true`. The user's own undo takes any
+/// step, as it always did.
+fn refuse_others_step(s: &Session, p: &Value, cmd: &str) -> Result<()> {
+    let others = match get(p, "others") {
+        None => false,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err(crate::error::bad_param(cmd, "others", "`others` must be true or false")),
+    };
+    let Some(agent) = s.agent.as_deref().filter(|_| !others) else { return Ok(()) };
+    let back = cmd == "edit.undo";
+    if let Some((label, author)) = s.next_history_step(back).filter(|(_, author)| author.as_deref() != Some(agent)) {
+        return Err(EngineError::OtherAuthor { cmd: cmd.into(), label, author: author.unwrap_or_else(|| crate::USER_AUTHOR.into()) });
+    }
+    // The step is the agent's own, but an undo or redo brings back a whole snapshot: a change
+    // somebody else made since, with no undo step of its own (a direct edit, the first save's
+    // rename), would go with it.
+    let Ok(ds) = s.ds() else { return Ok(()) };
+    if s.live_doc(ds.uid) {
+        return Ok(());
+    }
+    let step = if back { ds.history.undo.last() } else { ds.history.redo.last() };
+    match step.and_then(|e| ds.others_change_since(e.revision, agent)) {
+        Some(c) => Err(EngineError::OtherAuthor {
+            cmd: cmd.into(),
+            label: format!("{} (made after your step, with no undo step of its own)", c.label),
+            author: c.author_name().to_string(),
+        }),
+        None => Ok(()),
+    }
 }
 
 fn targets_param(p: &Value) -> Vec<NodeId> {

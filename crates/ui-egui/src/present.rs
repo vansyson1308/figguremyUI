@@ -258,6 +258,10 @@ struct Temp {
     transition: Transition,
     dur: f64,
     easing: Easing,
+    /// The layer whose interaction this is and the actions it ran, to lay the state again over
+    /// what a lasting interaction changed under it ([`Presenter::lay_temp`]).
+    node: NodeId,
+    actions: Vec<Action>,
 }
 
 pub struct Presenter {
@@ -294,6 +298,9 @@ pub struct Presenter {
     waiting: Vec<Waiting>,
     hovered: Vec<NodeId>,
     press: Option<Pos2>,
+    /// The hotspots under the pointer when the button went down (top-most first, screen rects):
+    /// what a release lands on once a "while pressing" state has reverted.
+    press_hits: Vec<(NodeId, Rect)>,
     dragged: bool,
     flash_until: f64,
     /// The active screen's hotspots as last laid out (screen rects).
@@ -373,6 +380,7 @@ impl Presenter {
             waiting: Vec::new(),
             hovered: Vec::new(),
             press: None,
+            press_hits: Vec::new(),
             dragged: false,
             flash_until: 0.0,
             hot: Vec::new(),
@@ -465,3 +473,9 @@ mod overlay_anchor_tests;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod press_click_tests;
+
+#[cfg(test)]
+mod sim_parity_tests;

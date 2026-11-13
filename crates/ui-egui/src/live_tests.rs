@@ -337,6 +337,9 @@ fn clicking_an_avatar_follows_and_escape_stops() {
 #[test]
 fn share_popover_and_join_dialog() {
     let (mut h, _) = Harness::new();
+    // A server is set in Preferences, so the popover offers Online and Local network (this fork
+    // ships none: see `the_server_preference_resets_and_turns_online_sharing_off`).
+    h.app.session.prefs.publish_server = "wss://share.example/".into();
     let shapes = h.frames(3);
     let share = text_center(&shapes, "Share");
     h.click(share);

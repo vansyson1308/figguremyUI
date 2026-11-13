@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use super::{CommandSpec, ok};
 use crate::params::{boolean, color, f64_of, get, id, num, parse, req_id, req_num, req_targets, string};
-use crate::{Result, Session, bad, spec};
+use crate::{EngineError, Result, Session, bad, spec};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -131,6 +131,7 @@ pub fn specs() -> Vec<CommandSpec> {
             |s, p| open_player(s, p, "proto.preview", "preview")
         ),
         spec!("proto.closePreview", "Close prototype preview", "{}", false, |s, _| {
+            no_player(s, "proto.closePreview")?;
             s.request_ui("preview.close", json!({}));
             ok()
         }),
@@ -141,6 +142,7 @@ pub fn specs() -> Vec<CommandSpec> {
             false,
             |s, p| {
                 let cmd = "proto.presentOptions";
+                no_player(s, cmd)?;
                 let mut data = serde_json::Map::new();
                 if let Some(v) = p.get("scale").filter(|v| !v.is_null()) {
                     let scale = v.as_str().filter(|x| PRESENT_SCALES.contains(x)).ok_or_else(|| bad(cmd, "scale: fit|fitWidth|fill|actual"))?;
@@ -310,26 +312,66 @@ fn rotation_of(v: &Value) -> Option<DeviceRotation> {
     }
 }
 
-/// Ask the UI to present (full screen or in the preview pane) from `start`, else the selected
-/// top-level frame, the page's first flow or its first frame.
+/// Where a prototype starts when no frame is named: the selected layer's top-level frame, else
+/// the page's first flow whose starting frame still exists, else its first frame.
+pub(crate) fn default_start(ds: &crate::DocState) -> Option<NodeId> {
+    let flows: &[Flow] = match ds.doc.node(ds.page).map(|n| &n.kind) {
+        Some(NodeKind::Page { flows, .. }) => flows,
+        _ => &[],
+    };
+    ds.selection
+        .first()
+        .and_then(|i| ds.doc.top_level_frame(*i))
+        // A flow whose starting frame was deleted has nothing to present: the next one that
+        // has, else the page's first frame.
+        .or_else(|| flows.iter().find_map(|f| ds.doc.top_level_frame(f.start)))
+        .or_else(|| ds.doc.top_frames(ds.page).first().copied())
+}
+
+/// Ask the UI to present (full screen or in the preview pane) from `start`, else from
+/// [`default_start`].
 fn open_player(s: &mut Session, p: &Value, cmd: &str, ui: &str) -> Result<Value> {
+    no_player(s, cmd)?;
     let ds = s.ds()?;
+    let flows: &[Flow] = match ds.doc.node(ds.page).map(|n| &n.kind) {
+        Some(NodeKind::Page { flows, .. }) => flows,
+        _ => &[],
+    };
     let start = match id(p, "start") {
         // A layer inside a frame presents its top-level frame.
-        Some(f) => ds.doc.top_level_frame(f).ok_or_else(|| bad(cmd, "`start` isn't a frame or inside one"))?,
-        None => ds
-            .selection
-            .first()
-            .and_then(|i| ds.doc.top_level_frame(*i))
-            .or_else(|| match &ds.doc.node(ds.page)?.kind {
-                NodeKind::Page { flows, .. } => flows.first().map(|f| f.start),
-                _ => None,
-            })
-            .or_else(|| ds.doc.top_frames(ds.page).first().copied())
-            .ok_or_else(|| bad(cmd, "no frame to present"))?,
+        Some(f) => ds.doc.top_level_frame(f).ok_or_else(|| crate::error::bad_param(cmd, "start", "`start` isn't a frame or inside one"))?,
+        None => default_start(ds).ok_or_else(|| {
+            let gone: Vec<String> = flows.iter().map(|f| format!("\"{}\" (frame {})", f.name, f.start)).collect();
+            match gone.as_slice() {
+                [] => bad(cmd, "no frame to present"),
+                _ => bad(cmd, format!("no frame to present: the starting frame of flow {} was deleted", gone.join(", "))),
+            }
+        })?,
     };
     s.request_ui(ui, json!({"start": start}));
     Ok(json!({"start": start}))
+}
+
+/// Refuse a command that only acts on the prototype player where there is none: a session
+/// without a window ([`Session::windowless`]) would queue a request nobody reads and answer as if
+/// the player had opened.
+fn no_player(s: &Session, cmd: &str) -> Result<()> {
+    if !s.windowless {
+        return Ok(());
+    }
+    Err(EngineError::Unsupported {
+        cmd: cmd.into(),
+        msg: "there is no prototype player without the app's window. Run the prototype with `proto.simulate` or `proto.scenario.run` instead, or \
+              attach to the running app to present it"
+            .into(),
+    })
+}
+
+/// New actions must work, exactly as `proto.action.add` asks of one: a set variable names a
+/// variable and gives a value it can hold, a condition gives true or false.
+fn check_actions(cmd: &str, s: &Session, actions: &[Action]) -> Result<()> {
+    let vars = &s.doc()?.variables;
+    actions.iter().try_for_each(|a| super::proto_actions::check_action(cmd, vars, a))
 }
 
 /// Every node an action points at must exist.
@@ -432,6 +474,7 @@ fn add(s: &mut Session, p: &Value) -> Result<Value> {
     let mut it = it;
     it.delay_ms = delay(cmd, p)?.unwrap_or(0);
     settle(&mut it);
+    check_actions(cmd, s, &it.actions)?;
     check_dests(cmd, s, &it)?;
     let mut index = 0;
     for i in req_targets(cmd, s, p)? {
@@ -458,6 +501,11 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
     let easing: Option<Easing> = parse(cmd, p, "easing")?;
     let dur = duration(p);
     let wait = delay(cmd, p)?;
+    // The actions this call gives are checked as `proto.action.add` checks one; those an
+    // interaction already has stay as they are when only its trigger or timing changes.
+    for given in [whole.as_ref().map(|w| w.actions.as_slice()), actions.as_deref(), action.as_ref().map(std::slice::from_ref)].into_iter().flatten() {
+        check_actions(cmd, s, given)?;
+    }
     let mut hit = false;
     for i in req_targets(cmd, s, p)? {
         let Some(cur) = s.doc()?.get(i)?.interactions.get(k).cloned() else { continue };

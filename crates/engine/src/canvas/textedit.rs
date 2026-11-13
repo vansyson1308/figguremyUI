@@ -109,6 +109,7 @@ pub fn begin(s: &mut Session, id: NodeId, caret: Option<usize>, created: bool) -
 /// Finish editing: an empty new text layer is removed; the session becomes one undo step.
 pub fn end(s: &mut Session) -> Result<()> {
     let Some(te) = s.ds()?.text_edit.clone() else { return Ok(()) };
+    s.refuse_foreign_gesture("text edit")?;
     s.ds_mut()?.text_edit = None;
     // A widget's editable field: the typing is put back and the new value goes to the widget's
     // plugin through `widget.setText`, one undo step (or none when nothing changed).
@@ -178,6 +179,7 @@ fn edit(s: &mut Session, f: impl FnOnce(&mut TextData, &mut TextEdit)) -> Result
 /// document untouched, so an IME deletion that finds nothing to delete does not cancel an
 /// in-progress composition.
 fn edit_if(s: &mut Session, f: impl FnOnce(&mut TextData, &mut TextEdit) -> bool) -> Result<bool> {
+    s.refuse_foreign_gesture("text edit")?;
     let ds = s.ds_mut()?;
     let Some(mut te) = ds.text_edit.clone() else { return Err(EngineError::Other("not editing text".into())) };
     let before = ds.doc.clone();
@@ -456,6 +458,7 @@ fn word_right(chars: &[char], mut i: usize) -> usize {
 /// [`crate::keymap::text_motion`] gives them for the platform's keys. `ArrowLeft` etc. also work.
 pub fn key(s: &mut Session, key: &str, shift: bool, word: bool, line: bool) -> Result<()> {
     let key = key.strip_prefix("Arrow").unwrap_or(key);
+    s.refuse_foreign_gesture("text edit")?;
     let Some(te) = s.ds()?.text_edit.clone() else { return Err(EngineError::Other("not editing text".into())) };
     let t = text_of(s, te.id)?;
     let chars: Vec<char> = t.characters.chars().collect();

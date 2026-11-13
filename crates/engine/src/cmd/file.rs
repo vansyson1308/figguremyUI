@@ -31,7 +31,15 @@ pub use export::{
 };
 use export::{export, export_frames_pdf, export_layers, pdf_bytes};
 use load::font_report;
-pub use load::{MAX_DOCUMENT_FILE, load, load_bytes, load_path};
+pub use load::{IMAGE_FORMATS, MAX_DOCUMENT_FILE, OPEN_FORMATS, load, load_bytes, load_path};
+
+/// What `file.save` writes, by extension: the native file, and an experimental `.fig` copy.
+pub const SAVE_FORMATS: &[&str] = &["figcraft", "fig"];
+
+/// What `file.export` writes: the layer formats, then the whole file as `.fig` or a Penpot archive.
+pub fn export_formats() -> Vec<&'static str> {
+    figcraft_doc::ExportFormat::ALL.iter().map(|f| f.ext()).chain(["fig", "penpot"]).collect()
+}
 #[cfg(test)]
 pub(crate) use load::{installed_family, sketch_line};
 pub(crate) use load::{load_fig, read_capped, recovered, recovered_from, variables_param, write};
@@ -62,7 +70,17 @@ fn new_file(s: &mut Session, p: &Value, kind: FileKind) -> Result<Value> {
     }
     s.docs.push(DocState::new(doc, None));
     s.active = s.docs.len() - 1;
-    Ok(json!({"index": s.active, "kind": kind.id()}))
+    Ok(with_document(s, json!({"index": s.active, "kind": kind.id()})))
+}
+
+/// `out` (a command's result object) saying which document is in front now: its `id`, as a
+/// control or MCP call's `document` takes it, and its `revision`, as `ifRevision` does.
+pub(crate) fn with_document(s: &Session, mut out: Value) -> Value {
+    if let (Ok(ds), Some(o)) = (s.ds(), out.as_object_mut()) {
+        o.insert("id".into(), json!(ds.uid));
+        o.insert("revision".into(), json!(ds.doc_revision()));
+    }
+    out
 }
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -165,7 +183,13 @@ pub fn specs() -> Vec<CommandSpec> {
             true,
             super::create::place_image
         ),
-        spec!("file.close", "Close tab", "{index?, force? (discard unsaved changes)}", false, close),
+        spec!(
+            "file.close",
+            "Close tab",
+            "{index?, force? (discard unsaved changes)}  refused to an AI agent when the tab holds unsaved work or undo steps somebody else made (code otherAuthor), with or without force",
+            false,
+            close
+        ),
         spec!("file.moveTab", "Move tab", "{from, to} (indices among open documents)", false, |s, p| {
             let from = req_index("file.moveTab", p, "from")?;
             let to = req_index("file.moveTab", p, "to")?;
@@ -215,12 +239,18 @@ pub fn specs() -> Vec<CommandSpec> {
             d.name = format!("{} (Copy)", d.name);
             s.docs.push(DocState::new(d, None));
             s.active = s.docs.len() - 1;
-            Ok(json!({"index": s.active}))
+            Ok(with_document(s, json!({"index": s.active})))
         }),
-        spec!("file.revert", "Revert to saved", "{}  leave the live session first, if any", false, |s, _| {
-            revert(s)?;
-            ok()
-        }),
+        spec!(
+            "file.revert",
+            "Revert to saved",
+            "{}  leave the live session first, if any → {ok, id, revision}: the reverted document has a new `id` and its next revision. Unsaved work is kept in the version history first (\"Before revert\", written with the next save). Refused to an AI agent when it would throw away unsaved work or undo steps somebody else made (code otherAuthor)",
+            false,
+            |s, _| {
+                revert(s, "file.revert")?;
+                Ok(with_document(s, json!({"ok": true})))
+            }
+        ),
         spec!(
             "file.saveVersion",
             "Save to version history",
@@ -265,15 +295,29 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             Ok(version_json(i, v))
         }),
-        spec!("version.delete", "Delete version", "{id | index}", false, |s, p| {
-            let ds = s.ds_mut()?;
-            let i = version_index("version.delete", ds, p)?;
-            let v = ds.versions_mut().remove(i);
-            if ds.preview.as_ref().is_some_and(|pv| pv.id == v.id) {
-                ds.end_preview();
+        spec!(
+            "version.delete",
+            "Delete version",
+            "{id | index}  refused to an AI agent: the version history is how a person gets back to earlier work",
+            false,
+            |s, p| {
+                if let Some(me) = s.agent.as_deref() {
+                    return Err(bad(
+                        "version.delete",
+                        format!(
+                            "a person deletes versions: the version history is how they get back to earlier work, and an AI agent ({me}) doesn't remove from it. Leave it, or ask them"
+                        ),
+                    ));
+                }
+                let ds = s.ds_mut()?;
+                let i = version_index("version.delete", ds, p)?;
+                let v = ds.versions_mut().remove(i);
+                if ds.preview.as_ref().is_some_and(|pv| pv.id == v.id) {
+                    ds.end_preview();
+                }
+                ok()
             }
-            ok()
-        }),
+        ),
         spec!(
             "version.preview",
             "View version",
@@ -321,6 +365,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 return Err(bad("doc.switch", "no such document"));
             }
             s.active = i;
+            s.front_chosen();
             ok()
         }),
         spec!("doc.nextTab", "Next tab", "{}", false, |s, _| cycle_doc(s, 1)),
@@ -328,17 +373,19 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "doc.list",
             "List documents",
-            "{}  → [{index, id, name, path?, dirty, active}]: `id` names the file in a control or MCP call's `document`; `path` only for the user's own scripts, not AI agents or plugins",
+            "{}  → [{index, id, name, revision, path?, dirty, active}]: `id` names the file in a control or MCP call's `document`; `revision` counts the document's committed changes since it was opened (pass the one you last saw as any command's `ifRevision` to have the command refused when somebody changed the document in between); `path` only for the user's own scripts, not AI agents or plugins",
             false,
             |s, _| {
                 // Where the files are on disk is the user's: an agent gets their names (#1117).
                 let paths = s.agent.is_none();
+                // The tab the user sees in front, also when this runs on a file behind it.
+                let front = s.front_uid();
                 Ok(Value::Array(
                     s.docs
                         .iter()
                         .enumerate()
                         .map(|(i, d)| {
-                            let mut e = json!({"index": i, "id": d.uid, "name": d.doc.name, "dirty": d.is_dirty(), "active": i == s.active});
+                            let mut e = json!({"index": i, "id": d.uid, "name": d.doc.name, "revision": d.doc_revision(), "dirty": d.is_dirty(), "active": Some(d.uid) == front});
                             if paths {
                                 e["path"] = json!(d.path);
                             }
@@ -455,6 +502,7 @@ fn vd_compat_param(cmd: &str, p: &Value) -> Result<Option<VdCompat>> {
 fn close(s: &mut Session, p: &Value) -> Result<Value> {
     let i = if get(p, "index").is_none() { s.active } else { req_index("file.close", p, "index")? };
     let Some(ds) = s.docs.get(i) else { return Err(bad("file.close", "no such document")) };
+    s.refuse_discarding("file.close", ds.uid)?;
     // A branch tab's edits are in its main file already (which then has unsaved changes).
     if ds.branch_of.is_none() && ds.is_dirty() && !boolean(p, "force").unwrap_or(false) {
         s.request_ui("dialog.unsaved", json!({"index": i}));
@@ -478,7 +526,10 @@ fn cycle_doc(s: &mut Session, dir: i64) -> Result<Value> {
     if n == 0 {
         return Err(crate::EngineError::NoDocument);
     }
-    s.active = (s.active as i64 + dir).rem_euclid(n) as usize;
+    // From the tab the user sees in front, also when the request runs on a file behind it.
+    let from = s.front_uid().and_then(|u| s.docs.iter().position(|d| d.uid == u)).unwrap_or(s.active);
+    s.active = (from as i64 + dir).rem_euclid(n) as usize;
+    s.front_chosen();
     Ok(json!({"index": s.active}))
 }
 

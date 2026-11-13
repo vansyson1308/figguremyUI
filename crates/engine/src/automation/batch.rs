@@ -101,7 +101,7 @@ impl BatchScope {
         for (i, step) in steps.iter().enumerate() {
             let Some(name) = &step.name else { continue };
             if let Some(first) = names.insert(name.clone(), i) {
-                return Err(bad("command.batch", format!("step {i}: `as` \"{name}\" is already step {first}'s name")));
+                return Err(bad("command.batch", format!("step {i}: `as` \"{name}\" is already step {first}'s name")).located(i, &step.command));
             }
         }
         Ok(Self { names, results: Vec::with_capacity(steps.len()), failed: HashSet::new() })

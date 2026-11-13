@@ -34,7 +34,7 @@ pub fn literal(kind: VariableType, v: &Value) -> Option<VariableValue> {
 
 /// An expression result as a value of a `kind` variable: numbers and booleans become text for
 /// string variables; other mismatches don't fit.
-fn fit(kind: VariableType, v: VariableValue) -> Option<VariableValue> {
+pub(crate) fn fit(kind: VariableType, v: VariableValue) -> Option<VariableValue> {
     match (kind, v) {
         (VariableType::String, v @ (VariableValue::Number(_) | VariableValue::Boolean(_))) => Some(VariableValue::String(v.display())),
         (k, v) if v.type_of() == Some(k) => Some(v),

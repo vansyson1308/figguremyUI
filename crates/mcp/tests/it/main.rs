@@ -10,14 +10,20 @@ mod attached;
 mod automation_roots;
 #[allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod common;
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::disallowed_methods)]
+mod examples;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod export_hidden_roots;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod export_profile;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod export_xml;
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::disallowed_methods)]
+mod full_loop;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod garbage;
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod guidance;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod inspect_fields;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -26,5 +32,11 @@ mod inspect_response_limit;
 mod overlay_anchor;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod protocol;
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::disallowed_methods)]
+mod review_r2;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod screenshot_pixel_limit;
+#[allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod verification_tools;
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::disallowed_methods)]
+mod working_document;

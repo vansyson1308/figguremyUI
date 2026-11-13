@@ -135,7 +135,7 @@ fn tools_call_happy_and_error_paths() {
     assert!(c.err("open_file", json!({"path": "/definitely/not/here.figcraft"})).contains("here.figcraft"));
     // Names a tool or a command doesn't take are refused, not ignored (#1413).
     let e = c.err("run_command", json!({"command": "inspect.code", "args": {"id": id, "language": "html"}}));
-    assert!(e.contains("unknown argument `args` (it takes command, document, params)"), "{e}");
+    assert!(e.contains("unknown argument `args` (it takes command, document, ifRevision, params)"), "{e}");
     let e = c.err("batch", json!({"commands": [{"command": "comment.list", "args": {"filter": "open"}}]}));
     assert!(e.contains("unknown argument `commands[0].args`"), "{e}");
     let e = c.err("run_command", json!({"command": "comment.list", "params": {"filterr": "open"}}));
@@ -219,7 +219,22 @@ fn prompts_list_and_get() {
     let mut c = Client::new();
     let r = c.rpc("prompts/list", json!({}));
     let names: Vec<&str> = r["result"]["prompts"].as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["mobile_screen", "design_system", "landing_page", "prototype_flow", "fix_comments", "watch_comments"]);
+    assert_eq!(
+        names,
+        [
+            "design_from_brief",
+            "explore_alternatives",
+            "verify_prototype",
+            "critique_and_fix",
+            "hand_over",
+            "mobile_screen",
+            "design_system",
+            "landing_page",
+            "prototype_flow",
+            "fix_comments",
+            "watch_comments"
+        ]
+    );
     let r = c.rpc("prompts/get", json!({"name": "mobile_screen", "arguments": {"screen": "login"}}));
     let text = r["result"]["messages"][0]["content"]["text"].as_str().unwrap();
     assert!(text.contains("login") && text.contains("iPhone 16") && text.contains("#3B5BDB") && !text.contains("{device}"));

@@ -124,6 +124,8 @@ impl Session {
 
     /// Feed one pointer event to the current tool.
     pub fn pointer(&mut self, ev: &PointerEvent) -> Result<()> {
+        // An AI agent's pointer doesn't take part in somebody else's gesture.
+        self.refuse_foreign_gesture("ui.pointer")?;
         // A held button sends the same move every frame: running the gesture again would only
         // rebuild the same preview (a new document, and a canvas render, every frame).
         if ev.kind != PointerKind::Move {

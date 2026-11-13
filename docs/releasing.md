@@ -52,14 +52,14 @@ environment refuses them (0 steps) and no release is created. The `version` inpu
 
 ## The default server
 
-Share ▸ Online uses the server in Preferences, which starts as the public one built into the app
-(`figcraft_engine::live::DEFAULT_SERVER`). Distributions that would rather not ship that default
-set `FIGCRAFT_DEFAULT_SERVER` when building: to their own server's address (`wss://host/`), or to
-nothing for a build with no default, where online sharing stays off until the user enters a
-server (sharing on the local network works either way):
+Share ▸ Online uses the server in Preferences, which starts as the one built into the app
+(`figcraft_engine::live::DEFAULT_SERVER`). In this fork that is **none**: online sharing stays
+off until the user enters a server (sharing on the local network works either way). A build that
+should ship a default sets `FIGCRAFT_DEFAULT_SERVER` when building, to its own server's address
+(`wss://host/`):
 
 ```sh
-FIGCRAFT_DEFAULT_SERVER= cargo build --release -p figcraft          # no default server
+cargo build --release -p figcraft                                    # no default server
 FIGCRAFT_DEFAULT_SERVER=wss://design.example.org/ cargo build --release -p figcraft
 ```
 

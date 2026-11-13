@@ -138,6 +138,8 @@ mod comment_access_tests;
 #[cfg(test)]
 mod deleted_cap_tests;
 #[cfg(test)]
+mod design_tests;
+#[cfg(test)]
 mod diff_tests;
 #[cfg(test)]
 mod entry_ids_tests;

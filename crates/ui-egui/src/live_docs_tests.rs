@@ -48,6 +48,9 @@ impl LiveLink for Hosting {
 
 fn harness() -> (Harness, Queue) {
     let (mut h, _) = Harness::new();
+    // A server is set in Preferences, so the popover offers Online and Local network (this fork
+    // ships none: see `the_server_preference_resets_and_turns_online_sharing_off`).
+    h.app.session.prefs.publish_server = "wss://share.example/".into();
     let queue = Queue::default();
     h.app.session.live.install(Box::new(Hosting(queue.clone())));
     h.frames(3);

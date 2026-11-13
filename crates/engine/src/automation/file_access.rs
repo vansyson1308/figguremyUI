@@ -398,7 +398,7 @@ pub const NETWORK_REFUSED: &str =
 pub fn allow(path: impl AsRef<Path>, access: Access) -> Result<PathBuf> {
     let path = path.as_ref();
     match current() {
-        Some(roots) => roots.check(path, access).map_err(EngineError::Other),
+        Some(roots) => roots.check(path, access).map_err(EngineError::PathRejected),
         None => Ok(path.to_path_buf()),
     }
 }

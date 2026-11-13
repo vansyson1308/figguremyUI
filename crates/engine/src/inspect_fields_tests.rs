@@ -74,6 +74,15 @@ fn empty_options_keep_the_main_tree_and_document_output() {
         "dirty": true,
         "history": {
             "redo": 0,
+            // Who made each step, beside the labels (the document revision's companion).
+            "steps": [
+                {"author": "user", "label": "Add page"},
+                {"author": "user", "label": "Create instance"},
+                {"author": "user", "label": "Create layer"},
+                {"author": "user", "label": "Create layer"},
+                {"author": "user", "label": "Create layer"},
+                {"author": "user", "label": "Create layer"}
+            ],
             "undo": [
                 "Add page",
                 "Create instance",
@@ -84,6 +93,7 @@ fn empty_options_keep_the_main_tree_and_document_output() {
             ]
         },
         "id": s.ds().unwrap().uid,
+        "revision": s.ds().unwrap().doc_revision(),
         "images": 0,
         "kind": "design",
         "name": "Untitled",

@@ -20,7 +20,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "variable.update",
             "Edit variable",
-            "{variable, name?, description?, scopes? ([scope ids]; null or [\"ALL_SCOPES\"] = every supported property, [] = hidden from pickers), hiddenFromPublishing? (left out when the file is published as a library), codeSyntax? {WEB?, iOS?, ANDROID?: name code uses (\"\" clears)}}",
+            "{variable (its id, `Collection/name`, or a name only one variable has), name?, description?, scopes? ([scope ids]; null or [\"ALL_SCOPES\"] = every supported property, [] = hidden from pickers), hiddenFromPublishing? (left out when the file is published as a library), codeSyntax? {WEB?, iOS?, ANDROID?: name code uses (\"\" clears)}}",
             true,
             update
         ),
@@ -53,32 +53,10 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
-/// Props resolve an exact id first, then an unambiguous exact name or `Collection/name`. Compare
-/// whole names: both collection and variable names can contain `/`. Other commands keep their
-/// existing first-match lookup.
+/// The variable a command names, as [`figcraft_doc::Variables::find`] reads it: an exact id, an
+/// unambiguous exact name or `Collection/name`. Every command that takes a variable goes through it.
 pub(crate) fn resolve_strict(cmd: &str, doc: &Document, name: &str) -> Result<VariableId> {
-    let vars = &doc.variables;
-    if let Some(v) = vars.variables.iter().find(|v| v.id == name) {
-        return Ok(v.id.clone());
-    }
-    let collections: std::collections::BTreeMap<_, _> = vars.collections.iter().map(|c| (c.id.as_str(), c.name.as_str())).collect();
-    let mut candidates = std::collections::BTreeMap::new();
-    for v in &vars.variables {
-        let collection = collections.get(v.collection.as_str()).copied().unwrap_or(v.collection.as_str());
-        let qualified = format!("{collection}/{}", v.name);
-        if v.name == name || qualified == name {
-            candidates.insert(v.id.as_str(), qualified);
-        }
-    }
-    match candidates.keys().next().copied() {
-        None => Err(bad(cmd, format!("no such variable `{name}`"))),
-        Some(id) if candidates.len() == 1 => Ok(id.to_string()),
-        Some(_) => {
-            let mut names: Vec<_> = candidates.into_values().collect();
-            names.sort();
-            Err(bad(cmd, format!("ambiguous variable `{name}`: {} (use a variable id to choose)", names.join(", "))))
-        }
-    }
+    doc.variables.find(name).map(|v| v.id.clone()).map_err(|e| bad(cmd, e))
 }
 
 /// The first of `base`, `base 2`, `base 3`… that no collection is named.
@@ -113,7 +91,7 @@ fn update(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "variable.update";
     let v = req_string(cmd, p, "variable")?;
     let doc = s.doc_mut()?;
-    let var = doc.variables.get(&v).cloned().ok_or_else(|| bad(cmd, "no such variable"))?;
+    let var = doc.variables.find(&v).cloned().map_err(|e| bad(cmd, e))?;
     let name = match string(p, "name") {
         Some(_) if var.extends.is_some() => return Err(inherited(cmd, "an inherited variable's name")),
         Some(n) => {
@@ -184,7 +162,8 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "variable.duplicate";
     let v = req_string(cmd, p, "variable")?;
     let doc = s.doc_mut()?;
-    let pos = doc.variables.variables.iter().position(|x| x.id == v || x.name == v).ok_or_else(|| bad(cmd, "no such variable"))?;
+    let id = resolve_strict(cmd, doc, &v)?;
+    let pos = doc.variables.variables.iter().position(|x| x.id == id).ok_or_else(|| bad(cmd, "no such variable"))?;
     let mut copy = doc.variables.variables.get(pos).cloned().ok_or_else(|| bad(cmd, "no such variable"))?;
     let taken = |n: &str| doc.variables.variables.iter().any(|x| x.collection == copy.collection && x.name == n);
     let name = (1..1000)
@@ -362,7 +341,7 @@ fn reset_override(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "variable.resetOverride";
     let v = req_string(cmd, p, "variable")?;
     let doc = s.doc_mut()?;
-    let var = doc.variables.get(&v).cloned().ok_or_else(|| bad(cmd, "no such variable"))?;
+    let var = doc.variables.find(&v).cloned().map_err(|e| bad(cmd, e))?;
     let parent = var.extends.as_deref().and_then(|x| doc.variables.get_by_id(x)).cloned();
     let parent = parent.ok_or_else(|| bad(cmd, "only variables an extended collection inherits have overrides"))?;
     let modes: Vec<ModeId> = match string(p, "mode") {

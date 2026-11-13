@@ -1,0 +1,925 @@
+diff --git a/crates/doc/src/lib.rs b/crates/doc/src/lib.rs
+index 53de23ac..dea27f1b 100644
+--- a/crates/doc/src/lib.rs
++++ b/crates/doc/src/lib.rs
+@@ -381,6 +381,12 @@ impl Document {
+         self.nodes.get(&id)
+     }
+ 
++    /// Every node with its id, ascending, as the `Arc` it is shared through (two versions of a
++    /// document tell an unchanged node by pointer).
++    pub fn node_arcs(&self) -> impl Iterator<Item = (NodeId, &Arc<Node>)> + '_ {
++        self.nodes.iter().map(|(id, n)| (*id, n))
++    }
++
+     /// Mutable access (copy-on-write when a snapshot shares the node).
+     pub fn node_mut(&mut self, id: NodeId) -> Option<&mut Node> {
+         let n = self.nodes.get_mut(&id).map(Arc::make_mut);
+@@ -1366,3 +1372,83 @@ mod vector_regions_tests;
+ mod width_sides_tests;
+ #[cfg(test)]
+ mod width_tests;
++
++
++/// [`Document::modes_for`] for many layers of one document in a row: what each chain of parents
++/// sets is worked out once and shared by the layers under it (applying variable bindings asks for
++/// every bound layer, PF2). It stays right while the document's parents, variable modes and
++/// instances' main components stay as they were: [`Self::clear`] it after a change to any of them.
++#[derive(Default)]
++pub struct ModesCache {
++    /// A layer's modes for the layers inside it (its own over its parents'), and how many layers
++    /// that chain has.
++    chains: std::collections::HashMap<NodeId, (Arc<BTreeMap<CollectionId, ModeId>>, usize)>,
++}
++
++/// The longest chain of parents a [`ModesCache`] works out; a deeper layer (or a loop of parents
++/// in a broken file) is answered by [`Document::modes_for`] itself, which stops where it stops.
++const MODES_CACHE_DEPTH: usize = 1_000;
++
++impl ModesCache {
++    /// Forget what was worked out (the document changed).
++    pub fn clear(&mut self) {
++        self.chains.clear();
++    }
++
++    /// The same as `doc.modes_for(id)`.
++    pub fn modes_for(&mut self, doc: &Document, id: NodeId) -> BTreeMap<CollectionId, ModeId> {
++        BTreeMap::clone(&self.shared(doc, id))
++    }
++
++    /// [`Self::modes_for`], shared with the layers around it where it sets no mode of its own.
++    pub fn shared(&mut self, doc: &Document, id: NodeId) -> Arc<BTreeMap<CollectionId, ModeId>> {
++        let Some(n) = doc.node(id) else { return Arc::new(doc.modes_for(id)) };
++        let around = match n.parent {
++            None => Arc::new(BTreeMap::new()),
++            Some(p) => match self.chain(doc, p) {
++                Some(c) => c,
++                None => return Arc::new(doc.modes_for(id)),
++            },
++        };
++        let mut own = doc.main_modes(n).chain(&n.var_modes).peekable();
++        if own.peek().is_none() {
++            return around;
++        }
++        let mut out = BTreeMap::clone(&around);
++        out.extend(own.map(|(k, v)| (k.clone(), v.clone())));
++        Arc::new(out)
++    }
++
++    /// What layer `p` and its parents set, outermost first and `p` last (what the layers inside
++    /// `p` inherit). `None` past [`MODES_CACHE_DEPTH`].
++    fn chain(&mut self, doc: &Document, p: NodeId) -> Option<Arc<BTreeMap<CollectionId, ModeId>>> {
++        // Up to the outermost layer, or to one already worked out.
++        let mut path = Vec::new();
++        let mut cur = Some(p);
++        let (mut acc, mut depth) = loop {
++            let Some(c) = cur else { break (Arc::new(BTreeMap::new()), 0) };
++            if let Some((m, d)) = self.chains.get(&c) {
++                break (m.clone(), *d);
++            }
++            if path.len() >= MODES_CACHE_DEPTH {
++                return None;
++            }
++            path.push(c);
++            cur = doc.node(c).and_then(|n| n.parent);
++        };
++        // Then down again, each layer's own modes over what is around it.
++        for c in path.into_iter().rev() {
++            depth += 1;
++            if let Some(n) = doc.node(c) {
++                let mut own = doc.main_modes(n).chain(&n.var_modes).peekable();
++                if own.peek().is_some() {
++                    let mut m = BTreeMap::clone(&acc);
++                    m.extend(own.map(|(k, v)| (k.clone(), v.clone())));
++                    acc = Arc::new(m);
++                }
++            }
++            self.chains.insert(c, (acc.clone(), depth));
++        }
++        (depth <= MODES_CACHE_DEPTH).then_some(acc)
++    }
++}
+diff --git a/crates/engine/src/cmd/styles.rs b/crates/engine/src/cmd/styles.rs
+index f230960d..7f40264a 100644
+--- a/crates/engine/src/cmd/styles.rs
++++ b/crates/engine/src/cmd/styles.rs
+@@ -1261,9 +1261,24 @@ fn apply_bindings_matching(doc: &mut Document, only: Option<&std::collections::B
+         Some(ids) => ids.iter().copied().filter(|i| doc.node(*i).is_some_and(|n| !n.bound.is_empty())).collect(),
+         None => doc.nodes().filter(|n| !n.bound.is_empty()).map(|n| n.id).collect(),
+     };
++    // The layers' modes, each chain of parents worked out once (siblings share it), and what each
++    // variable resolves to in each set of modes met (the variables don't change in here): a
++    // prototype's run applies every binding after every action (performance budget PF2).
++    let mut mode_cache = figcraft_doc::ModesCache::default();
++    let mut in_modes: std::collections::HashMap<std::sync::Arc<BTreeMap<CollectionId, ModeId>>, usize> = Default::default();
++    let mut resolved: Vec<std::collections::HashMap<String, Option<VariableValue>>> = Vec::new();
+     for id in bound {
+-        let modes = doc.modes_for(id);
++        let modes = mode_cache.shared(doc, id);
++        let known = match in_modes.get(&*modes) {
++            Some(i) => *i,
++            None => {
++                in_modes.insert(modes.clone(), resolved.len());
++                resolved.push(Default::default());
++                resolved.len() - 1
++            }
++        };
+         let Some(n) = doc.node(id) else { continue };
++        let was = doc.node_arc(id).cloned();
+         let binds = n.bound.clone();
+         let has_layout = n.layout.is_some();
+         let mut sets = serde_json::Map::new();
+@@ -1279,7 +1294,18 @@ fn apply_bindings_matching(doc: &mut Document, only: Option<&std::collections::B
+             if !has_layout && super::props::LAYOUT_KEYS.contains(&field.as_str()) {
+                 continue;
+             }
+-            let Some(val) = doc.variables.resolve(&var, &modes) else { continue };
++            let val = match resolved.get_mut(known) {
++                Some(known) => match known.get(&var) {
++                    Some(v) => v.clone(),
++                    None => {
++                        let v = doc.variables.resolve(&var, &modes);
++                        known.insert(var.clone(), v.clone());
++                        v
++                    }
++                },
++                None => doc.variables.resolve(&var, &modes),
++            };
++            let Some(val) = val else { continue };
+             // One list item's value: a paint's colour, an effect's or a layout grid's field.
+             if let Some((list, i, prop)) = list_binding(&field) {
+                 match (list, &val) {
+@@ -1346,7 +1372,24 @@ fn apply_bindings_matching(doc: &mut Document, only: Option<&std::collections::B
+         if !prop_sets.is_empty() {
+             super::component::apply_prop_bindings(doc, id, &prop_sets);
+         }
++        // What the layers after this one resolve in changes with a layer's parent, children or
++        // modes, and with an instance's main component or properties (they rebuild its layers).
++        if !prop_sets.is_empty() || was.is_none_or(|was| doc.node(id).is_none_or(|n| moves_modes(&was, n))) {
++            mode_cache.clear();
++        }
++    }
++}
++
++/// Whether going from `was` to `now` can change the variable modes of a layer (this one, or one
++/// inside it or elsewhere that inherits from it): see [`figcraft_doc::ModesCache`].
++fn moves_modes(was: &Node, now: &Node) -> bool {
++    fn instance(n: &Node) -> Option<(NodeId, &BTreeMap<String, Value>)> {
++        match &n.kind {
++            NodeKind::Instance { component, props } => Some((*component, props)),
++            _ => None,
++        }
+     }
++    was.parent != now.parent || was.var_modes != now.var_modes || was.children != now.children || instance(was) != instance(now)
+ }
+ 
+ /// Set paint `i`'s colour (or its gradient stop `stop`'s) to a bound colour; a first paint that
+diff --git a/crates/engine/src/derived.rs b/crates/engine/src/derived.rs
+index 54356e2c..801313eb 100644
+--- a/crates/engine/src/derived.rs
++++ b/crates/engine/src/derived.rs
+@@ -2,12 +2,19 @@ use super::{Arc, BTreeSet, Document, Node, NodeId, board, cmd, components, measu
+ 
+ /// Nodes whose `Arc` differs from `before` (new or edited).
+ pub fn changed_nodes(doc: &Document, before: &Document) -> Vec<NodeId> {
+-    doc.ids()
+-        .filter(|id| match (doc.node_arc(*id), before.node_arc(*id)) {
+-            (Some(a), Some(b)) => !Arc::ptr_eq(a, b),
+-            _ => true,
+-        })
+-        .collect()
++    // One walk through both in id order (each is sorted by id), not a lookup in `before` per
++    // layer: every command an AI agent runs asks (where it works, `sharing::agent`), and the
++    // lookups cost a quarter of a small edit (PF1).
++    let mut old = before.node_arcs().peekable();
++    let mut out = Vec::new();
++    for (id, a) in doc.node_arcs() {
++        while old.next_if(|(o, _)| *o < id).is_some() {}
++        match old.next_if(|(o, _)| *o == id) {
++            Some((_, b)) if Arc::ptr_eq(a, b) => {}
++            _ => out.push(id),
++        }
++    }
++    out
+ }
+ 
+ #[cfg(test)]
+diff --git a/crates/engine/src/doc_state.rs b/crates/engine/src/doc_state.rs
+index bc9ab358..6235b64e 100644
+--- a/crates/engine/src/doc_state.rs
++++ b/crates/engine/src/doc_state.rs
+@@ -425,11 +425,17 @@ impl DocState {
+     /// step: what bringing back a snapshot from `revision` would take back for good. A change the
+     /// log no longer remembers counts as the user's.
+     pub(crate) fn others_change_since(&self, revision: u64, agent: &str) -> Option<Change> {
+-        let since = self.changes_since(revision);
+-        if let Some(c) = since.iter().rev().find(|c| !c.stepped && c.author.as_deref() != Some(agent)) {
++        // What `changes_since` lists, read in place: every undo and redo of an agent asks, and a
++        // copy of the whole log each time cost more than the undo itself (PF1). A change nothing
++        // recorded yet comes last in that list, has no undo step and no agent: it is the newest.
++        if self.unrecorded_change() {
++            return Some(Change { revision: self.doc_rev + 1, label: "Edit".into(), author: None, stepped: false });
++        }
++        let mut since = self.changes.iter().filter(|c| c.revision > revision);
++        if let Some(c) = since.clone().rev().find(|c| !c.stepped && c.author.as_deref() != Some(agent)) {
+             return Some(c.clone());
+         }
+-        let forgotten = since.first().map_or(self.doc_rev > revision, |c| c.revision > revision + 1);
++        let forgotten = since.next().map_or(self.doc_rev > revision, |c| c.revision > revision + 1);
+         forgotten.then(|| Change { revision: revision + 1, label: "a change no longer remembered".into(), author: None, stepped: false })
+     }
+ 
+diff --git a/crates/engine/src/lib.rs b/crates/engine/src/lib.rs
+index 1f975b5d..b8768adc 100644
+--- a/crates/engine/src/lib.rs
++++ b/crates/engine/src/lib.rs
+@@ -464,6 +464,8 @@ mod node_find_tests;
+ #[cfg(test)]
+ mod node_set_refusals_tests;
+ #[cfg(test)]
++mod modes_cache_tests;
++#[cfg(test)]
+ mod normalize_guard_tests;
+ #[cfg(test)]
+ mod online_tests;
+diff --git a/crates/engine/src/measure.rs b/crates/engine/src/measure.rs
+index 69dabce4..2c2085fe 100644
+--- a/crates/engine/src/measure.rs
++++ b/crates/engine/src/measure.rs
+@@ -12,7 +12,9 @@ impl figcraft_layout::Measure for TextMeasure {
+         if t.auto_resize == TextAutoResize::WidthAndHeight {
+             t.auto_resize = TextAutoResize::Height;
+         }
+-        Some(figcraft_text::layout(&t, Some(width), None).height.max(1.0))
++        // Cached: a layout measures every text in each auto layout frame it runs, changed or not
++        // (a prototype run lays frames out again after every action, PF2).
++        Some(figcraft_text::height_cached(&t, width).max(1.0))
+     }
+     fn text_size(&self, doc: &Document, id: NodeId) -> Option<(f64, f64)> {
+         let n = doc.node(id)?;
+diff --git a/crates/engine/src/modes_cache_tests.rs b/crates/engine/src/modes_cache_tests.rs
+new file mode 100644
+index 00000000..6b96a897
+--- /dev/null
++++ b/crates/engine/src/modes_cache_tests.rs
+@@ -0,0 +1,87 @@
++//! Shortcuts for the prototype simulator and for an agent's commands (performance budgets PF1 and
++//! PF2) answer as what they replace: `ModesCache` as `Document::modes_for` on every layer, and
++//! `changed_nodes` as a lookup of every layer in the version before.
++
++use std::sync::Arc;
++
++use figcraft_doc::{Document, ModesCache, NodeId};
++use serde_json::json;
++
++use crate::Session;
++use crate::synthetic_ds::{DsSpec, design_system_with_instances};
++
++/// A design system with light and dark screens and instances nested inside instances.
++fn themed() -> Document {
++    design_system_with_instances(&DsSpec::SMALL, 40).unwrap().0
++}
++
++#[test]
++fn the_modes_cache_answers_as_modes_for_on_every_layer() {
++    let doc = themed();
++    let ids: Vec<NodeId> = doc.ids().collect();
++    let mut cache = ModesCache::default();
++    // In id order, then the other way round (other chains are worked out first), then again from
++    // what is cached.
++    for id in ids.iter().chain(ids.iter().rev()).chain(ids.iter()) {
++        assert_eq!(cache.modes_for(&doc, *id), doc.modes_for(*id), "layer {id}");
++    }
++    let themed = ids.iter().filter(|i| !doc.modes_for(**i).is_empty()).count();
++    assert!(themed > ids.len() / 4, "{themed} of {} layers are in a mode", ids.len());
++    // A layer that isn't there has no modes.
++    assert!(cache.modes_for(&doc, NodeId(u64::MAX)).is_empty());
++}
++
++#[test]
++fn a_loop_of_parents_is_answered_as_modes_for_answers_it() {
++    let mut s = Session::new();
++    let outer = NodeId(s.execute("node.create", &json!({"type": "frame", "width": 100, "height": 100})).unwrap()["id"].as_u64().unwrap());
++    let inner = NodeId(s.execute("node.create", &json!({"type": "frame", "parent": outer.0, "width": 50, "height": 50})).unwrap()["id"].as_u64().unwrap());
++    let leaf = NodeId(s.execute("node.create", &json!({"type": "rectangle", "parent": inner.0, "width": 5, "height": 5})).unwrap()["id"].as_u64().unwrap());
++    let doc = s.doc_mut().unwrap();
++    doc.node_mut(outer).unwrap().var_modes.insert("c:1".into(), "m:1".into());
++    doc.node_mut(inner).unwrap().var_modes.insert("c:2".into(), "m:2".into());
++    let mut cache = ModesCache::default();
++    for id in [leaf, inner, outer] {
++        assert_eq!(cache.modes_for(doc, id), doc.modes_for(id));
++    }
++    assert_eq!(cache.modes_for(doc, leaf).len(), 2);
++    // A broken file: the outer frame inside the leaf.
++    let mut broken = doc.clone();
++    broken.node_mut(outer).unwrap().parent = Some(leaf);
++    let mut cache = ModesCache::default();
++    for id in [leaf, inner, outer] {
++        assert_eq!(cache.modes_for(&broken, id), broken.modes_for(id), "layer {id}");
++    }
++}
++
++/// What `changed_nodes` replaced: every layer of `doc` looked up in `before`.
++fn looked_up(doc: &Document, before: &Document) -> Vec<NodeId> {
++    doc.ids()
++        .filter(|id| match (doc.node_arc(*id), before.node_arc(*id)) {
++            (Some(a), Some(b)) => !Arc::ptr_eq(a, b),
++            _ => true,
++        })
++        .collect()
++}
++
++#[test]
++fn changed_nodes_are_the_layers_whose_copy_changed() {
++    let mut s = Session::with_document(themed());
++    let before = s.doc().unwrap().clone();
++    let ids: Vec<NodeId> = before.ids().collect();
++    assert_eq!(crate::changed_nodes(&before, &before), Vec::<NodeId>::new());
++    s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 4, "height": 4})).unwrap();
++    let doc = s.doc_mut().unwrap();
++    // Edited, removed, and replaced by an equal copy (a new `Arc` with the same content).
++    doc.node_mut(ids[ids.len() / 2]).unwrap().name = "Edited".into();
++    let last = *ids.last().unwrap();
++    let _ = doc.remove(last);
++    let _ = doc.node_mut(ids[3]);
++    let doc = s.doc().unwrap().clone();
++    let changed = crate::changed_nodes(&doc, &before);
++    assert_eq!(changed, looked_up(&doc, &before));
++    assert!(changed.len() >= 3, "{changed:?}");
++    // And the other way round (what was removed is what is new).
++    assert_eq!(crate::changed_nodes(&before, &doc), looked_up(&before, &doc));
++    assert_eq!(crate::changed_nodes(&before, &Document::default()), before.ids().collect::<Vec<_>>());
++}
+diff --git a/crates/mcp/src/backend.rs b/crates/mcp/src/backend.rs
+index ef7428e7..b418c34f 100644
+--- a/crates/mcp/src/backend.rs
++++ b/crates/mcp/src/backend.rs
+@@ -37,6 +37,14 @@ pub trait Backend {
+         None
+     }
+ 
++    /// The open documents as `doc.list` lists them, read without running a command, when this
++    /// backend can (headless: from its own session). A tool call reads them before its first
++    /// request and after its last; a command for each read cost about as much as a small tool
++    /// call's own work (performance budget PF1). `None`: ask `doc.list`.
++    fn documents(&mut self) -> Option<Vec<OpenDocument>> {
++        None
++    }
++
+     /// What the app at the other end says about itself (`app.info`: `{instance, version, …}`),
+     /// when there is one and it answers the question.
+     fn app_info(&mut self) -> Option<Value> {
+@@ -224,6 +232,32 @@ impl Attached {
+     }
+ }
+ 
++/// One open document, as `doc.list` lists it.
++#[derive(Clone, Debug, PartialEq)]
++pub struct OpenDocument {
++    pub id: u64,
++    /// Its tab's place among the open documents (`doc.list`'s `index`).
++    pub index: Option<u64>,
++    pub name: String,
++    /// `None` from an app that doesn't count revisions yet.
++    pub revision: Option<u64>,
++    /// The tab the user sees in front (`doc.list`'s `active`).
++    pub front: bool,
++}
++
++impl OpenDocument {
++    /// One entry of `doc.list`'s answer (`None`: it has no id).
++    pub fn from_listed(d: &Value) -> Option<Self> {
++        Some(Self {
++            id: d.get("id")?.as_u64()?,
++            index: d.get("index").and_then(Value::as_u64),
++            name: d.get("name").and_then(Value::as_str).unwrap_or_default().to_string(),
++            revision: d.get("revision").and_then(Value::as_u64),
++            front: d.get("active").and_then(Value::as_bool).unwrap_or(false),
++        })
++    }
++}
++
+ /// A failure of the connection itself, as text and as its detail (code `transport`).
+ fn transport(message: String) -> (String, Value) {
+     let detail = error_detail("transport", &message);
+diff --git a/crates/mcp/src/headless.rs b/crates/mcp/src/headless.rs
+index 07b6db2d..09ceaf6b 100644
+--- a/crates/mcp/src/headless.rs
++++ b/crates/mcp/src/headless.rs
+@@ -6,7 +6,7 @@ use figcraft_doc::{ExportFormat, NodeId};
+ use figcraft_engine::{PointerEvent, PointerKind, Session, textedit};
+ use serde_json::{Value, json};
+ 
+-use crate::backend::{Backend, error_detail};
++use crate::backend::{Backend, OpenDocument, error_detail};
+ 
+ /// Headless backend: a [`Session`] with one untitled document.
+ pub struct Headless {
+@@ -506,6 +506,24 @@ impl Backend for Headless {
+         self.last_revision.take()
+     }
+ 
++    /// What `doc.list` lists, without the command around it: what a live session sent since is
++    /// taken in first, as a request does.
++    fn documents(&mut self) -> Option<Vec<OpenDocument>> {
++        self.session.live_poll();
++        let front = self.session.front_uid();
++        let list = (self.session.docs.iter().enumerate())
++            .map(|(i, d)| OpenDocument {
++                id: d.uid,
++                index: u64::try_from(i).ok(),
++                name: d.doc.name.clone(),
++                revision: Some(d.doc_revision()),
++                front: Some(d.uid) == front,
++            })
++            .collect();
++        self.session.live_sync();
++        Some(list)
++    }
++
+     fn render_png(&mut self, ids: &[u64], scale: f64) -> Result<Vec<u8>, String> {
+         let r = self.render(ids, scale);
+         self.noted(r)
+diff --git a/crates/mcp/src/lib.rs b/crates/mcp/src/lib.rs
+index 5d0e3256..25e69f15 100644
+--- a/crates/mcp/src/lib.rs
++++ b/crates/mcp/src/lib.rs
+@@ -27,7 +27,7 @@ mod tools;
+ #[cfg(test)]
+ mod gradient_tests;
+ 
+-pub use backend::{Attached, Backend, decode_data, error_detail, page_children};
++pub use backend::{Attached, Backend, OpenDocument, decode_data, error_detail, page_children};
+ pub use headless::Headless;
+ pub use prompts::{PROMPTS, PromptArg, PromptDef};
+ pub use resources::{COMMAND_TEMPLATE, COMMANDS_URI, DESIGN_URI, DOC_URI, FINDINGS_URI, FLOW_URI, NODE_TEMPLATE, SCENARIOS_URI};
+diff --git a/crates/mcp/src/server.rs b/crates/mcp/src/server.rs
+index d993ad74..09cda59b 100644
+--- a/crates/mcp/src/server.rs
++++ b/crates/mcp/src/server.rs
+@@ -7,7 +7,7 @@ use figcraft_engine::file_access::{Roots, confined};
+ 
+ use serde_json::{Value, json};
+ 
+-use crate::backend::Backend;
++use crate::backend::{Backend, OpenDocument};
+ use crate::prompts;
+ use crate::resources;
+ use crate::tools::{ToolState, call_tool_in, tool_definitions};
+@@ -97,6 +97,10 @@ impl Backend for AsAgent<'_> {
+         self.inner.take_revision()
+     }
+ 
++    fn documents(&mut self) -> Option<Vec<OpenDocument>> {
++        self.inner.documents()
++    }
++
+     fn app_info(&mut self) -> Option<Value> {
+         self.inner.app_info()
+     }
+@@ -115,7 +119,12 @@ impl Backend for AsAgent<'_> {
+ }
+ 
+ fn response(id: Value, result: Value) -> Value {
+-    json!({"jsonrpc": "2.0", "id": id, "result": result})
++    // Moved in, not copied as `json!` would: a result can be a whole document tree.
++    let mut v = serde_json::Map::new();
++    v.insert("jsonrpc".into(), json!("2.0"));
++    v.insert("id".into(), id);
++    v.insert("result".into(), result);
++    Value::Object(v)
+ }
+ 
+ fn error(id: Value, code: i64, message: impl Into<String>) -> Value {
+@@ -321,7 +330,7 @@ impl Server {
+                 // The tools remember the working document between calls; the backend acts as the
+                 // client's agent.
+                 let mut backend = AsAgent { inner: self.backend.as_mut(), agent: &self.agent };
+-                Ok(call_tool_in(&mut self.tools, &mut backend, name, &args).to_value())
++                Ok(call_tool_in(&mut self.tools, &mut backend, name, &args).into_value())
+             }
+             "resources/list" => Ok(resources::list()),
+             "resources/templates/list" => Ok(resources::templates()),
+diff --git a/crates/mcp/src/tools.rs b/crates/mcp/src/tools.rs
+index bdf9d1a6..84b77a73 100644
+--- a/crates/mcp/src/tools.rs
++++ b/crates/mcp/src/tools.rs
+@@ -6,7 +6,7 @@ use base64::Engine as _;
+ use figcraft_engine::params::normalize_paint;
+ use serde_json::{Map, Value, json};
+ 
+-use crate::backend::{Backend, decode_data, error_detail, page_children};
++use crate::backend::{Backend, OpenDocument, decode_data, error_detail, page_children};
+ 
+ /// The result of `tools/call`: MCP content blocks plus the `isError` flag.
+ #[derive(Clone, Debug, PartialEq)]
+@@ -57,11 +57,17 @@ impl ToolResult {
+         }
+     }
+     pub fn to_value(&self) -> Value {
+-        let mut v = json!({"content": self.content, "isError": self.is_error});
+-        if let Some(s) = &self.structured {
+-            v["structuredContent"] = s.clone();
++        self.clone().into_value()
++    }
++    /// [`Self::to_value`], moving the blocks instead of copying them (a server answers once).
++    pub fn into_value(self) -> Value {
++        let mut v = Map::new();
++        v.insert("content".into(), Value::Array(self.content));
++        v.insert("isError".into(), Value::Bool(self.is_error));
++        if let Some(s) = self.structured {
++            v.insert("structuredContent".into(), s);
+         }
+-        v
++        Value::Object(v)
+     }
+     /// The first text block (tests and the CLI).
+     pub fn first_text(&self) -> &str {
+@@ -580,6 +586,10 @@ impl Backend for InDocument<'_> {
+         self.inner.take_revision()
+     }
+ 
++    fn documents(&mut self) -> Option<Vec<OpenDocument>> {
++        self.inner.documents()
++    }
++
+     fn app_info(&mut self) -> Option<Value> {
+         self.inner.app_info()
+     }
+@@ -818,16 +828,7 @@ impl ToolState {
+ }
+ 
+ /// One open document, as `doc.list` gives it.
+-#[derive(Clone, Debug)]
+-struct Open {
+-    id: u64,
+-    /// Its tab's place among the open documents (`doc.list`'s `index`).
+-    index: Option<u64>,
+-    name: String,
+-    /// `None` from an app that doesn't count revisions yet.
+-    revision: Option<u64>,
+-    front: bool,
+-}
++type Open = OpenDocument;
+ 
+ /// A document's name as results carry it: one line, short enough that naming the document never
+ /// pushes a response that fitted its size limit over it.
+@@ -867,24 +868,13 @@ fn revision_for(d: &Open, changed: Option<(u64, u64)>, before: Option<&[Open]>)
+ }
+ 
+ /// The open documents. Asked without `document`, so `front` is the tab the user sees in front.
++/// Read without a command where the backend can ([`Backend::documents`]), else with `doc.list`.
+ fn open_documents(b: &mut dyn Backend) -> Result<Vec<Open>, String> {
++    if let Some(docs) = b.documents() {
++        return Ok(docs);
++    }
+     let list = exec(b, "doc.list", json!({}))?;
+-    Ok(list
+-        .as_array()
+-        .map(|a| {
+-            a.iter()
+-                .filter_map(|d| {
+-                    Some(Open {
+-                        id: d.get("id")?.as_u64()?,
+-                        index: d.get("index").and_then(Value::as_u64),
+-                        name: d.get("name").and_then(Value::as_str).unwrap_or_default().to_string(),
+-                        revision: d.get("revision").and_then(Value::as_u64),
+-                        front: d.get("active").and_then(Value::as_bool).unwrap_or(false),
+-                    })
+-                })
+-                .collect()
+-        })
+-        .unwrap_or_default())
++    Ok(list.as_array().map(|a| a.iter().filter_map(OpenDocument::from_listed).collect()).unwrap_or_default())
+ }
+ 
+ /// "Name" (id 3), "Other" (id 5): the open documents in an error message.
+diff --git a/crates/mcp/tests/it/call_cost.rs b/crates/mcp/tests/it/call_cost.rs
+new file mode 100644
+index 00000000..a86a1234
+--- /dev/null
++++ b/crates/mcp/tests/it/call_cost.rs
+@@ -0,0 +1,150 @@
++//! What a tool call asks of its backend (performance budget PF1, `docs/acceptance.md`). A tool
++//! call reads the open documents before its first request and after its last, to name the
++//! document and revision its result belongs to (review R2-01). The headless backend answers those
++//! reads from its own session (`Backend::documents`), so they run no command; a backend that
++//! can't (an attached app) is asked `doc.list`. Both give the same results.
++
++use std::cell::RefCell;
++use std::rc::Rc;
++
++use figcraft_mcp::{Backend, Headless, OpenDocument, Server};
++use serde_json::{Value, json};
++
++use crate::common::Client;
++
++/// What a [`Counting`] backend was asked: the commands it ran, `doc.list` apart.
++#[derive(Default)]
++struct Asked {
++    lists: usize,
++    commands: Vec<String>,
++}
++
++/// A headless backend that counts the commands it runs. `documents: false` plays an app that
++/// can't read the documents without a command.
++struct Counting {
++    inner: Headless,
++    documents: bool,
++    asked: Rc<RefCell<Asked>>,
++}
++
++impl Backend for Counting {
++    fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
++        if method == "engine.execute" {
++            let command = params["command"].as_str().unwrap_or_default().to_string();
++            let mut asked = self.asked.borrow_mut();
++            match command.as_str() {
++                "doc.list" => asked.lists += 1,
++                _ => asked.commands.push(command),
++            }
++        }
++        self.inner.call(method, params)
++    }
++
++    fn has_ui(&self) -> bool {
++        false
++    }
++
++    fn describe(&self) -> String {
++        "headless, counting".into()
++    }
++
++    fn take_error_detail(&mut self) -> Option<Value> {
++        self.inner.take_error_detail()
++    }
++
++    fn take_revision(&mut self) -> Option<(u64, u64)> {
++        self.inner.take_revision()
++    }
++
++    fn documents(&mut self) -> Option<Vec<OpenDocument>> {
++        if self.documents { self.inner.documents() } else { None }
++    }
++}
++
++fn counting(documents: bool) -> (Client, Rc<RefCell<Asked>>) {
++    let asked = Rc::new(RefCell::new(Asked::default()));
++    let backend = Counting { inner: Headless::new(), documents, asked: asked.clone() };
++    (Client::of(Server::new(Box::new(backend))), asked)
++}
++
++/// `v` with the document ids (numbered per process, so different in each session) as 0.
++fn without_document_ids(v: &Value) -> Value {
++    match v {
++        Value::Object(o) => Value::Object(
++            o.iter()
++                .map(|(k, x)| match (k.as_str(), x) {
++                    // A document's tree (`inspect_document`) has its id at the top.
++                    ("id", _) if o.contains_key("currentPage") => (k.clone(), json!(0)),
++                    ("document" | "workingDocument", Value::Object(d)) => {
++                        let mut d = d.clone();
++                        d.insert("id".into(), json!(0));
++                        (k.clone(), Value::Object(d))
++                    }
++                    _ => (k.clone(), without_document_ids(x)),
++                })
++                .collect(),
++        ),
++        Value::Array(a) => Value::Array(a.iter().map(without_document_ids).collect()),
++        // The JSON text blocks say the same as `structuredContent`.
++        Value::String(s) if s.starts_with('{') => {
++            serde_json::from_str::<Value>(s).map(|j| Value::String(without_document_ids(&j).to_string())).unwrap_or_else(|_| v.clone())
++        }
++        _ => v.clone(),
++    }
++}
++
++/// A short session of an agent: what each call answered.
++fn session(c: &mut Client) -> Vec<Value> {
++    let mut out = Vec::new();
++    let r = c.call("create_node", json!({"type": "rectangle", "x": 10, "y": 10, "width": 40, "height": 20}));
++    let id = serde_json::from_str::<Value>(r["content"][0]["text"].as_str().unwrap()).unwrap()["id"].clone();
++    out.push(r);
++    for i in 0..3 {
++        out.push(c.call("set_properties", json!({"ids": [id], "props": {"width": 50 + i, "fill": "#3366FF"}})));
++    }
++    out.push(c.call("undo", json!({})));
++    out.push(c.call("redo", json!({})));
++    out.push(c.call("get_node", json!({"id": id})));
++    out.push(c.call("inspect_document", json!({"outline": true})));
++    // A conditional change on a stale revision is refused, naming the document as it was.
++    out.push(c.call("set_properties", json!({"ids": [id], "props": {"x": 1}, "ifRevision": 0})));
++    out.push(c.call("run_command", json!({"command": "proto.check", "params": {}})));
++    out.push(c.call("batch", json!({"commands": [{"command": "node.set", "params": {"ids": [id], "props": {"y": 3}}}]})));
++    out.push(c.call("undo", json!({})));
++    out
++}
++
++#[test]
++fn headless_tool_calls_read_the_documents_without_a_command_and_answer_as_with_one() {
++    let (mut fast, fast_asked) = counting(true);
++    let (mut listed, listed_asked) = counting(false);
++    let a = session(&mut fast);
++    let b = session(&mut listed);
++    assert_eq!(a.len(), b.len());
++    for (x, y) in a.iter().zip(&b) {
++        assert_eq!(without_document_ids(x), without_document_ids(y));
++    }
++    // Every call still names its document and revision (a failed one in its error).
++    let named = |r: &Value| [&r["structuredContent"]["document"], &r["structuredContent"]["error"]["document"]].iter().any(|d| d["revision"].is_u64());
++    assert!(a.iter().all(named), "{a:?}");
++    assert_eq!(a.iter().filter(|r| r["isError"] == true).count(), 1);
++    let (fast_asked, listed_asked) = (fast_asked.borrow(), listed_asked.borrow());
++    assert_eq!(fast_asked.lists, 0, "the headless backend read the documents with doc.list");
++    // Without the backend's own reading: one before each call and one after.
++    assert!(listed_asked.lists >= 2 * a.len(), "{}", listed_asked.lists);
++    // And the same commands otherwise.
++    assert_eq!(fast_asked.commands, listed_asked.commands);
++}
++
++#[test]
++fn the_headless_documents_are_what_doc_list_answers_an_agent() {
++    let mut h = Headless::new();
++    h.call("engine.execute", json!({"command": "file.new", "params": {}})).unwrap();
++    h.call("engine.execute", json!({"command": "shape.rectangle", "params": {"x": 0, "y": 0, "width": 5, "height": 5}})).unwrap();
++    let listed = h.call("engine.execute", json!({"command": "doc.list", "params": {}, "agent": "Claude"})).unwrap();
++    let listed: Vec<OpenDocument> = listed.as_array().unwrap().iter().filter_map(OpenDocument::from_listed).collect();
++    assert_eq!(listed.len(), 2);
++    assert!(listed.iter().all(|d| d.revision.is_some() && d.index.is_some()));
++    assert_eq!(listed.iter().filter(|d| d.front).count(), 1);
++    assert_eq!(h.documents(), Some(listed));
++}
+diff --git a/crates/mcp/tests/it/main.rs b/crates/mcp/tests/it/main.rs
+index 3759101a..fe2d20b5 100644
+--- a/crates/mcp/tests/it/main.rs
++++ b/crates/mcp/tests/it/main.rs
+@@ -6,6 +6,8 @@ mod agent_comments;
+ mod agent_tasks;
+ #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+ mod attached;
++#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
++mod call_cost;
+ #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::disallowed_methods)]
+ mod automation_roots;
+ #[allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+diff --git a/crates/text/src/cache_tests.rs b/crates/text/src/cache_tests.rs
+index b701397f..869465c7 100644
+--- a/crates/text/src/cache_tests.rs
++++ b/crates/text/src/cache_tests.rs
+@@ -4,7 +4,7 @@ use std::sync::Arc;
+ 
+ use figcraft_doc::{LetterSpacing, TextData};
+ 
+-use crate::{clear_layout_cache, layout_cached, layout_generation};
++use crate::{clear_layout_cache, height_cached, layout, layout_cached, layout_generation};
+ 
+ #[test]
+ fn equal_texts_share_a_layout_and_unequal_ones_never_do() {
+@@ -34,3 +34,18 @@ fn clearing_bumps_the_generation() {
+     clear_layout_cache();
+     assert!(layout_generation() > g);
+ }
++
++#[test]
++fn a_cached_height_is_the_height_of_the_layout() {
++    let mut t = TextData::new("A cached height, long enough to wrap onto more than one line at the narrow width");
++    for w in [40.0, 120.0, 1000.0] {
++        let want = layout(&t, Some(w), None).height;
++        assert_eq!(height_cached(&t, w), want, "width {w}");
++        assert_eq!(height_cached(&t, w), want, "width {w}, cached");
++    }
++    // Another text at a width it was measured at is measured anew.
++    t.style.font_size *= 2.0;
++    assert_eq!(height_cached(&t, 120.0), layout(&t, Some(120.0), None).height);
++    clear_layout_cache();
++    assert_eq!(height_cached(&t, 120.0), layout(&t, Some(120.0), None).height);
++}
+diff --git a/crates/text/src/lib.rs b/crates/text/src/lib.rs
+index b6d87d66..3044f47a 100644
+--- a/crates/text/src/lib.rs
++++ b/crates/text/src/lib.rs
+@@ -25,37 +25,50 @@ pub use onpath::OnPath;
+ 
+ use figcraft_doc::{Node, NodeKind, TextAlignV, TextAutoResize};
+ 
+-/// One cached layout: the exact text and box it was made for.
+-struct Cached {
++/// One cached result (a layout, or only its height): the exact text and box it was made for.
++struct Cached<T> {
+     text: figcraft_doc::TextData,
+     w: Option<u64>,
+     h: Option<u64>,
+-    layout: std::sync::Arc<TextLayout>,
++    value: T,
+ }
+ 
+-/// Cached layouts by a cheap fingerprint; entries are confirmed with `TextData`'s full equality.
+-#[derive(Default)]
+-struct LayoutCache {
+-    buckets: std::collections::HashMap<u64, Vec<Cached>>,
++/// Cached results by a cheap fingerprint; entries are confirmed with `TextData`'s full equality.
++struct LayoutCache<T> {
++    buckets: std::collections::HashMap<u64, Vec<Cached<T>>>,
+     len: usize,
+ }
+ 
++impl<T> Default for LayoutCache<T> {
++    fn default() -> Self {
++        Self { buckets: Default::default(), len: 0 }
++    }
++}
++
+ /// Layouts kept before the cache starts over (a page of distinct texts stays cached while it
+ /// renders, pans and zooms).
+ const LAYOUT_CACHE_MAX: usize = 4_096;
+ /// Entries per fingerprint (texts that compare unequal to themselves, e.g. NaN sizes, can't pile up).
+ const BUCKET_MAX: usize = 8;
+ 
+-fn layout_cache() -> &'static std::sync::Mutex<LayoutCache> {
+-    static C: std::sync::OnceLock<std::sync::Mutex<LayoutCache>> = std::sync::OnceLock::new();
++fn layout_cache() -> &'static std::sync::Mutex<LayoutCache<std::sync::Arc<TextLayout>>> {
++    static C: std::sync::OnceLock<std::sync::Mutex<LayoutCache<std::sync::Arc<TextLayout>>>> = std::sync::OnceLock::new();
++    C.get_or_init(Default::default)
++}
++
++/// The heights auto layout measures texts at ([`height_cached`]): kept apart from the layouts, so
++/// the many widths a layout tries don't push out what the renderer draws from.
++fn height_cache() -> &'static std::sync::Mutex<LayoutCache<f64>> {
++    static C: std::sync::OnceLock<std::sync::Mutex<LayoutCache<f64>>> = std::sync::OnceLock::new();
+     C.get_or_init(Default::default)
+ }
+ 
+ static LAYOUT_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+ 
+-/// Forget cached layouts (after fonts were added). Bumps [`layout_generation`].
++/// Forget cached layouts and heights (after fonts were added). Bumps [`layout_generation`].
+ pub fn clear_layout_cache() {
+     *layout_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner) = LayoutCache::default();
++    *height_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner) = LayoutCache::default();
+     LAYOUT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+ }
+ 
+@@ -78,25 +91,29 @@ fn fingerprint(t: &figcraft_doc::TextData, w: Option<u64>, h: Option<u64>) -> u6
+     hs.finish()
+ }
+ 
+-/// Layout with a process-wide cache keyed by the text content/style and box size.
+-pub fn layout_cached(t: &figcraft_doc::TextData, w: Option<f64>, h: Option<f64>) -> std::sync::Arc<TextLayout> {
++/// What `cache` holds for `t` in the box `w` × `h`, else `make()`, kept for next time.
++fn cached<T: Clone>(
++    cache: &std::sync::Mutex<LayoutCache<T>>,
++    t: &figcraft_doc::TextData,
++    w: Option<f64>,
++    h: Option<f64>,
++    make: impl FnOnce() -> T,
++) -> T {
+     let (wb, hb) = (w.map(f64::to_bits), h.map(f64::to_bits));
+     let key = fingerprint(t, wb, hb);
+-    let hit = |c: &Cached| c.w == wb && c.h == hb && c.text == *t;
+-    if let Some(l) =
+-        layout_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner).buckets.get(&key).and_then(|b| b.iter().find(|c| hit(c)))
+-    {
+-        return l.layout.clone();
++    let hit = |c: &Cached<T>| c.w == wb && c.h == hb && c.text == *t;
++    if let Some(v) = cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner).buckets.get(&key).and_then(|b| b.iter().find(|c| hit(c))) {
++        return v.value.clone();
+     }
+-    let l = std::sync::Arc::new(layout(t, w, h));
+-    let mut c = layout_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
++    let v = make();
++    let mut c = cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+     if c.len >= LAYOUT_CACHE_MAX {
+         *c = LayoutCache::default();
+     }
+     let bucket = c.buckets.entry(key).or_default();
+     if bucket.iter().any(hit) {
+         // Another thread laid it out meanwhile.
+-        return l;
++        return v;
+     }
+     let dropped = if bucket.len() >= BUCKET_MAX {
+         bucket.remove(0);
+@@ -104,9 +121,20 @@ pub fn layout_cached(t: &figcraft_doc::TextData, w: Option<f64>, h: Option<f64>)
+     } else {
+         0
+     };
+-    bucket.push(Cached { text: t.clone(), w: wb, h: hb, layout: l.clone() });
++    bucket.push(Cached { text: t.clone(), w: wb, h: hb, value: v.clone() });
+     c.len = c.len + 1 - dropped;
+-    l
++    v
++}
++
++/// Layout with a process-wide cache keyed by the text content/style and box size.
++pub fn layout_cached(t: &figcraft_doc::TextData, w: Option<f64>, h: Option<f64>) -> std::sync::Arc<TextLayout> {
++    cached(layout_cache(), t, w, h, || std::sync::Arc::new(layout(t, w, h)))
++}
++
++/// `layout(t, Some(width), None).height`, from a process-wide cache of heights: what auto layout
++/// asks of a text at each width it tries, again for every unchanged text each time a layout runs.
++pub fn height_cached(t: &figcraft_doc::TextData, width: f64) -> f64 {
++    cached(height_cache(), t, Some(width), None, || layout(t, Some(width), None).height)
+ }
+ 
+ /// Lay out a text node at its current box, returning the (shared, cached) layout and the vertical

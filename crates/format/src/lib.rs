@@ -520,10 +520,13 @@ fn parse_json(text: &str) -> Result<(Document, Vec<String>, ImageIndex), FormatE
         return Err(FormatError::Newer(u32::try_from(ver).unwrap_or(u32::MAX)));
     }
     let mut doc: Document = serde_json::from_str(text).map_err(corrupt)?;
-    let issues = doc.validate();
+    let mut issues = doc.validate();
     if !issues.is_empty() {
         doc.repair();
     }
+    // A design context that couldn't be read whole, or passed its limits, doesn't fail the file:
+    // what was left out or cut is reported with the repairs (and isn't written back on save).
+    issues.extend(figcraft_doc::design::take_load_issues(&mut doc.design));
     Ok((doc, issues, header.images))
 }
 
@@ -1068,6 +1071,8 @@ pub fn load_file(path: &std::path::Path) -> Result<(Document, Vec<String>), Form
 
 #[cfg(test)]
 mod branch_tests;
+#[cfg(test)]
+mod design_load_tests;
 #[cfg(test)]
 mod guides_tests;
 #[cfg(test)]

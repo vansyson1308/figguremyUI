@@ -172,7 +172,11 @@ fn serve_with_events(mut out: TcpStream, queue: Queue, ctx: CtxSlot, events: Arc
             line.pop();
         }
         if line.len() > MAX_LINE {
-            writeln!(out, "{}", json!({"id": null, "ok": false, "error": "message too large"}))?;
+            writeln!(
+                out,
+                "{}",
+                json!({"id": null, "ok": false, "error": "message too large", "errorDetail": {"code": "badParams", "message": "message too large"}})
+            )?;
             break;
         }
         let Ok(line) = std::str::from_utf8(&line) else { break };
@@ -189,7 +193,7 @@ fn serve_with_events(mut out: TcpStream, queue: Queue, ctx: CtxSlot, events: Arc
                 if method == "events.poll" {
                     let reply = match event_poll(&events, &params) {
                         Ok(result) => json!({"id": id, "ok": true, "result": result}),
-                        Err(error) => json!({"id": id, "ok": false, "error": error}),
+                        Err(error) => json!({"id": id, "ok": false, "errorDetail": {"code": "badParams", "message": error}, "error": error}),
                     };
                     writeln!(out, "{reply}")?;
                     continue;
@@ -201,7 +205,11 @@ fn serve_with_events(mut out: TcpStream, queue: Queue, ctx: CtxSlot, events: Arc
                 pending.retain(|request| !request.is_cancelled());
                 if pending.len() >= MAX_QUEUED_REQUESTS {
                     drop(pending);
-                    writeln!(out, "{}", json!({"id": id, "ok": false, "error": "control request queue is full"}))?;
+                    writeln!(
+                        out,
+                        "{}",
+                        json!({"id": id, "ok": false, "error": "control request queue is full", "errorDetail": {"code": "failed", "message": "control request queue is full"}})
+                    )?;
                     continue;
                 }
                 let needs_frame = matches!(method.as_str(), "ui.screenshot" | "ui.input");
@@ -211,24 +219,43 @@ fn serve_with_events(mut out: TcpStream, queue: Queue, ctx: CtxSlot, events: Arc
                     c.request_repaint();
                 }
                 match wait_for_reply(&rx, &gate, waits) {
-                    Ok(r) => match r.result {
-                        Ok(res) => json!({"id": r.id, "ok": true, "result": res}),
-                        Err(e) => json!({"id": r.id, "ok": false, "error": e}),
-                    },
-                    Err(failure) => json!({"id": id, "ok": false, "error": timeout_message(&failure, needs_frame, waits)}),
+                    Ok(r) => reply_line(&r),
+                    Err(failure) => {
+                        let error = timeout_message(&failure, needs_frame, waits);
+                        json!({"id": id, "ok": false, "errorDetail": {"code": "failed", "message": error}, "error": error})
+                    }
                 }
             }
             Err(e) => {
                 // A line that isn't JSON ends the connection: a web page can make the browser send
                 // an HTTP request here, and its header lines must not let the JSON lines of its body
                 // through as commands.
-                writeln!(out, "{}", json!({"id": null, "ok": false, "error": format!("bad JSON: {e}")}))?;
+                let error = format!("bad JSON: {e}");
+                writeln!(out, "{}", json!({"id": null, "ok": false, "errorDetail": {"code": "badParams", "message": error}, "error": error}))?;
                 break;
             }
         };
         writeln!(out, "{reply}")?;
     }
     Ok(())
+}
+
+/// The reply line for what the UI answered: `result`, or `error` with `errorDetail` (what kind of
+/// failure it is, `{code, message, …}`; its `message` is `error`).
+fn reply_line(r: &ControlReply) -> Value {
+    let mut line = match &r.result {
+        Ok(res) => json!({"id": r.id, "ok": true, "result": res}),
+        Err(e) => json!({"id": r.id, "ok": false, "error": e, "errorDetail": r.error_detail()}),
+    };
+    // `engine.execute` (and the canvas methods): the revision of the document the request acted
+    // on, read in the same request right after it ran, and which document that is.
+    if let Some(revision) = r.revision {
+        line["revision"] = json!(revision);
+    }
+    if let Some(document) = r.revision_document {
+        line["revisionDocument"] = json!(document);
+    }
+    line
 }
 
 /// `events.poll {after?, timeoutMs?, topics?, limit?}`: read the shared log, waiting up to 25 s.

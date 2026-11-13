@@ -91,12 +91,20 @@ impl Waiting {
     /// request is still waiting.
     fn poll(&mut self) -> Option<Value> {
         match self.reply.try_recv() {
-            Ok(ControlReply { result, .. }) => {
+            Ok(reply) => {
                 self.answered = true;
-                Some(match result {
+                let detail = reply.error_detail();
+                let mut out = match reply.result {
                     Ok(value) => json!({"ok": true, "result": value}),
-                    Err(error) => json!({"ok": false, "error": error}),
-                })
+                    Err(error) => json!({"ok": false, "error": error, "errorDetail": detail}),
+                };
+                if let Some(revision) = reply.revision {
+                    out["revision"] = json!(revision);
+                }
+                if let Some(document) = reply.revision_document {
+                    out["revisionDocument"] = json!(document);
+                }
+                Some(out)
             }
             Err(TryRecvError::Empty) => None,
             Err(TryRecvError::Disconnected) => {

@@ -6,12 +6,14 @@ use super::{
 /// The server files are shared through online unless Preferences name another: the only place
 /// its address is written.
 ///
-/// A build can ship another one, or none: set `FIGCRAFT_DEFAULT_SERVER` when compiling to a
-/// server's address (`wss://host/`), or to nothing (`FIGCRAFT_DEFAULT_SERVER=`) for a build whose
-/// online sharing stays off until the user enters a server in Preferences.
+/// None by default in this fork: the public server upstream FigCraft ships with is run by the
+/// upstream team for their own builds, so a build of the fork must not upload people's files there
+/// unless they enter it themselves. Online sharing stays off until the user enters a server in
+/// Preferences. A build can ship one: set `FIGCRAFT_DEFAULT_SERVER` to a server's address
+/// (`wss://host/`) when compiling.
 pub const DEFAULT_SERVER: &str = match option_env!("FIGCRAFT_DEFAULT_SERVER") {
     Some(server) => server,
-    None => "wss://collab.craftapps.dev/",
+    None => "",
 };
 
 /// Most selected ids one presence update carries (the rest aren't shown to others).

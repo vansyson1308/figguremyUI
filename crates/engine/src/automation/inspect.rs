@@ -164,6 +164,25 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
     node_json_with_options(doc, id, depth, &InspectOptions::default())
 }
 
+/// `node.get` on the session's document in front: [`node_json_with_options`] (`null` for a layer
+/// that isn't there), and while a version is shown in place of the document, `previewing` as
+/// [`document_with_options`] says it, since the layer read is that version's (review R2).
+pub fn node_in_session(s: &Session, id: NodeId, depth: usize, options: &InspectOptions) -> crate::Result<Value> {
+    let ds = s.ds()?;
+    let mut out = node_json_with_options(&ds.doc, id, depth, options);
+    if let (Some(o), Some(p)) = (out.as_object_mut(), previewing(ds)) {
+        o.insert("previewing".into(), p);
+    }
+    Ok(out)
+}
+
+/// While a version is shown in place of the document: which one, and that what is read is its.
+fn previewing(ds: &crate::DocState) -> Option<Value> {
+    ds.preview.as_ref().map(|p| {
+        json!({"version": p.id, "name": p.name, "note": "the pages and layers listed are this earlier version's, shown in place of the document (read-only); `revision` is the document's own, which the person will see again when they leave the preview"})
+    })
+}
+
 /// A node's selected properties, applied at every level of its subtree.
 pub fn node_json_with_options(doc: &Document, id: NodeId, depth: usize, options: &InspectOptions) -> Value {
     node_json_in(doc, id, depth, options, &GridCells::default())
@@ -575,9 +594,19 @@ pub fn document_with_options(s: &Session, depth: usize, all_pages: bool, options
                 if all_pages || *p == ds.page { node_json_with_options(doc, *p, depth, options) } else { node_json_with_options(doc, *p, 0, options) }
             })
             .collect();
-    json!({
+    // The undo steps with who made each (`undo` keeps the labels alone, as it always had them).
+    let steps: Vec<Value> = s
+        .undo_steps(20)
+        .into_iter()
+        .map(|(label, author)| json!({"label": label, "author": author.unwrap_or_else(|| crate::USER_AUTHOR.into())}))
+        .collect();
+    // A version shown in place of the document: what is listed are its layers, the revision the
+    // document's own (review R2: an agent must not take the version for the current design).
+    let previewing = previewing(ds);
+    let mut out = json!({
         "id": ds.uid,
         "name": doc.name,
+        "revision": ds.doc_revision(),
         "kind": doc.kind.id(),
         "path": ds.path,
         "dirty": ds.is_dirty(),
@@ -589,8 +618,12 @@ pub fn document_with_options(s: &Session, depth: usize, all_pages: bool, options
         "images": doc.images.len(),
         "colorProfile": doc.color_profile.id(),
         "textEdit": ds.text_edit,
-        "history": {"undo": s.undo_labels(20), "redo": s.undo_depth().1},
-    })
+        "history": {"undo": s.undo_labels(20), "redo": s.undo_depth().1, "steps": steps},
+    });
+    if let (Some(o), Some(p)) = (out.as_object_mut(), previewing) {
+        o.insert("previewing".into(), p);
+    }
+    out
 }
 
 /// snake_case object keys → camelCase (inspect output matches the keys `node.set` accepts).
