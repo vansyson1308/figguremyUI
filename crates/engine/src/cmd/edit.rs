@@ -111,8 +111,20 @@ fn node_find(s: &mut Session, p: &Value) -> Result<Value> {
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        spec!("edit.undo", "Undo", "{}", false, |s, _| Ok(json!({"undone": s.undo()?}))),
-        spec!("edit.redo", "Redo", "{}", false, |s, _| Ok(json!({"redone": s.redo()?}))),
+        spec!(
+            "edit.undo",
+            "Undo",
+            "{others? (for an AI agent: true also undoes a step somebody else made — the user or another agent; without it such an undo is refused, naming the step and its author)} → {undone}",
+            false,
+            |s, p| {
+                refuse_others_step(s, p, "edit.undo")?;
+                Ok(json!({"undone": s.undo()?}))
+            }
+        ),
+        spec!("edit.redo", "Redo", "{others? (as for edit.undo: an AI agent redoes only its own steps without it)} → {redone}", false, |s, p| {
+            refuse_others_step(s, p, "edit.redo")?;
+            Ok(json!({"redone": s.redo()?}))
+        }),
         spec!("edit.delete", "Delete", "{ids?}", true, delete),
         spec!(
             "edit.duplicate",
@@ -520,11 +532,14 @@ pub fn specs() -> Vec<CommandSpec> {
                 Some(Value::Array(a)) => {
                     let mut out = Vec::new();
                     for (i, c) in a.iter().enumerate() {
-                        let cmd =
-                            c.get("command").and_then(Value::as_str).ok_or_else(|| bad("command.batch", format!("step {i} has no `command`")))?;
-                        crate::batch::refuse_unknown_step_keys(i, c)?;
+                        let cmd = c
+                            .get("command")
+                            .and_then(Value::as_str)
+                            .ok_or_else(|| bad("command.batch", format!("step {i} has no `command`")).located(i, ""))?;
+                        crate::batch::refuse_unknown_step_keys(i, c).map_err(|e| e.located(i, cmd))?;
                         let params = c.get("params").cloned().unwrap_or(json!({}));
-                        out.push(BatchStep { name: crate::batch::step_name(i, c)?, ..BatchStep::new(cmd, params) });
+                        let name = crate::batch::step_name(i, c).map_err(|e| e.located(i, cmd))?;
+                        out.push(BatchStep { name, ..BatchStep::new(cmd, params) });
                     }
                     out
                 }
@@ -540,6 +555,24 @@ pub fn specs() -> Vec<CommandSpec> {
             (spec.run)(s, &p)
         }),
     ]
+}
+
+/// An AI agent's undo or redo (`cmd`) stays in its own work: refuse it when the step it would
+/// take is somebody else's, unless the call says `others: true`. The user's own undo takes any
+/// step, as it always did.
+fn refuse_others_step(s: &Session, p: &Value, cmd: &str) -> Result<()> {
+    let others = match get(p, "others") {
+        None => false,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err(crate::error::bad_param(cmd, "others", "`others` must be true or false")),
+    };
+    let Some(agent) = s.agent.as_deref().filter(|_| !others) else { return Ok(()) };
+    match s.next_history_step(cmd == "edit.undo") {
+        Some((label, author)) if author.as_deref() != Some(agent) => {
+            Err(EngineError::OtherAuthor { cmd: cmd.into(), label, author: author.unwrap_or_else(|| crate::USER_AUTHOR.into()) })
+        }
+        _ => Ok(()),
+    }
 }
 
 fn targets_param(p: &Value) -> Vec<NodeId> {

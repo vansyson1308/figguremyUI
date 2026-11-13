@@ -226,6 +226,37 @@ fn run_takes_the_documented_gradient_shorthand() {
     std::fs::remove_dir_all(&d).ok();
 }
 
+/// A script's failing step says what failed for a program too (`errorDetail`), and a script, which
+/// has no window, is not told that a prototype was presented.
+#[test]
+fn run_reports_a_failed_step_with_its_code() {
+    let d = tmp("run-errors");
+    let frame = r#"{"command":"frame.create","params":{"x":0,"y":0,"width":100,"height":100}}"#;
+    for (name, step, code, in_text) in [
+        ("conflict", r#"{"command":"shape.rectangle","params":{"width":5,"height":5,"ifRevision":7}}"#, "conflict", "expected revision 7"),
+        ("present", r#"{"command":"proto.present"}"#, "unsupportedHere", "proto.simulate"),
+        ("node", r#"{"command":"node.set","params":{"ids":[424242],"props":{"x":1}}}"#, "noSuchNode", "no such node 424242"),
+    ] {
+        let script = d.join(format!("{name}.json"));
+        std::fs::write(&script, format!("[{frame},{step}]")).unwrap();
+        let out = bin().arg("run").arg(&script).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{name}");
+        let line: serde_json::Value =
+            serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{name}: {e}: {}", String::from_utf8_lossy(&out.stdout)));
+        assert_eq!((line["step"].clone(), line["ok"].clone(), line["rolledBack"].clone()), (1.into(), false.into(), true.into()), "{line}");
+        assert_eq!((line["errorDetail"]["code"].as_str(), line["errorDetail"]["step"].as_u64()), (Some(code), Some(1)), "{line}");
+        assert!(line["error"].as_str().unwrap().contains(in_text), "{line}");
+        // The step is said once, in front, not again inside the message.
+        let said = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(said.matches("step 1").count(), 1, "{said}");
+    }
+    // The revision a script starts from is the one all of its steps are checked against.
+    let script = d.join("ok.json");
+    std::fs::write(&script, format!(r#"[{frame},{{"command":"shape.rectangle","params":{{"width":5,"height":5,"ifRevision":1}}}}]"#)).unwrap();
+    assert!(bin().arg("run").arg(&script).status().unwrap().success());
+    std::fs::remove_dir_all(&d).ok();
+}
+
 #[test]
 fn mcp_over_stdio() {
     let mut child = bin().arg("mcp").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();

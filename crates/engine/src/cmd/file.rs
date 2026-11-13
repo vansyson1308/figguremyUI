@@ -62,7 +62,17 @@ fn new_file(s: &mut Session, p: &Value, kind: FileKind) -> Result<Value> {
     }
     s.docs.push(DocState::new(doc, None));
     s.active = s.docs.len() - 1;
-    Ok(json!({"index": s.active, "kind": kind.id()}))
+    Ok(with_document(s, json!({"index": s.active, "kind": kind.id()})))
+}
+
+/// `out` (a command's result object) saying which document is in front now: its `id`, as a
+/// control or MCP call's `document` takes it, and its `revision`, as `ifRevision` does.
+pub(crate) fn with_document(s: &Session, mut out: Value) -> Value {
+    if let (Ok(ds), Some(o)) = (s.ds(), out.as_object_mut()) {
+        o.insert("id".into(), json!(ds.uid));
+        o.insert("revision".into(), json!(ds.doc_revision()));
+    }
+    out
 }
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -215,12 +225,18 @@ pub fn specs() -> Vec<CommandSpec> {
             d.name = format!("{} (Copy)", d.name);
             s.docs.push(DocState::new(d, None));
             s.active = s.docs.len() - 1;
-            Ok(json!({"index": s.active}))
+            Ok(with_document(s, json!({"index": s.active})))
         }),
-        spec!("file.revert", "Revert to saved", "{}  leave the live session first, if any", false, |s, _| {
-            revert(s)?;
-            ok()
-        }),
+        spec!(
+            "file.revert",
+            "Revert to saved",
+            "{}  leave the live session first, if any → {ok, id, revision}: the reverted document has a new `id` and its next revision",
+            false,
+            |s, _| {
+                revert(s)?;
+                Ok(with_document(s, json!({"ok": true})))
+            }
+        ),
         spec!(
             "file.saveVersion",
             "Save to version history",
@@ -321,6 +337,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 return Err(bad("doc.switch", "no such document"));
             }
             s.active = i;
+            s.front_chosen();
             ok()
         }),
         spec!("doc.nextTab", "Next tab", "{}", false, |s, _| cycle_doc(s, 1)),
@@ -328,17 +345,19 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "doc.list",
             "List documents",
-            "{}  → [{index, id, name, path?, dirty, active}]: `id` names the file in a control or MCP call's `document`; `path` only for the user's own scripts, not AI agents or plugins",
+            "{}  → [{index, id, name, revision, path?, dirty, active}]: `id` names the file in a control or MCP call's `document`; `revision` counts the document's committed changes since it was opened (pass the one you last saw as any command's `ifRevision` to have the command refused when somebody changed the document in between); `path` only for the user's own scripts, not AI agents or plugins",
             false,
             |s, _| {
                 // Where the files are on disk is the user's: an agent gets their names (#1117).
                 let paths = s.agent.is_none();
+                // The tab the user sees in front, also when this runs on a file behind it.
+                let front = s.front_uid();
                 Ok(Value::Array(
                     s.docs
                         .iter()
                         .enumerate()
                         .map(|(i, d)| {
-                            let mut e = json!({"index": i, "id": d.uid, "name": d.doc.name, "dirty": d.is_dirty(), "active": i == s.active});
+                            let mut e = json!({"index": i, "id": d.uid, "name": d.doc.name, "revision": d.doc_revision(), "dirty": d.is_dirty(), "active": Some(d.uid) == front});
                             if paths {
                                 e["path"] = json!(d.path);
                             }
@@ -478,7 +497,10 @@ fn cycle_doc(s: &mut Session, dir: i64) -> Result<Value> {
     if n == 0 {
         return Err(crate::EngineError::NoDocument);
     }
-    s.active = (s.active as i64 + dir).rem_euclid(n) as usize;
+    // From the tab the user sees in front, also when the request runs on a file behind it.
+    let from = s.front_uid().and_then(|u| s.docs.iter().position(|d| d.uid == u)).unwrap_or(s.active);
+    s.active = (from as i64 + dir).rem_euclid(n) as usize;
+    s.front_chosen();
     Ok(json!({"index": s.active}))
 }
 

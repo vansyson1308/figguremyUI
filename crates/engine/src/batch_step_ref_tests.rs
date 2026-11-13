@@ -577,7 +577,8 @@ fn an_outer_abort_batch_rolls_back_successes_of_an_inner_continue_batch() {
             {"command": "no.such.command"}
         ]}),
     );
-    assert!(matches!(result, Err(EngineError::UnknownCommand(_))));
+    // The outer batch names its failing step; what failed is still the unknown command.
+    assert!(matches!(&result, Err(EngineError::Step { step: 1, error, .. }) if matches!(**error, EngineError::UnknownCommand(_))), "{result:?}");
     assert_eq!(s.doc().unwrap(), &before);
     assert_eq!(s.undo_depth(), (0, 0));
 }
