@@ -91,3 +91,28 @@ pub(crate) fn state_variables(s: &mut Session) {
         ex(s, "variable.create", json!({"collection": "State", "name": name, "type": kind, "value": value}));
     }
 }
+
+/// Review R2-09: a layer's or a variable's name goes into the simulator's sentences as one line
+/// of at most 60 characters, its control characters escaped and its backticks shown as quotes,
+/// as the engine's other messages show document text.
+#[test]
+fn a_name_with_newlines_and_backticks_is_one_clipped_line_in_a_message() {
+    let mut s = Session::new();
+    let a = frame(&mut s, "A", 0.0);
+    let odd = format!("Line one\nline `two`\t{}", "x".repeat(80));
+    let r = rect(&mut s, &odd, a, 20.0, 20.0);
+    assert_eq!(s.doc().unwrap().node(r).unwrap().name, odd, "the layer keeps its name");
+    let mut p = sim(&s, a);
+    let why = problem(&click(&mut p, r)).to_string();
+    let shown = format!("Line one\\nline 'two'\\t{}…", "x".repeat(40));
+    assert_eq!(why, format!("nothing reacts to click on `{shown}` ({r})"));
+    assert!(!why.contains('\n') && !why.contains('\t'), "one line: {why}");
+    // A variable's name in an effect, the same way.
+    ex(&mut s, "variable.createCollection", json!({"name": "C`ol\nlection"}));
+    ex(&mut s, "variable.create", json!({"collection": "C`ol\nlection", "name": "n", "type": "number", "value": 0}));
+    let var = s.doc().unwrap().variables.variables[0].id.clone();
+    let b = button(&mut s, "Set", a, 100.0, json!({"type": "setVariable", "variable": var, "value": 1}));
+    let mut p = sim(&s, a);
+    let o = click(&mut p, b);
+    assert!(o.effects.contains(&"set `C'ol\\nlection/n` to 1".to_string()), "{o:?}");
+}

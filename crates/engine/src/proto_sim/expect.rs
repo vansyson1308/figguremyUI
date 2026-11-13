@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use super::state::is_end_state;
 use super::steps::{Showing, showing};
-use super::vars::{find_variable, full_name, value_on, value_text};
+use super::vars::{find_variable, prose_name, value_on, value_text};
 use super::{Sim, label};
 
 /// Numbers this close are the same value (expressions do floating-point arithmetic).
@@ -83,7 +83,7 @@ fn variable(sim: &Sim, key: &str, want: &Value) -> Option<String> {
         Ok(v) => v,
         Err(why) => return Some(format!("expected `{key}` to be {shown}, but {why}")),
     };
-    let name = full_name(doc, v);
+    let name = prose_name(doc, v);
     let Some(want) = expected(v.kind, want) else {
         return Some(format!("expected `{name}` to be {shown}, but the expected value isn't a {} value, which the variable holds", v.kind.id()));
     };
@@ -119,7 +119,8 @@ fn variant(sim: &Sim, e: &VariantExpect) -> Option<String> {
         return Some(format!("expected {inst} to show variant `{want}`, but it isn't an instance"));
     };
     let name = doc.node(*component).map(|c| c.name.clone()).unwrap_or_default();
-    (!names_variant(&e.variant, *component, &name)).then(|| format!("expected {inst} to show variant `{want}`, but it shows `{name}` ({component})"))
+    (!names_variant(&e.variant, *component, &name))
+        .then(|| format!("expected {inst} to show variant `{want}`, but it shows `{}` ({component})", crate::error::prose(&name)))
 }
 
 /// Whether `id` shows on the screen or an open overlay; else why not.

@@ -946,3 +946,65 @@ fn difference_restart_forgets_the_sections_which_only_a_new_simulator_does() {
     p.sim_does(&Do::Click(to_section));
     p.agree("after a restart, against a new simulator");
 }
+
+/// The known differences the simulator states in every result
+/// (`figcraft_engine::proto_verify::KNOWN_DIFFERENCES`) are the `difference_*` cases above, one
+/// entry per case under the case's name: neither changes without the other.
+#[test]
+fn each_difference_case_is_one_known_difference_the_simulator_states() {
+    let source = include_str!("sim_parity_tests.rs");
+    let mut cases: Vec<&str> = source
+        .lines()
+        .filter_map(|l| l.trim_start().strip_prefix("fn difference_"))
+        .filter_map(|rest| rest.split_once('(').map(|(name, _)| name))
+        .collect();
+    cases.sort_unstable();
+    assert!(!cases.is_empty(), "the cases are found");
+    let mut known: Vec<&str> = figcraft_engine::proto_verify::KNOWN_DIFFERENCES.iter().map(|(key, _)| *key).collect();
+    known.sort_unstable();
+    assert_eq!(cases, known, "the `difference_*` cases (left) and the simulator's known differences (right)");
+}
+
+/// Review X-02: an instance whose variant property is bound to a string variable is put back to
+/// what the variable names as soon as "change to" settles (the player applies bindings again),
+/// on both sides; a variable that names no variant keeps nothing; one the same interaction sets
+/// takes the instance with it.
+#[test]
+fn change_to_on_an_instance_whose_variant_a_variable_keeps() {
+    let build = |held: &str, sets_it: bool| {
+        let mut s = Session::new();
+        ex(&mut s, "variable.createCollection", json!({"name": "UI"}));
+        ex(&mut s, "variable.create", json!({"collection": "UI", "name": "state", "type": "string", "value": held}));
+        let (set, v) = variants(&mut s, &["Default", "Pressed"]);
+        let mut actions = vec![json!({"type": "changeTo", "dest": v[1]})];
+        if sets_it {
+            actions.insert(0, json!({"type": "setVariable", "variable": "state", "value": "Pressed"}));
+        }
+        on(&mut s, v[0], t("onClick"), Value::Array(actions));
+        let a = frame(&mut s, "A", 0.0);
+        let button = instance(&mut s, set, a);
+        ex(&mut s, "variable.bind", json!({"ids": [button], "field": "componentProperties/State", "variable": "state"}));
+        (s, a, button, v)
+    };
+    // The variable holds "Default": the change doesn't last, on either side.
+    let (s, a, button, _) = build("Default", false);
+    let mut p = Pair::new("change to, put back by a bound variable", s, a);
+    p.player_does(&Do::Click(button));
+    let outcome = p.sim_does(&Do::Click(button)).remove(0);
+    p.agree("after the click");
+    assert!(sim_facts(&p.sim).variants.is_empty(), "it still shows Default");
+    assert!(
+        outcome.effects.iter().any(|e| e.contains("`State` is bound to variable `state`, which keeps it at State=Default")),
+        "the simulator says why: {outcome:?}"
+    );
+    // A value that names no variant changes nothing: the change lasts.
+    let (s, a, button, v) = build("Nope", false);
+    let mut p = Pair::new("change to, a bound variable naming no variant", s, a);
+    p.run([Do::Click(button)]);
+    assert_eq!(sim_facts(&p.sim).variants, [(button, v[1])]);
+    // The same interaction sets the variable: the binding follows the change.
+    let (s, a, button, v) = build("Default", true);
+    let mut p = Pair::new("change to with the bound variable set alongside", s, a);
+    p.run([Do::Click(button)]);
+    assert_eq!(sim_facts(&p.sim).variants, [(button, v[1])]);
+}

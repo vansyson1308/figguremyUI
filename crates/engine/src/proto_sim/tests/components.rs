@@ -130,3 +130,41 @@ fn a_click_the_hovered_variant_holds_runs_and_outlives_the_hover() {
     assert!(!o.fired && o.effects.first().is_some_and(|e| e.contains("hover or press")), "{o:?}");
     assert_eq!(shows(&p, chip), Some(idle));
 }
+
+/// Review X-02: "change to" on an instance whose variant property is bound to a string variable
+/// lasts only until the change settles: the binding is applied again (as the player's settle
+/// applies it), so the instance shows what the variable names, read in the instance's modes.
+/// The step says so, and the state and the expectations see the variant it really shows.
+#[test]
+fn change_to_an_instance_a_bound_variable_puts_back_says_so() {
+    let (mut s, screen, instance, [off, on]) = toggle();
+    ex(&mut s, "variable.createCollection", json!({"name": "UI", "modes": ["Calm", "Busy"]}));
+    ex(&mut s, "variable.create", json!({"collection": "UI", "name": "state", "type": "string", "values": {"Calm": "Off", "Busy": "Off"}}));
+    ex(&mut s, "variable.bind", json!({"ids": [instance], "field": "componentProperties/State", "variable": "state"}));
+    let mut p = sim(&s, screen);
+    let o = click(&mut p, instance);
+    assert!(o.fired && problem(&o).is_empty(), "the action ran, as the player counts it: {o:?}");
+    assert_eq!(shows(&p, instance), Some(off), "put back");
+    let inst = crate::proto_sim::label(s.doc().unwrap(), instance);
+    let said = format!("change {inst} to `State=On` ({on}): `State` is bound to variable `state`, which keeps it at State=Off");
+    assert!(o.effects.contains(&said), "{o:?}");
+    assert!(p.state().variants.is_empty(), "the variant it shows is the file's");
+    let expect = Expect { variants: vec![VariantExpect { instance, variant: "On".into() }], ..Expect::default() };
+    let failures = p.check(&expect);
+    assert!(failures.len() == 1 && failures[0].contains(&format!("it shows `State=Off` ({off})")), "{failures:?}");
+    // The variable is read in the instance's modes: on a screen in Busy, where it names On, the
+    // instance shows On, and On's own change back to Off is what doesn't last.
+    ex(&mut s, "variable.set", json!({"variable": "state", "mode": "Busy", "value": "On"}));
+    ex(&mut s, "variable.setMode", json!({"ids": [screen], "collection": "UI", "mode": "Busy"}));
+    let mut p = sim(&s, screen);
+    assert_eq!(shows(&p, instance), Some(on), "as the file shows it");
+    let o = click(&mut p, instance);
+    assert_eq!(shows(&p, instance), Some(on));
+    assert!(o.effects.iter().any(|e| e.ends_with("`State` is bound to variable `state`, which keeps it at State=On")), "{o:?}");
+    // A value naming no variant keeps nothing: the change lasts, and nothing more is said.
+    ex(&mut s, "variable.set", json!({"variable": "state", "mode": "Busy", "value": "Nope"}));
+    let mut p = sim(&s, screen);
+    let o = click(&mut p, instance);
+    assert_eq!(shows(&p, instance), Some(off), "{o:?}");
+    assert!(o.effects.iter().all(|e| !e.contains("is bound to")), "{o:?}");
+}
