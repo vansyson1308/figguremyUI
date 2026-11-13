@@ -247,10 +247,13 @@ fn reply_line(r: &ControlReply) -> Value {
         Ok(res) => json!({"id": r.id, "ok": true, "result": res}),
         Err(e) => json!({"id": r.id, "ok": false, "error": e, "errorDetail": r.error_detail()}),
     };
-    // `engine.execute`: the revision of the document the command acted on, read in the same
-    // request right after it ran.
+    // `engine.execute` (and the canvas methods): the revision of the document the request acted
+    // on, read in the same request right after it ran, and which document that is.
     if let Some(revision) = r.revision {
         line["revision"] = json!(revision);
+    }
+    if let Some(document) = r.revision_document {
+        line["revisionDocument"] = json!(document);
     }
     line
 }

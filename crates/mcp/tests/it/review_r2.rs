@@ -295,3 +295,21 @@ fn the_simulators_known_differences_are_said_wherever_it_is_used() {
     assert_eq!(c.ok("run_scenarios", json!({}))["knownDifferences"], json!(said));
     assert_eq!(c.run("proto.snapshot", json!({"start": frame}))["knownDifferences"], json!(said));
 }
+
+/// While a person previews an earlier version, a layer read on its own (`node.get`, and the
+/// get_node tool on it) is the version's layer and says so, as `document.inspect` does.
+#[test]
+fn a_layer_read_during_a_version_preview_says_it_is_the_versions() {
+    let mut h = Headless::new();
+    let made = h.call("engine.execute", json!({"command": "shape.rectangle", "params": {"x": 0, "y": 0, "width": 40, "height": 40}})).unwrap();
+    let id = made["id"].clone();
+    h.session.execute("file.saveVersion", &json!({"name": "One rectangle"})).unwrap();
+    assert!(h.call("node.get", json!({"id": id})).unwrap().get("previewing").is_none());
+    h.session.execute("version.preview", &json!({"index": 0})).unwrap();
+    let read = h.call("node.get", json!({"id": id})).unwrap();
+    let inspected = h.call("document.inspect", json!({"depth": 0})).unwrap();
+    assert_eq!((read["id"].clone(), read["previewing"]["name"].clone()), (id.clone(), json!("One rectangle")), "{read}");
+    assert_eq!(read["previewing"], inspected["previewing"], "the same words");
+    let mut c = Client::of(Server::new(Box::new(h)));
+    assert_eq!(c.ok("get_node", json!({"id": id}))["previewing"]["name"], "One rectangle");
+}

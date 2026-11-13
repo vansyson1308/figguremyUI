@@ -15,7 +15,9 @@
 //!
 //!   `ui.pointer`, `ui.key` and `ui.type` act on the editor's canvas and are refused while the
 //!   presenter covers it (`ui.input` reaches the player; `proto.simulate` plays without a window).
-//!   They take `agent` as `engine.execute` does: what the gesture changes is that agent's undo step
+//!   They take `agent` as `engine.execute` does: what the gesture changes is that agent's undo step,
+//!   and `ifRevision`, checked before they act; like `engine.execute`'s, their replies carry the
+//!   `revision` and `revisionDocument` they left
 //!
 //! - `ui.input {events: [{move|down|up: [x, y], button?} | {key, shift?, alt?, cmd?} | {text} | {leave}
 //!   | {hold: {alt?, shift?, cmd?}} | {gamepad: "A" | "Gamepad A" | 0}]}` — raw pointer and key events
@@ -33,7 +35,7 @@
 //!   windows (desktop)
 //! - `app.info {}` → `{instance, version, pid, window: true, features}`: which run of the app this
 //!   is (`instance` is made once at start and differs between runs) and what its control channel
-//!   does beyond the first protocol (`errorDetail`, `revision`)
+//!   does beyond the first protocol (`errorDetail`, `revision`, `canvasIfRevision`)
 //! - `app.quit {}`
 //!
 //! A failed request's reply carries what kind of failure it is ([`ControlReply::detail`], written
@@ -61,16 +63,27 @@ pub struct ControlReply {
     /// engine's [`figcraft_engine::EngineError::detail`] or the handler's own code). `None`: the
     /// transport writes `{"code": "failed", "message"}`.
     pub detail: Option<Value>,
-    /// For `engine.execute`: the revision of the document the command acted on, read right after
-    /// it ran in the same request (written next to `result` as `revision`), so a client needn't
-    /// read it in another request that could include somebody else's change.
+    /// For `engine.execute` (and `ui.pointer`, `ui.key`, `ui.type`): the revision of the document
+    /// the request acted on, read right after it ran in the same request (written next to
+    /// `result` as `revision`), so a client needn't read it in another request that could include
+    /// somebody else's change.
     pub revision: Option<u64>,
+    /// The id (`doc.list`'s) of the document [`revision`](Self::revision) belongs to (written as
+    /// `revisionDocument`): the request's `document`, or the tab in front, or the file a command
+    /// opened or made.
+    pub revision_document: Option<u64>,
 }
 
 impl ControlReply {
     /// A reply that carries no detail of its own (a success, or a failure the transport codes).
     pub fn new(id: Value, result: Result<Value, String>) -> Self {
-        Self { id, result, detail: None, revision: None }
+        Self { id, result, detail: None, revision: None, revision_document: None }
+    }
+
+    /// A reply with what kind of failure it is and the revision the request left (`(document,
+    /// revision)`), as [`handle`] keeps them in the app.
+    pub(crate) fn of(id: Value, result: Result<Value, String>, detail: Option<Value>, revision: Option<(u64, u64)>) -> Self {
+        Self { id, result, detail, revision: revision.map(|(_, r)| r), revision_document: revision.map(|(d, _)| d) }
     }
 
     /// The `errorDetail` a failed reply is written with: its own, else `{"code": "failed",
@@ -454,7 +467,7 @@ fn admit(app: &mut FigApp, r: ControlRequest, window: u64, now: f64) {
     let (document, presentation) = app.windows.presentation(&app.session, window);
     if let Err(e) = front_only(&app.session, Some(document), "ui.screenshot", &params) {
         if !canceled {
-            let _ = tx.send(ControlReply { id, detail: Some(e.detail), result: Err(e.message), revision: None });
+            let _ = tx.send(ControlReply::of(id, Err(e.message), Some(e.detail), None));
         }
         return;
     }
@@ -657,7 +670,7 @@ pub fn background(app: &mut FigApp, ctx: &Context) {
             }
         }
         let _ = match res {
-            Some(result) => r.reply.send(ControlReply { id: r.id, result, detail, revision }),
+            Some(result) => r.reply.send(ControlReply::of(r.id, result, detail, revision)),
             None => r.reply.send(ControlReply::new(r.id, Err(format!("no window {target}")))),
         };
     }
@@ -866,7 +879,7 @@ fn route_queued(app: &mut FigApp, ctx: &Context, viewport: egui::ViewportId, now
     let res = handle(app, ctx, &r.method, &r.params);
     let (detail, revision) = (app.control_error.take(), app.control_revision.take());
     app.control_synthetic = before;
-    let reply = ControlReply { id: r.id, result: res, detail, revision };
+    let reply = ControlReply::of(r.id, res, detail, revision);
     if r.method == "ui.input" && std::mem::take(&mut app.control_input_queued) {
         // Acknowledge once the pass that applies the batch is presented, never from a sizing
         // pass whose input is thrown away.
@@ -1573,7 +1586,7 @@ fn run_method(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             let mut revision = None;
             let r = in_document(app, p, |s| {
                 let r = s.execute_as(agent, cmd, &params);
-                revision = s.ds().ok().map(figcraft_engine::DocState::doc_revision);
+                revision = front_revision(s);
                 Ok(r?)
             });
             app.control_revision = revision;
@@ -1614,7 +1627,8 @@ fn run_method(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             let id = p.get("id").and_then(figcraft_engine::params::id_of).ok_or("`id` required")?;
             let depth = p.get("depth").and_then(Value::as_u64).unwrap_or(1) as usize;
             let options = figcraft_engine::inspect::InspectOptions::parse(p)?;
-            in_document(app, p, |s| Ok(figcraft_engine::inspect::node_json_with_options(s.doc()?, id, depth, &options)))
+            // While a person previews a version, the layer read is the version's: it says so.
+            in_document(app, p, |s| Ok(figcraft_engine::inspect::node_in_session(s, id, depth, &options)?))
         }
         "window.new" => {
             let index = p.get("index").and_then(Value::as_u64).map(|i| i as usize);
@@ -1646,19 +1660,28 @@ fn run_method(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
         })),
         // A gesture or typed text for an AI agent (`agent`, as `engine.execute` takes it) is that
         // agent's step in the undo history, as its commands are.
+        // With `ifRevision` it is refused, before anything happens, unless the file in front is at
+        // that revision; the reply names the revision the gesture left, as `engine.execute`'s does.
         "ui.pointer" => {
             not_while_playing(app, ctx, method, p)?;
-            as_agent(app, p, |app| pointer(app, p))
+            let r = if_revision(app, method, p).and_then(|()| as_agent(app, p, |app| pointer(app, p)));
+            app.control_revision = front_revision(&app.session);
+            r
         }
         "ui.key" => {
             not_while_playing(app, ctx, method, p)?;
-            as_agent(app, p, |app| ui_key(app, ctx, p))
+            let r = if_revision(app, method, p).and_then(|()| as_agent(app, p, |app| ui_key(app, ctx, p)));
+            app.control_revision = front_revision(&app.session);
+            r
         }
         "ui.input" => Ok(ui_input(app, ctx, p)?),
         "ui.type" => {
             not_while_playing(app, ctx, method, p)?;
             let text = p.get("text").and_then(Value::as_str).ok_or("`text` required")?;
-            as_agent(app, p, |app| figcraft_engine::textedit::insert(&mut app.session, text))?;
+            let r = if_revision(app, method, p)
+                .and_then(|()| as_agent(app, p, |app| figcraft_engine::textedit::insert(&mut app.session, text)).map_err(Failure::from));
+            app.control_revision = front_revision(&app.session);
+            r?;
             Ok(json!({"ok": true}))
         }
         "ui.menu.invoke" => {
@@ -1697,9 +1720,31 @@ fn run_method(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
 }
 
 /// What this app's control channel does beyond the first protocol (`app.info`): failed replies
-/// say what kind of failure they are (`errorDetail`), and documents count revisions that
-/// commands can be made conditional on (`revision`, `ifRevision`).
-const FEATURES: [&str; 2] = ["errorDetail", "revision"];
+/// say what kind of failure they are (`errorDetail`), documents count revisions that commands
+/// can be made conditional on (`revision`, `ifRevision`), and the canvas methods (`ui.pointer`,
+/// `ui.key`, `ui.type`) check `ifRevision` too, in the request that acts (`canvasIfRevision`).
+const FEATURES: [&str; 3] = ["errorDetail", "revision", "canvasIfRevision"];
+
+/// The document in front and its revision, read right after a request acted on it: the reply's
+/// `revisionDocument` and `revision`.
+fn front_revision(s: &Session) -> Option<(u64, u64)> {
+    s.ds().ok().map(|d| (d.uid, d.doc_revision()))
+}
+
+/// The reserved `ifRevision` of a canvas method (`ui.pointer`, `ui.key`, `ui.type`): refused,
+/// before the gesture, key or text does anything, unless the document in front is at that
+/// revision (checked as a command's `ifRevision` is, code `conflict`). A gesture changes the
+/// document outside a command, so this is the only place the condition can be checked in the
+/// same request that acts.
+fn if_revision(app: &mut FigApp, method: &str, p: &Value) -> Result<(), Failure> {
+    let Some(v) = p.get("ifRevision").filter(|v| !v.is_null()) else { return Ok(()) };
+    let Some(expected) = v.as_u64() else {
+        let mut f = Failure::coded("badParams", "`ifRevision` must be a revision number (a whole number, 0 or more)");
+        f.detail["param"] = json!("ifRevision");
+        return Err(f);
+    };
+    Ok(app.session.require_revision(method, expected)?)
+}
 
 /// Run `f` as the AI agent the request names (`agent`), else as the user: what
 /// [`Session::acting_as`] does, for a gesture that needs the whole app (a pointer through the

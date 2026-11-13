@@ -101,6 +101,9 @@ impl Waiting {
                 if let Some(revision) = reply.revision {
                     out["revision"] = json!(revision);
                 }
+                if let Some(document) = reply.revision_document {
+                    out["revisionDocument"] = json!(document);
+                }
                 Some(out)
             }
             Err(TryRecvError::Empty) => None,

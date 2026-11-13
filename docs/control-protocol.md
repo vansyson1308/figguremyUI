@@ -15,7 +15,7 @@ request:  {"id": 1, "method": "engine.execute", "params": {...}}
 reply:    {"id": 1, "ok": true, "result": ...}
           {"id": 1, "ok": false, "error": "message"}
           {"id": 1, "ok": false, "error": "message", "errorDetail": {"code": "noSuchNode", "message": "message", "node": 41}}
-          {"id": 1, "ok": true, "result": ..., "revision": 12}     (engine.execute)
+          {"id": 1, "ok": true, "result": ..., "revision": 12, "revisionDocument": 3}     (engine.execute, ui.pointer, ui.key, ui.type)
 ```
 
 `errorDetail` (sent by the desktop app, the web build and the headless MCP backend) says what
@@ -27,10 +27,14 @@ control handler raises itself (also for a timeout, a full queue, a line too larg
 The codes are listed in [mcp.md](mcp.md) (Errors). A client reads it when it is there and
 otherwise takes the error as `{"code": "error", "message"}`; `error` stays the text it always was.
 
-`revision` (on an `engine.execute` reply, success or failure) is the revision of the document the
-command acted on, read right after it ran, in the same request: a client reports it as the state
-its command left, without a second request that could already include somebody else's change. An
-app that doesn't send it is read as before (`doc.list` / `document.inspect`).
+`revision` (on an `engine.execute` reply, success or failure, and on a `ui.pointer`, `ui.key` or
+`ui.type` reply) is the revision of the document the request acted on, read right after it ran,
+in the same request: a client reports it as the state its command left, without a second request
+that could already include somebody else's change. `revisionDocument` beside it is the `id` (as
+`doc.list` gives it) of the document that revision belongs to: the one `document` named, else the
+tab in front once the request ran (the file a `file.new` or `file.open` brought there). An app
+that doesn't send `revision` is read as before (`doc.list` / `document.inspect`); one that sends
+`revision` without `revisionDocument` means the document the request named, else the tab in front.
 
 Requests are queued and run on the UI thread at the start of the next frame, so replies reflect the
 real UI state. A request that the UI doesn't answer within 60 s gets a timeout error that says what
@@ -161,6 +165,13 @@ revision, and is otherwise refused without changing anything, with an error that
 and the actual revision and lists the changes made in between with their authors (`errorDetail`:
 `{"code": "conflict", "expected", "actual", "since": [{revision, label, author}], "document"}`).
 The steps of a `command.batch` are checked against the revision the batch started from.
+`ui.pointer`, `ui.key` and `ui.type` take `ifRevision` too, beside their other params (not in a
+`params` object): the gesture, key or text is refused before it does anything (nothing moves,
+nothing is selected or typed) unless the tab in front is at that revision, with the same
+`conflict` error naming the method. The check is in the request that acts, so no change can land
+between it and the gesture; an app whose `app.info` `features` include `canvasIfRevision` does
+this (one without it ignores the parameter, and a client checks first with `doc.list
+{ifRevision}`, which is not atomic).
 
 ```json
 {"id":1,"method":"engine.execute","params":{"command":"shape.rectangle","params":{"x":10,"y":10,"width":100,"height":50}}}
@@ -248,6 +259,11 @@ boolean; without options the output stays sparse. `outline: true` with `fields` 
 `outline: false` with `fields` is allowed. Document metadata is unchanged. Through
 `engine.execute`, the engine command `node.get` takes the same options but no `depth`; it always
 returns one level of children.
+
+While a person previews an earlier version (`version.preview`), what both methods read is that
+version's layers, shown in place of the document: `document.inspect` and `node.get` (the method
+and the command) then also carry `previewing: {version, name, note}`, and `revision` stays the
+document's own.
 
 ```json
 {"id":5,"method":"document.inspect","params":{"depth":6,"outline":true}}
@@ -379,6 +395,16 @@ build and the headless MCP backend): what the gesture or the typed text changes 
 agent's step in the undo history, named as `engine.execute {agent}` names it, so the agent's
 `edit.undo` takes it back and refuses the person's. Whoever acted before is put back when the
 gesture ends, also when it fails.
+
+They also take `ifRevision` (an app with the `canvasIfRevision` feature, the headless MCP backend):
+refused, before anything happens, unless the tab in front is at that revision (code `conflict`,
+as a command's; see "Revisions and conditional changes"). Their replies carry the `revision` and
+`revisionDocument` the gesture left.
+
+```json
+{"id":7,"method":"ui.pointer","params":{"kind":"drag","x":200,"y":200,"to":[300,260],"ifRevision":12,"agent":"Claude"}}
+{"id":7,"ok":false,"error":"`ui.pointer`: …","errorDetail":{"code":"conflict","expected":12,"actual":13,"since":[…],"document":{…}},"revision":13,"revisionDocument":3}
+```
 
 ### `ui.input {events}`
 
@@ -515,12 +541,14 @@ files and undo history, or another one. `version` is the app's version and `pid`
 
 ```json
 {"id":1,"method":"app.info"}
-{"id":1,"result":{"instance":"5f0c2a9e41d7b3a86e1f0c2a9e41d7b3","pid":41327,"version":"0.18.1","window":true,"features":["errorDetail","revision"]}}
+{"id":1,"result":{"instance":"5f0c2a9e41d7b3a86e1f0c2a9e41d7b3","pid":41327,"version":"0.18.1","window":true,"features":["errorDetail","revision","canvasIfRevision"]}}
 ```
 
 `features` lists what this app's control channel does beyond the first protocol (`errorDetail`:
-failed replies carry it; `revision`: documents count revisions and commands take `ifRevision`); an
-app that leaves it out does neither. A client that reconnects asks again: when `instance` differs,
+failed replies carry it; `revision`: documents count revisions and commands take `ifRevision`;
+`canvasIfRevision`: `ui.pointer`, `ui.key` and `ui.type` check `ifRevision` in the request that
+acts, and replies say which document their `revision` is of, `revisionDocument`); an app that
+leaves it out does none of these. A client that reconnects asks again: when `instance` differs,
 the app was restarted, and every document id, node id and revision the client holds is stale.
 `figcraft-cli mcp --attach` asks on each new connection and fails the first tool call after a
 restart, once, with code `transport`; an app that doesn't know `app.info` is used as before.

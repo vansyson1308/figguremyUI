@@ -2044,15 +2044,24 @@ fn mods(a: &Map<String, Value>, out: &mut Map<String, Value>) -> Result<(), Stri
     Ok(())
 }
 
-/// A gesture, key or typed text with `ifRevision`: checked in the request that acts (the backend
-/// refuses it there), and first by the engine on its own (an app from before this takes no
-/// `ifRevision` on the canvas methods, and would act without checking).
+/// A gesture, key or typed text with `ifRevision`: passed on, and checked in the request that
+/// acts (the backend refuses it there, before anything happens). An app that doesn't say it
+/// checks it there (`app.info`'s `features` without `canvasIfRevision`: an app from before this)
+/// would act without checking, so for it the engine checks first on its own, in a request of its
+/// own (not atomic: a change in between still gets through).
 fn canvas_conditional(b: &mut dyn Backend, a: &Map<String, Value>, p: &mut Map<String, Value>) -> Result<(), Failure> {
     let Some(rev) = a.get(IF_REVISION).filter(|v| !v.is_null()) else { return Ok(()) };
-    exec(b, "doc.list", json!({IF_REVISION: rev})).map_err(Failure::from_backend)?;
+    let checks_it =
+        b.app_info().is_some_and(|i| i.get("features").and_then(Value::as_array).is_some_and(|f| f.iter().any(|x| x == CANVAS_IF_REVISION)));
+    if !checks_it {
+        exec(b, "doc.list", json!({IF_REVISION: rev})).map_err(Failure::from_backend)?;
+    }
     p.insert(IF_REVISION.into(), rev.clone());
     Ok(())
 }
+
+/// The `app.info` feature of an app whose canvas methods check `ifRevision` themselves.
+const CANVAS_IF_REVISION: &str = "canvasIfRevision";
 
 fn pointer(b: &mut dyn Backend, a: &Map<String, Value>, ctx: &mut Ctx) -> Outcome {
     let x = n_arg(a, "x")?.ok_or("`x` is required")?;
