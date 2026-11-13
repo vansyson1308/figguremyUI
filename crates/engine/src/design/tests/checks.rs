@@ -13,6 +13,28 @@ const TEXT_CLIPPED: &str = "text.clipped";
 const CLIPPED: &str = "layout.clippedContent";
 const TARGET: &str = "target.small";
 
+/// Every rule `design.check` knows, in the order it lists them: the design rules, then the
+/// prototype flow and scenario rules.
+const ALL_RULES: [&str; 17] = [
+    CONTRAST,
+    UNMEASURED,
+    TEXT_CLIPPED,
+    CLIPPED,
+    TARGET,
+    "context.missingLink",
+    "context.briefIncomplete",
+    "context.untestedAssumption",
+    "context.staleDecision",
+    "flow.brokenTarget",
+    "flow.deadEnd",
+    "flow.trappedOverlay",
+    "flow.unreachable",
+    "flow.noStart",
+    "scenario.fails",
+    "scenario.none",
+    "scenario.unvisited",
+];
+
 /// What `rule` finds on the current page.
 fn found(s: &mut Session, rule: &str) -> Vec<Value> {
     let r = ex(s, "design.check", json!({"rules": [rule]}));
@@ -366,28 +388,77 @@ fn the_stage_decides_which_rules_run_and_the_rest_are_listed_as_skipped() {
     ex(&mut s, "design.assumption.add", json!({"text": "People read this"}));
     let ran = |r: &Value| -> Vec<String> { r["rules"].as_array().unwrap().iter().map(|x| x["id"].as_str().unwrap().to_string()).collect() };
     let skipped = |r: &Value| -> Vec<String> { r["skipped"].as_array().unwrap().iter().map(|x| x["id"].as_str().unwrap().to_string()).collect() };
-    let converging = [CONTRAST, UNMEASURED, TEXT_CLIPPED, CLIPPED, TARGET];
-    let ready = ["context.briefIncomplete", "context.untestedAssumption", "context.staleDecision"];
 
-    // Exploring: only what would break the file.
+    // Exploring: only what would break the file (a link to a layer that is gone, a prototype
+    // action that can't work).
     let r = ex(&mut s, "design.check", json!({}));
     assert_eq!(r["stage"], "exploring");
-    assert_eq!(ran(&r), ["context.missingLink"]);
-    assert_eq!(skipped(&r), [&converging[..], &ready[..]].concat());
+    assert_eq!(ran(&r), ["context.missingLink", "flow.brokenTarget"]);
+    assert_eq!(
+        skipped(&r),
+        [
+            CONTRAST,
+            UNMEASURED,
+            TEXT_CLIPPED,
+            CLIPPED,
+            TARGET,
+            "context.briefIncomplete",
+            "context.untestedAssumption",
+            "context.staleDecision",
+            "flow.deadEnd",
+            "flow.trappedOverlay",
+            "flow.unreachable",
+            "flow.noStart",
+            "scenario.fails",
+            "scenario.none",
+            "scenario.unvisited",
+        ]
+    );
     assert_eq!(r["findings"], json!([]), "the low contrast isn't reported while exploring");
-    let why = r["skipped"][0]["reason"].as_str().unwrap();
-    assert!(why.contains("runs from stage `converging`") && why.contains("the file is at `exploring`"), "{why}");
-    assert!(r["skipped"][7]["reason"].as_str().unwrap().contains("runs from stage `ready`"));
+    let reason = |r: &Value, id: &str| -> String {
+        r["skipped"].as_array().unwrap().iter().find(|x| x["id"] == id).unwrap_or_else(|| panic!("{id} wasn't skipped"))["reason"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    for id in [CONTRAST, TARGET, "flow.deadEnd", "flow.noStart", "scenario.fails"] {
+        let why = reason(&r, id);
+        assert!(why.contains("runs from stage `converging`") && why.contains("the file is at `exploring`"), "{id}: {why}");
+    }
+    for id in ["context.briefIncomplete", "context.staleDecision", "scenario.none", "scenario.unvisited"] {
+        assert!(reason(&r, id).contains("runs from stage `ready`"), "{id}");
+    }
 
+    // Converging: the finish of the screens and the shape of the flows.
     ex(&mut s, "design.stage.set", json!({"stage": "converging"}));
     let r = ex(&mut s, "design.check", json!({}));
-    assert_eq!(ran(&r), [&[CONTRAST, UNMEASURED, TEXT_CLIPPED, CLIPPED, TARGET, "context.missingLink"][..]].concat());
-    assert_eq!(skipped(&r), ready);
+    assert_eq!(
+        ran(&r),
+        [
+            CONTRAST,
+            UNMEASURED,
+            TEXT_CLIPPED,
+            CLIPPED,
+            TARGET,
+            "context.missingLink",
+            "flow.brokenTarget",
+            "flow.deadEnd",
+            "flow.trappedOverlay",
+            "flow.unreachable",
+            "flow.noStart",
+            "scenario.fails",
+        ]
+    );
+    assert_eq!(
+        skipped(&r),
+        ["context.briefIncomplete", "context.untestedAssumption", "context.staleDecision", "scenario.none", "scenario.unvisited"]
+    );
     assert_eq!(r["summary"]["byRule"], json!({CONTRAST: 1}));
 
+    // Ready: everything, the reasoning and the coverage by scenarios included.
     ex(&mut s, "design.stage.set", json!({"stage": "ready"}));
     let r = ex(&mut s, "design.check", json!({}));
-    assert_eq!(ran(&r).len(), 9);
+    assert_eq!(ran(&r), ALL_RULES);
     assert_eq!(r["skipped"], json!([]));
     assert_eq!(r["summary"]["byRule"], json!({CONTRAST: 1, "context.briefIncomplete": 1, "context.untestedAssumption": 1}));
     assert_eq!(r["summary"]["bySeverity"], json!({"blocker": 0, "major": 1, "minor": 0, "note": 2}));
@@ -397,7 +468,7 @@ fn the_stage_decides_which_rules_run_and_the_rest_are_listed_as_skipped() {
     ex(&mut s, "design.stage.set", json!({"stage": "exploring"}));
     let r = ex(&mut s, "design.check", json!({"rules": [CONTRAST, "context.untestedAssumption"]}));
     assert_eq!(ran(&r), [CONTRAST, "context.untestedAssumption"]);
-    assert_eq!(skipped(&r).len(), 7);
+    assert_eq!(skipped(&r), ALL_RULES.into_iter().filter(|id| ![CONTRAST, "context.untestedAssumption"].contains(id)).collect::<Vec<_>>());
     assert!(r["skipped"][0]["reason"].as_str().unwrap().contains("not among the `rules` asked for"));
     assert_eq!(r["summary"]["total"], 2);
 
@@ -412,20 +483,7 @@ fn the_rule_list_says_what_each_measures_and_from_which_stage() {
     let mut s = Session::new();
     let rules = ex(&mut s, "design.check.rules", json!({}));
     let ids: Vec<&str> = rules.as_array().unwrap().iter().map(|r| r["id"].as_str().unwrap()).collect();
-    assert_eq!(
-        ids,
-        [
-            CONTRAST,
-            UNMEASURED,
-            TEXT_CLIPPED,
-            CLIPPED,
-            TARGET,
-            "context.missingLink",
-            "context.briefIncomplete",
-            "context.untestedAssumption",
-            "context.staleDecision"
-        ]
-    );
+    assert_eq!(ids, ALL_RULES);
     let about = |id: &str| rules.as_array().unwrap().iter().find(|r| r["id"] == id).unwrap()["about"].as_str().unwrap().to_string();
     let contrast = about(CONTRAST);
     assert!(
@@ -446,44 +504,96 @@ fn the_rule_list_says_what_each_measures_and_from_which_stage() {
     assert_eq!(crate::design::min_stage("flow.deadEnd"), Stage::Converging);
     assert_eq!(crate::design::min_stage(CONTRAST), Stage::Converging);
     assert_eq!(crate::design::min_stage("context.staleDecision"), Stage::Ready);
-    assert_eq!(rules[0]["stage"], "converging");
-    assert_eq!(rules[8]["stage"], "ready");
+    assert_eq!(crate::design::min_stage("no.such.rule"), Stage::Converging);
+    let stages: Vec<&str> = rules.as_array().unwrap().iter().map(|r| r["stage"].as_str().unwrap()).collect();
+    assert_eq!(
+        stages,
+        [
+            // contrast.text, contrast.unmeasured, text.clipped, layout.clippedContent, target.small
+            "converging",
+            "converging",
+            "converging",
+            "converging",
+            "converging",
+            // context.missingLink, .briefIncomplete, .untestedAssumption, .staleDecision
+            "exploring",
+            "ready",
+            "ready",
+            "ready",
+            // flow.brokenTarget, .deadEnd, .trappedOverlay, .unreachable, .noStart
+            "exploring",
+            "converging",
+            "converging",
+            "converging",
+            "converging",
+            // scenario.fails, .none, .unvisited
+            "converging",
+            "ready",
+            "ready",
+        ]
+    );
     // The retired rules are gone: their thresholds had no standard behind them.
     assert!(!ids.contains(&"text.small") && !ids.contains(&"type.manySizes"));
-    assert_eq!(crate::design::rules().len(), 9);
+    assert_eq!(crate::design::rules().iter().map(|r| r.id).collect::<Vec<_>>(), ALL_RULES);
 }
 
-/// A page with one finding of each of three severities and rules.
-fn mixed_page(s: &mut Session) -> (NodeId, NodeId, NodeId) {
+/// The layers of [`mixed_page`] that its findings are about.
+struct Mixed {
+    card: NodeId,
+    text: NodeId,
+    banner: NodeId,
+    dot: NodeId,
+}
+
+/// A small prototype, at stage `ready`, with one finding of each severity from major down and
+/// of five rules: a card where the flow starts, holding a faint caption (`contrast.text`,
+/// major), a dot too small to hit that goes on to "Done" (`target.small`, major) and a banner
+/// the card cuts off (`layout.clippedContent`, minor); the brief is empty
+/// (`context.briefIncomplete`, note) and no scenario walks the flow (`scenario.none`, note). The
+/// flow itself is sound: it starts on the card and may end on "Done".
+fn mixed_page(s: &mut Session) -> Mixed {
     let (card, text) = card_with_text(s, "#DDDDDD");
+    let done = frame(s, "Done", 500.0, 320.0, 200.0);
     let banner = rect(s, card, [300.0, 150.0, 100.0, 40.0], json!({"name": "Banner"}));
     let dot = rect(s, card, [10.0, 100.0, 12.0, 12.0], json!({"name": "Dot"}));
-    ex(s, "proto.interaction.add", json!({"id": dot, "dest": card}));
+    ex(s, "proto.interaction.add", json!({"id": dot, "dest": done}));
+    ex(s, "proto.flow.add", json!({"start": card}));
+    ex(s, "proto.endState.set", json!({"id": done, "reason": "The task is finished here"}));
     ex(s, "design.stage.set", json!({"stage": "ready"}));
-    (text, banner, dot)
+    Mixed { card, text, banner, dot }
+}
+
+/// What `scenario.none` measures on [`mixed_page`].
+fn no_scenario(card: NodeId) -> String {
+    format!("1 flow start(s), the first at `Card` ({card}); 0 scenarios start on this page")
+}
+
+/// The findings of a `design.check` result as (severity, rule, layers), in the order given.
+fn listed(r: &Value) -> Vec<(&str, &str, Value)> {
+    r["findings"].as_array().unwrap().iter().map(|f| (f["severity"].as_str().unwrap(), f["rule"].as_str().unwrap(), f["nodes"].clone())).collect()
 }
 
 #[test]
 fn checks_are_deterministic_and_ordered_by_severity_rule_and_layer() {
     let mut s = Session::new();
-    let (text, banner, dot) = mixed_page(&mut s);
-    let card = s.doc().unwrap().node(text).unwrap().parent.unwrap();
+    let Mixed { card, text, banner, dot } = mixed_page(&mut s);
     let other = label(&mut s, card, "Also faint", [20.0, 60.0], json!({"fill": "#CCCCCC"}));
     let first = ex(&mut s, "design.check", json!({}));
     let second = ex(&mut s, "design.check", json!({}));
     assert_eq!(first, second, "the same file gives the same result");
-    let order: Vec<(String, Value)> =
-        first["findings"].as_array().unwrap().iter().map(|f| (f["rule"].as_str().unwrap().to_string(), f["nodes"].clone())).collect();
     assert_eq!(
-        order,
+        listed(&first),
         [
-            (CONTRAST.to_string(), json!([text])),
-            (CONTRAST.to_string(), json!([other])),
-            (TARGET.to_string(), json!([dot])),
-            (CLIPPED.to_string(), json!([banner])),
-            ("context.briefIncomplete".to_string(), json!([])),
+            ("major", CONTRAST, json!([text])),
+            ("major", CONTRAST, json!([other])),
+            ("major", TARGET, json!([dot])),
+            ("minor", CLIPPED, json!([banner])),
+            ("note", "context.briefIncomplete", json!([])),
+            ("note", "scenario.none", json!([card])),
         ]
     );
+    assert_eq!(first["summary"]["bySeverity"], json!({"blocker": 0, "major": 3, "minor": 1, "note": 2}));
+    assert_eq!(first["findings"][5]["evidence"], no_scenario(card));
     // A check reads the file: no undo step, nothing stored.
     assert!(s.doc().unwrap().design.findings.is_empty());
     // A scope limits what is looked at; a layer inside a scoped frame isn't reported twice.
@@ -492,39 +602,96 @@ fn checks_are_deterministic_and_ordered_by_severity_rule_and_layer() {
 }
 
 #[test]
+fn flow_findings_come_through_design_check_by_stage_and_are_settled_by_recheck() {
+    let mut s = Session::new();
+    let home = frame(&mut s, "Home", 0.0, 320.0, 480.0);
+    let spare = frame(&mut s, "Spare", 400.0, 320.0, 480.0);
+    let gone = frame(&mut s, "Gone", 800.0, 320.0, 480.0);
+    let go = rect(&mut s, home, [20.0, 400.0, 100.0, 48.0], json!({"name": "Go"}));
+    ex(&mut s, "proto.interaction.add", json!({"id": go, "dest": gone}));
+    ex(&mut s, "edit.delete", json!({"ids": [gone]}));
+    // While exploring, an action that can't work is reported, and nothing else about the flow.
+    let r = ex(&mut s, "design.check", json!({}));
+    assert_eq!(listed(&r), [("blocker", "flow.brokenTarget", json!([go]))]);
+    assert_eq!(r["findings"][0]["evidence"], format!("`Go` ({go}), On click → Navigate to: layer {gone} doesn't exist"));
+    assert_eq!(r["findings"][0]["kind"], "check");
+    assert_eq!(r["summary"]["bySeverity"], json!({"blocker": 1, "major": 0, "minor": 0, "note": 0}));
+    // Converging, the shape of the flow is checked too: Home's only action leads nowhere, nothing
+    // says where the prototype starts, and nothing leads to Spare.
+    ex(&mut s, "design.stage.set", json!({"stage": "converging"}));
+    let r = ex(&mut s, "design.check", json!({}));
+    assert_eq!(
+        listed(&r),
+        [
+            ("blocker", "flow.brokenTarget", json!([go])),
+            ("major", "flow.deadEnd", json!([home])),
+            ("minor", "flow.noStart", json!([home])),
+            ("note", "flow.unreachable", json!([spare])),
+        ]
+    );
+    assert_eq!(r["findings"][1]["evidence"], "1 action(s) on it, none of which navigates elsewhere, opens an overlay or opens a link");
+    assert_eq!(r["findings"][2]["evidence"], format!("the player starts at the page's first frame, `Home` ({home})"));
+    assert_eq!(r["findings"][3]["evidence"], format!("no navigate action leads to it from `Home` ({home}); it has 0 action(s) of its own"));
+    assert_eq!(r["summary"]["byRule"], json!({"flow.brokenTarget": 1, "flow.deadEnd": 1, "flow.noStart": 1, "flow.unreachable": 1}));
+    // They are recorded like any check, and running the rules again after the fix verifies them.
+    assert_eq!(ex_undoable(&mut s, "design.check.record", json!({}))["added"], json!(["F1", "F2", "F3", "F4"]));
+    ex(&mut s, "proto.interaction.clear", json!({"ids": [go]}));
+    ex(&mut s, "proto.interaction.add", json!({"id": go, "dest": spare}));
+    ex(&mut s, "proto.flow.add", json!({"start": home}));
+    ex(&mut s, "proto.endState.set", json!({"id": spare}));
+    let r = ex_undoable(&mut s, "design.finding.recheck", json!({}));
+    assert_eq!(
+        r["results"],
+        json!([
+            {"id": "F1", "passed": true, "detail": "`flow.brokenTarget` no longer reports it", "status": "verified"},
+            {"id": "F2", "passed": true, "detail": "`flow.deadEnd` no longer reports it", "status": "verified"},
+            {"id": "F3", "passed": true, "detail": "`flow.noStart` no longer reports it", "status": "verified"},
+            {"id": "F4", "passed": true, "detail": "`flow.unreachable` no longer reports it", "status": "verified"},
+        ])
+    );
+    assert_eq!(ex(&mut s, "design.check", json!({}))["findings"], json!([]));
+    // Ready, the flow that now works is expected to be covered by a stored scenario.
+    ex(&mut s, "design.stage.set", json!({"stage": "ready"}));
+    let r = ex(&mut s, "design.check", json!({}));
+    assert_eq!(listed(&r), [("note", "context.briefIncomplete", json!([])), ("note", "scenario.none", json!([home]))]);
+    assert_eq!(r["findings"][1]["evidence"], format!("1 flow start(s), the first at `Home` ({home}); 0 scenarios start on this page"));
+}
+
+#[test]
 fn recording_stores_each_problem_once() {
     let mut s = Session::new();
-    let (text, banner, dot) = mixed_page(&mut s);
+    let Mixed { card, text, banner, dot } = mixed_page(&mut s);
     let r = ex_undoable(&mut s, "design.check.record", json!({}));
-    assert_eq!(r["added"], json!(["F1", "F2", "F3", "F4"]));
-    assert_eq!((r["existing"].clone(), r["total"].as_u64(), r["skipped"].clone()), (json!([]), Some(4), json!([])));
+    assert_eq!(r["added"], json!(["F1", "F2", "F3", "F4", "F5"]));
+    assert_eq!((r["existing"].clone(), r["total"].as_u64(), r["skipped"].clone()), (json!([]), Some(5), json!([])));
     let stored = s.doc().unwrap().design.findings.clone();
     assert!(stored.iter().all(|f| f.kind == figcraft_doc::design::FindingKind::Check && f.source == "check" && f.status == FindingStatus::Open));
     assert_eq!(
         stored.iter().map(|f| (f.rule.as_str(), f.nodes.clone())).collect::<Vec<_>>(),
-        [(CONTRAST, vec![text]), (TARGET, vec![dot]), (CLIPPED, vec![banner]), ("context.briefIncomplete", vec![]),]
+        [(CONTRAST, vec![text]), (TARGET, vec![dot]), (CLIPPED, vec![banner]), ("context.briefIncomplete", vec![]), ("scenario.none", vec![card])]
     );
     assert_eq!(stored[0].evidence, "1.35:1, needs 4.5:1; text #DDDDDD on #FFFFFF, 14 px regular");
+    assert_eq!(stored[4].evidence, no_scenario(card), "a flow rule's finding is stored like any other");
     // Again: the same problems are already stored, whatever their status short of verified.
     let depth = s.undo_depth();
     ex(&mut s, "design.finding.address", json!({"id": "F2", "resolution": "Will enlarge"}));
     ex(&mut s, "design.finding.accept", json!({"id": "F3", "reason": "Bleeds off on purpose"}));
     let r = ex(&mut s, "design.check.record", json!({}));
-    assert_eq!((r["added"].clone(), r["existing"].clone(), r["total"].as_u64()), (json!([]), json!(["F1", "F2", "F3", "F4"]), Some(4)));
+    assert_eq!((r["added"].clone(), r["existing"].clone(), r["total"].as_u64()), (json!([]), json!(["F1", "F2", "F3", "F4", "F5"]), Some(5)));
     assert_eq!(s.undo_depth().0, depth.0 + 2, "recording nothing new is no undo step");
     // A new problem is added next to them; the stage and `rules` apply as in design.check.
-    let parent = s.doc().unwrap().node(text).unwrap().parent.unwrap();
-    rect(&mut s, parent, [-50.0, 10.0, 100.0, 20.0], json!({"name": "Ribbon"}));
+    rect(&mut s, card, [-50.0, 10.0, 100.0, 20.0], json!({"name": "Ribbon"}));
     let r = ex(&mut s, "design.check.record", json!({"rules": [CLIPPED]}));
-    assert_eq!((r["added"].clone(), r["existing"].clone()), (json!(["F5"]), json!(["F3"])));
-    assert_eq!(r["skipped"].as_array().unwrap().len(), 8);
+    assert_eq!((r["added"].clone(), r["existing"].clone()), (json!(["F6"]), json!(["F3"])));
+    let skipped: Vec<&str> = r["skipped"].as_array().unwrap().iter().map(|x| x["id"].as_str().unwrap()).collect();
+    assert_eq!(skipped, ALL_RULES.into_iter().filter(|id| *id != CLIPPED).collect::<Vec<_>>());
     assert!(err(&mut s, "design.check.record", json!({"rules": ["nope"]})).contains("`rules`: no rule"));
 }
 
 #[test]
 fn a_fixed_check_is_verified_by_running_it_again() {
     let mut s = Session::new();
-    let (text, banner, dot) = mixed_page(&mut s);
+    let Mixed { card, text, banner, dot } = mixed_page(&mut s);
     ex(&mut s, "design.check.record", json!({}));
     // Fix the contrast and re-run that finding.
     set(&mut s, text, json!({"fill": "#333333"}));
@@ -560,8 +727,13 @@ fn a_fixed_check_is_verified_by_running_it_again() {
             {"id": "F2", "passed": true, "detail": "`target.small` no longer reports it", "status": "verified"},
             {"id": "F3", "passed": true, "detail": "the layer no longer exists", "status": "verified"},
             {"id": "F4", "passed": false, "detail": "empty: audience, job, context, success", "status": "open"},
+            {"id": "F5", "passed": false, "detail": no_scenario(card), "status": "open"},
         ])
     );
+    // A flow rule's finding is settled the same way: store a scenario that walks the flow.
+    ex(&mut s, "proto.scenario.add", json!({"name": "Finish", "start": card, "steps": [{"click": dot}]}));
+    let r = ex_undoable(&mut s, "design.finding.recheck", json!({"id": "F5"}));
+    assert_eq!(r["results"], json!([{"id": "F5", "passed": true, "detail": "`scenario.none` no longer reports it", "status": "verified"}]));
     // A verified finding whose problem comes back is opened by the next re-run...
     set(&mut s, text, json!({"fill": "#DDDDDD"}));
     let r = ex(&mut s, "design.finding.recheck", json!({"id": "F1"}));
@@ -569,7 +741,7 @@ fn a_fixed_check_is_verified_by_running_it_again() {
     // ...and one that stayed verified is recorded anew when it is found again.
     set(&mut s, dot, json!({"width": 10}));
     let r = ex(&mut s, "design.check.record", json!({"rules": [TARGET, CONTRAST]}));
-    assert_eq!((r["added"].clone(), r["existing"].clone()), (json!(["F5"]), json!(["F1"])));
+    assert_eq!((r["added"].clone(), r["existing"].clone()), (json!(["F6"]), json!(["F1"])));
     // A settled finding about a deleted layer isn't a broken link.
     assert!(found(&mut s, "context.missingLink").is_empty());
 }
@@ -582,7 +754,7 @@ fn an_accepted_check_stays_accepted_and_is_left_out_of_recheck_all() {
     ex(&mut s, "design.finding.accept", json!({"id": "F3", "reason": "The banner bleeds off the edge on purpose"}));
     let r = ex(&mut s, "design.finding.recheck", json!({}));
     let ids: Vec<&str> = r["results"].as_array().unwrap().iter().map(|x| x["id"].as_str().unwrap()).collect();
-    assert_eq!(ids, ["F1", "F2", "F4"]);
+    assert_eq!(ids, ["F1", "F2", "F4", "F5"]);
     // Asked for by id it is measured, and stays as the person left it while it is still there.
     let r = ex(&mut s, "design.finding.recheck", json!({"id": "F3"}));
     assert_eq!((r["results"][0]["passed"].as_bool(), r["results"][0]["status"].as_str()), (Some(false), Some("accepted")));
@@ -613,7 +785,7 @@ fn missing_links_are_recorded_one_finding_each_and_rechecked_each() {
 #[test]
 fn recorded_checks_survive_save_and_reopen() {
     let mut s = Session::new();
-    let (text, ..) = mixed_page(&mut s);
+    let Mixed { text, .. } = mixed_page(&mut s);
     ex(&mut s, "design.check.record", json!({}));
     set(&mut s, text, json!({"fill": "#000000"}));
     ex(&mut s, "design.finding.recheck", json!({}));
