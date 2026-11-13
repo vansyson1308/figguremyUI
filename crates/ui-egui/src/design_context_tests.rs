@@ -777,3 +777,101 @@ fn the_panels_text_colours_reach_aa_on_every_surface_they_sit_on_in_both_themes(
         }
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// What AI agents propose waits for a person, and the panel says whose each entry is.
+
+#[test]
+fn an_end_state_an_agent_proposes_waits_for_a_person_and_its_reason_stays_the_agents() {
+    let (s, home, done, _) = two_screens();
+    let mut w = Win::new(s);
+    w.open(Section::Flow);
+    w.agent("proto.endState.set", json!({"id": done, "reason": "The handover is recorded here"})).unwrap();
+    assert_eq!(w.design().end_states[0].status, figcraft_doc::design::EndStateStatus::Proposed);
+    assert!(w.says("Proposed") && w.says("by Claude (agent)") && w.says("The handover is recorded here"), "{:?}", w.texts());
+    assert!(w.says("Waiting for you: until you accept it, it is no end of the flow, and the flow check may still report the screen as a dead end."));
+    let counts = w.shown()["counts"].clone();
+    assert_eq!((counts["proposedEndStates"].clone(), counts["waitingForAPerson"].clone()), (json!(1), json!(1)), "{counts}");
+    // Said once above the sections, with where to go.
+    assert!(w.says("1 proposal waits for you:") && w.says("1 end of the flow"), "{:?}", w.texts());
+    // Its reason is the agent's: shown, not a field a person could edit (that would accept it).
+    assert!(w.says("Accept it to edit the reason."));
+    let panel = w.panel();
+    let in_panel = |n: &Node| n.bounds().is_some_and(|b| panel.contains(pos2(((b.x0 + b.x1) / 2.0) as f32, ((b.y0 + b.y1) / 2.0) as f32)));
+    let fields = w.nodes().iter().filter(|n| matches!(n.role(), Role::MultilineTextInput | Role::TextInput) && in_panel(n)).count();
+    assert_eq!(fields, 0, "no field in the panel for the proposal's reason");
+    // The flow check says so for the frame, as the engine does.
+    w.button("Check the flow");
+    assert_eq!(w.shown()["flowCheck"]["proposedEndStates"], json!([done]));
+    assert!(w.says("“Done” is proposed as an end of the flow by Claude (agent), waiting for you."), "{:?}", w.texts());
+    assert!(w.shown()["flowCheck"]["problems"].as_array().unwrap().iter().any(|p| p["rule"] == "flow.deadEnd"), "still a dead end");
+    // The person accepts it from the flow check.
+    w.button("Accept it as an end");
+    assert_eq!(w.design().end_states[0].status, figcraft_doc::design::EndStateStatus::Accepted);
+    assert_eq!(w.design().end_states[0].author, "Claude (agent)", "the author stays the agent");
+    assert!(!w.says("1 proposal waits for you:") && w.controls("Accept it as an end").is_empty());
+    assert_eq!(w.shown()["counts"]["waitingForAPerson"], json!(0));
+    // Accepted, its reason is a field again.
+    assert!(!w.says("Accept it to edit the reason."));
+    // And the panel's own Accept, for a second proposal.
+    w.agent("proto.endState.set", json!({"id": home, "reason": "Nothing to do"})).unwrap();
+    w.button("Accept");
+    assert!(w.design().end_states.iter().all(|e| e.status.is_accepted()));
+}
+
+#[test]
+fn scenarios_say_who_wrote_them_and_a_run_says_it_was_simulated() {
+    let (s, home, done, go) = two_screens();
+    let mut w = Win::new(s);
+    w.open(Section::Flow);
+    w.agent("proto.scenario.add", json!({"name": "Continue reaches Done", "start": home, "steps": [{"click": go, "expect": {"screen": done}}]}))
+        .unwrap();
+    w.run("proto.scenario.add", json!({"name": "Mine", "start": home, "steps": [{"click": go}]}));
+    assert!(w.says("by Claude (agent)") && w.says("by you"), "{:?}", w.texts());
+    w.button("Run all");
+    let run = w.shown()["scenarioRun"].clone();
+    assert_eq!(run["simulated"], json!(true));
+    assert_eq!(run["notModelled"].as_array().map(Vec::len), Some(5));
+    let line = "Simulated (not modelled: animation and timing; scroll position; drag direction; the device frame and responsive resizing; pointer hit-testing)";
+    assert!(w.says(line), "one quiet line, so a pass isn't read as a watched session: {:?}", w.texts());
+}
+
+#[test]
+fn a_choice_an_agent_proposes_among_alternatives_is_accepted_by_a_person() {
+    let (s, home, ..) = two_screens();
+    let mut w = Win::new(s);
+    w.open(Section::Alternatives);
+    let made = w.run("design.alternative.create", json!({"source": home, "name": "One thumb", "constraint": "Reachable with one thumb"}));
+    let copy = NodeId(made["node"].as_u64().unwrap());
+    w.agent("design.alternative.choose", json!({"set": "V1", "node": copy, "rationale": "The action sits under the thumb"})).unwrap();
+    let set = w.design().alternatives[0].clone();
+    assert_eq!((set.chosen, set.proposal.as_ref().map(|p| p.node)), (None, Some(copy)), "nothing chosen yet");
+    assert!(w.says("Claude (agent) proposes “One thumb”: The action sits under the thumb"), "{:?}", w.texts());
+    assert!(w.says("Waiting for you: nothing is chosen until you accept it or choose another."));
+    let counts = w.shown()["counts"].clone();
+    assert_eq!((counts["proposedChoices"].clone(), counts["waitingForAPerson"].clone()), (json!(1), json!(1)), "{counts}");
+    assert!(w.says("1 choice among alternatives"), "counted once, not also as a decision: {:?}", w.texts());
+    w.button("Accept");
+    let set = w.design().alternatives[0].clone();
+    assert_eq!((set.chosen, set.proposal.is_none()), (Some(copy), true));
+    assert_eq!(w.design().decisions[0].status, DecisionStatus::Accepted);
+    assert!(w.says("Chosen") && !w.says("1 proposal waits for you:"));
+}
+
+#[test]
+fn a_decision_says_who_changed_it_and_a_finding_who_stored_it() {
+    let (s, _, _, go) = two_screens();
+    let mut w = Win::new(s);
+    w.open(Section::Decisions);
+    w.run("design.decision.add", json!({"title": "One action", "rationale": "The brief names one job."}));
+    w.agent("design.decision.set", json!({"id": "D1", "title": "One primary action"})).unwrap();
+    assert!(w.says("by you") && w.says("changed by Claude (agent)"), "{:?}", w.texts());
+    w.open(Section::Findings);
+    w.agent(
+        "design.finding.add",
+        json!({"kind": "feedback", "rule": "wording", "message": "“Continue” is vague", "evidence": "She asked what happens next", "source": "Ana, ward 4", "nodes": [go]}),
+    )
+    .unwrap();
+    assert!(w.says("Ana, ward 4") && w.says("Relayed by Claude (agent)"), "{:?}", w.texts());
+    assert_eq!(w.design().findings[0].recorded_by, "Claude (agent)");
+}

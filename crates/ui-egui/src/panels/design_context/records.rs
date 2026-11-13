@@ -8,8 +8,8 @@ use figcraft_doc::design::{Assumption, AssumptionStatus, Decision, DecisionStatu
 use serde_json::{Value, json};
 
 use super::{
-    Cx, Form, FormEnd, FormKind, act, body, button, chip, choice, draft, entry, flow_row, form_end, go_to_entry, heading, layer_links, link, pad,
-    part, quiet, refusal_for, strong,
+    Cx, Form, FormEnd, FormKind, act, author_name, body, button, chip, choice, draft, entry, flow_row, form_end, go_to_entry, heading, layer_links,
+    link, pad, part, quiet, refusal_for, strong,
 };
 use crate::FigApp;
 use crate::i18n::{tr, tr_noop, trf};
@@ -207,9 +207,16 @@ fn decision(app: &mut FigApp, ui: &mut Ui, cx: &Cx, d: &Decision, form: &mut Opt
         quiet(ui, &d.id);
         chip(ui, if proposed { tr("Proposed") } else { tr("Accepted") });
         if !d.author.is_empty() {
-            quiet(ui, &trf("by {name}", &[("name", &d.author)]));
+            quiet(ui, &trf("by {name}", &[("name", &author_name(&d.author))]));
+        }
+        // Changed since by somebody else: the text is no longer all its author's.
+        if !d.edited_by.is_empty() {
+            quiet(ui, &trf("changed by {name}", &[("name", &author_name(&d.edited_by))]));
         }
     });
+    if proposed {
+        quiet(ui, tr("Waiting for you to accept it."));
+    }
     strong(ui, &d.title);
     part(ui, tr("Why"), &d.rationale);
     part(ui, tr("What else was considered"), &d.rejected);

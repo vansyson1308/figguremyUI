@@ -626,6 +626,7 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
             }
         });
     });
+    waiting_line(app, ui, &cx);
     ui.add_space(8.0);
     widgets::separator(ui);
     let body = egui::ScrollArea::vertical().id_salt(("design_context", app.ui.context.section.id())).auto_shrink([false, false]).show(ui, |ui| {
@@ -643,6 +644,39 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
     app.ui.context.body = Some(body.inner_rect);
 }
 
+/// What AI agents proposed that waits for a person, said once above the sections, each kind a
+/// link to where it is accepted. Nothing when nothing waits.
+fn waiting_line(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
+    let (decisions, ends) = waiting(&cx.design);
+    let choices = cx.design.alternatives.iter().filter(|v| v.proposal.is_some()).count();
+    if decisions + ends == 0 {
+        return;
+    }
+    ui.add_space(6.0);
+    pad(ui, |ui| {
+        flow_row(ui, |ui| {
+            quiet(ui, &trn("{n} proposals wait for you:", decisions + ends, &[]));
+            let mut go = |ui: &mut Ui, text: String, section: Section| {
+                if link(ui, &text).clicked() {
+                    app.ui.context.section = section;
+                    app.ui.context.form = None;
+                }
+            };
+            // A proposed choice among alternatives is its proposed decision: counted once.
+            let other = decisions.saturating_sub(choices);
+            if other > 0 {
+                go(ui, trn("{n} decisions", other, &[]), Section::Decisions);
+            }
+            if choices > 0 {
+                go(ui, trn("{n} choices among alternatives", choices, &[]), Section::Alternatives);
+            }
+            if ends > 0 {
+                go(ui, trn("{n} ends of the flow", ends, &[]), Section::Flow);
+            }
+        });
+    });
+}
+
 /// `design.forNode` of the first selected layer, asked again only when the file or the selection
 /// changed.
 fn for_selected(app: &mut FigApp, cx: &Cx) -> Option<(NodeId, Value)> {
@@ -651,7 +685,10 @@ fn for_selected(app: &mut FigApp, cx: &Cx) -> Option<(NodeId, Value)> {
     if let Some((_, ran)) = kept {
         return Some((node, ran.result.clone()));
     }
-    let result = app.session.execute("design.forNode", &json!({"id": node})).ok()?;
+    // A read, so not through `Session::execute`: that ends a live text preview (a font or style
+    // hovered in a menu), whose change of the file would ask this again, and so on: a flicker.
+    let spec = figcraft_engine::find_command("design.forNode")?;
+    let result = (spec.run)(&mut app.session, &json!({"id": node})).ok()?;
     app.ui.context.for_node = Ran::new(app, result.clone()).map(|ran| (node, ran));
     Some((node, result))
 }
@@ -696,15 +733,21 @@ pub fn inspect(app: &FigApp) -> Value {
     let design = ds.map(|d| d.doc.design.clone());
     let stale = |ran: &Ran| ds.is_none_or(|d| ran.stale(&d.doc));
     let counts = design.as_ref().map(|c| {
+        let (decisions, ends) = waiting(c);
         json!({
             "assumptions": c.assumptions.len(),
             "decisions": c.decisions.len(),
-            "proposedDecisions": c.decisions.iter().filter(|d| d.status == DecisionStatus::Proposed).count(),
+            "proposedDecisions": decisions,
             "scenarios": c.scenarios.len(),
             "endStates": c.end_states.len(),
+            "proposedEndStates": ends,
             "findings": c.findings.len(),
             "openFindings": c.findings.iter().filter(|f| f.status == FindingStatus::Open).count(),
             "alternatives": c.alternatives.len(),
+            // Sets with a choice an AI agent proposed (its decision is among `proposedDecisions`).
+            "proposedChoices": c.alternatives.iter().filter(|v| v.proposal.is_some()).count(),
+            // What waits for a person to accept: the proposed decisions and end states.
+            "waitingForAPerson": decisions + ends,
         })
     });
     let scenario_run = ui.scenario_run.as_ref().map(|ran| {
@@ -714,7 +757,7 @@ pub fn inspect(app: &FigApp) -> Value {
             .flatten()
             .map(|r| json!({"id": r["id"], "passed": r["passed"], "failedStep": r["failedStep"], "failures": r["failures"]}))
             .collect();
-        json!({"passed": ran.result["passed"], "total": ran.result["total"], "failed": ran.result["failed"], "results": results, "stale": stale(ran)})
+        json!({"passed": ran.result["passed"], "total": ran.result["total"], "failed": ran.result["failed"], "results": results, "simulated": ran.result["simulated"], "notModelled": ran.result["notModelled"], "stale": stale(ran)})
     });
     let problems = |list: &Value| -> Vec<Value> {
         list.as_array()
@@ -723,7 +766,12 @@ pub fn inspect(app: &FigApp) -> Value {
             .map(|f| json!({"rule": f["rule"], "severity": f["severity"], "nodes": f["nodes"], "message": f["message"]}))
             .collect()
     };
-    let flow = ui.flow.as_ref().map(|ran| json!({"problems": problems(&ran.result["problems"]), "screens": ran.result["screens"].as_array().map_or(0, Vec::len), "stale": stale(ran)}));
+    let flow = ui.flow.as_ref().map(|ran| {
+        let screens = ran.result["screens"].as_array().map_or(&[][..], Vec::as_slice);
+        // The frames an AI agent proposed as ends of the flow, waiting for a person.
+        let proposed: Vec<&Value> = screens.iter().filter(|s| s["endStateProposedBy"].is_string()).map(|s| &s["id"]).collect();
+        json!({"problems": problems(&ran.result["problems"]), "screens": screens.len(), "prototyped": ran.result["prototyped"], "proposedEndStates": proposed, "stale": stale(ran)})
+    });
     let checks = ui.checks.as_ref().map(|ran| {
         let skipped: Vec<&Value> = ran.result["skipped"].as_array().into_iter().flatten().map(|s| &s["id"]).collect();
         json!({"findings": problems(&ran.result["findings"]), "summary": ran.result["summary"], "skipped": skipped, "stage": ran.result["stage"], "stale": stale(ran)})
@@ -770,6 +818,20 @@ pub(crate) const SEVERITIES: [(&str, &str); 4] =
 /// A severity id (`major`) as the panel shows it.
 pub(crate) fn severity_label(id: &str) -> &str {
     SEVERITIES.iter().find(|(k, _)| *k == id).map_or(id, |(_, label)| tr(label))
+}
+
+/// Who an entry is by, as the panel names them: the person using the app is "you" (`user`, or
+/// nobody named in a file from before entries had authors); an AI agent by its signed name.
+pub(crate) fn author_name(author: &str) -> &str {
+    if author.is_empty() || author == "user" { tr("you") } else { author }
+}
+
+/// The proposals of AI agents that wait for a person: decisions (a choice among alternatives an
+/// agent put forward is its proposed decision) and end states.
+pub(crate) fn waiting(c: &DesignContext) -> (usize, usize) {
+    let decisions = c.decisions.iter().filter(|d| d.status == DecisionStatus::Proposed).count();
+    let ends = c.end_states.iter().filter(|e| !e.status.is_accepted()).count();
+    (decisions, ends)
 }
 
 /// "3 steps", "1 layer"… helpers the sections share.

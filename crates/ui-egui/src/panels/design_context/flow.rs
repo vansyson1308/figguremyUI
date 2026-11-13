@@ -11,7 +11,9 @@ use figcraft_doc::design::{Gesture, Scenario, StepAction};
 use serde_json::{Value, json};
 
 use super::findings::found;
-use super::{Cx, Ran, act, body, button, chip, entry, flow_row, go_to, heading, link, pad, part, primary, quiet, refusal_for, steps_text, strong};
+use super::{
+    Cx, Ran, act, author_name, body, button, chip, entry, flow_row, go_to, heading, link, pad, part, primary, quiet, refusal_for, steps_text, strong,
+};
 use crate::FigApp;
 use crate::i18n::{tr, tr_noop, trf};
 use crate::widgets;
@@ -84,11 +86,16 @@ fn scenarios(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
             run(app, None);
         }
         refusal_for(app, ui, "scenarios");
-        if let Some(ran) = &app.ui.context.scenario_run
-            && ran.stale(&cx.doc)
-        {
-            ui.add_space(4.0);
-            quiet(ui, tr("The file has changed since the scenarios last ran: the results below are from before."));
+        if let Some(ran) = &app.ui.context.scenario_run {
+            if ran.stale(&cx.doc) {
+                ui.add_space(4.0);
+                quiet(ui, tr("The file has changed since the scenarios last ran: the results below are from before."));
+            }
+            // A pass is the simulator's state rules, not a session somebody watched.
+            if let Some((line, whole)) = simulated(&ran.result) {
+                ui.add_space(4.0);
+                quiet(ui, &line).on_hover_text(whole);
+            }
         }
     });
     for s in list {
@@ -100,6 +107,7 @@ fn scenario(app: &mut FigApp, ui: &mut Ui, cx: &Cx, s: &Scenario) {
     flow_row(ui, |ui| {
         quiet(ui, &s.id);
         quiet(ui, &steps_text(s.steps.len()));
+        quiet(ui, &trf("by {name}", &[("name", &author_name(&s.author))]));
     });
     strong(ui, &s.name);
     part(ui, tr("What passing shows"), &s.purpose);
@@ -156,6 +164,18 @@ fn scenario(app: &mut FigApp, ui: &mut Ui, cx: &Cx, s: &Scenario) {
             ui.add_space(2.0);
         }
     }
+}
+
+/// "Simulated: <what the simulator leaves out>", for a result the simulator gave (`simulated`),
+/// each item without the engine's explanation in brackets (which the line shows on hover): the
+/// line is there so a pass is not read as a session somebody watched.
+pub(super) fn simulated(result: &Value) -> Option<(String, String)> {
+    if result["simulated"].as_bool() != Some(true) {
+        return None;
+    }
+    let left_out: Vec<&str> = result["notModelled"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+    let short: Vec<&str> = left_out.iter().map(|s| s.split(" (").next().unwrap_or(s).trim()).collect();
+    Some((trf("Simulated (not modelled: {items})", &[("items", &short.join("; "))]), left_out.join("\n")))
 }
 
 /// Whether the scenario passed in the last run, and where and why it didn't.
@@ -239,6 +259,26 @@ fn flow_check(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
                 }
             });
         }
+        if result["prototyped"].as_bool() == Some(false) {
+            quiet(
+                ui,
+                tr(
+                    "Nothing on this page leads from one screen to another yet, so the rules about starts, dead ends and unreachable screens don't apply.",
+                ),
+            );
+        }
+        // Frames an AI agent declared as ends of the flow: still dead ends until a person says so.
+        for s in screens {
+            let (Some(agent), Some(id)) = (s["endStateProposedBy"].as_str(), figcraft_engine::params::id_of(&s["id"])) else { continue };
+            let name = s["name"].as_str().unwrap_or_default();
+            ui.add_space(4.0);
+            body(ui, &trf("“{screen}” is proposed as an end of the flow by {agent}, waiting for you.", &[("screen", &name), ("agent", &agent)]));
+            // Accepted since the check ran: the button goes, the line stays until the next check.
+            let pending = cx.design.end_states.iter().any(|e| e.node == id && !e.status.is_accepted());
+            if pending && button(ui, tr("Accept it as an end")) {
+                act(app, "flow", "proto.endState.accept", json!({"id": id}));
+            }
+        }
     });
     let problems = result["problems"].as_array().map_or(&[][..], Vec::as_slice);
     if problems.is_empty() {
@@ -254,26 +294,52 @@ fn end_states(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
         ui,
         tr("Ends of the flow"),
         tr(
-            "Screens where a walk may end on purpose (a confirmation, a sent message). A screen with no way out that isn't listed here is reported as a dead end.",
+            "Screens where a walk may end on purpose (a confirmation, a sent message). A screen with no way out that isn't listed here is reported as a dead end. One an AI agent declares stays a dead end until you accept it.",
         ),
     );
     for e in &cx.design.end_states {
+        let proposed = !e.status.is_accepted();
         ui.add_space(8.0);
         pad(ui, |ui| {
-            match cx.name(e.node) {
-                Some(name) => {
-                    if link(ui, name).clicked() {
-                        go_to(app, e.node);
+            flow_row(ui, |ui| {
+                match cx.name(e.node) {
+                    Some(name) => {
+                        if link(ui, name).clicked() {
+                            go_to(app, e.node);
+                        }
+                    }
+                    None => {
+                        quiet(ui, &trf("missing layer ({id})", &[("id", &e.node)]));
                     }
                 }
-                None => {
-                    quiet(ui, &trf("missing layer ({id})", &[("id", &e.node)]));
+                chip(ui, if proposed { tr("Proposed") } else { tr("Accepted") });
+                quiet(ui, &trf("by {name}", &[("name", &author_name(&e.author))]));
+            });
+            if proposed {
+                quiet(
+                    ui,
+                    tr(
+                        "Waiting for you: until you accept it, it is no end of the flow, and the flow check may still report the screen as a dead end.",
+                    ),
+                );
+                ui.add_space(2.0);
+                if widgets::button(ui, tr("Accept"), true, true).clicked() {
+                    act(app, "ends", "proto.endState.accept", json!({"id": e.node}));
                 }
+                ui.add_space(2.0);
             }
             quiet(ui, tr("Why the flow may end here"));
         });
-        // The reason is written when its field loses the keyboard.
-        if cx.name(e.node).is_some()
+        // A proposal's reason is the agent's, shown as it is: a person's `proto.endState.set` on
+        // a proposal accepts it, so editing the reason here would accept it unasked. Accept
+        // first, then the reason can be edited.
+        if proposed {
+            pad(ui, |ui| {
+                body(ui, &e.reason);
+                quiet(ui, tr("Accept it to edit the reason."));
+            });
+        } else if cx.name(e.node).is_some()
+            // The reason is written when its field loses the keyboard.
             && let Some(reason) = widgets::multiline_field(ui, cx.id(("end", e.node)), &e.reason, "", 1)
         {
             act(app, "ends", "proto.endState.set", json!({"id": e.node, "reason": reason}));

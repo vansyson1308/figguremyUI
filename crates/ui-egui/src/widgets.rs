@@ -279,6 +279,8 @@ fn cancel_retargeted_field_save(ui: &mut Ui, id: Id) {
     let select_all = select_all_id(editor);
     ui.data_mut(|d| {
         d.remove::<String>(id);
+        // A multiline field's draft, with the pass it was kept on.
+        d.remove::<(String, u64)>(id);
         d.remove::<String>(id.with("editing"));
         d.remove::<String>(id.with("kept"));
         d.remove::<String>(id.with("buf"));
@@ -620,8 +622,17 @@ pub fn multiline_field(ui: &mut Ui, id: Id, value: &str, hint: &str, rows: usize
     // A draft exists from the first frame the field has the keyboard until it is committed. It
     // is what the field holds on the frame the keyboard leaves it too: Tab moves the focus on
     // before the field is drawn, and what was typed is what is committed then.
-    let draft: Option<String> = ui.data(|d| d.get_temp(id));
-    let left = draft.is_some() && !ui.memory(|m| m.has_focus(te));
+    // The draft remembers the pass it was last kept on. One the field didn't keep on the pass
+    // before (the field was hidden while it had the keyboard: another section, an entry that
+    // went away) is not what the person left it with just now: it is dropped, never committed
+    // later over what the file holds by then.
+    let pass = ui.ctx().cumulative_pass_nr();
+    let draft: Option<String> = ui.data(|d| d.get_temp::<(String, u64)>(id)).and_then(|(text, kept)| (pass <= kept + 2).then_some(text));
+    let focused = ui.memory(|m| m.has_focus(te));
+    let left = draft.is_some() && !focused;
+    if draft.is_none() {
+        ui.data_mut(|d| d.remove::<(String, u64)>(id));
+    }
     let mut text: String = draft.unwrap_or_else(|| value.to_string());
     let mut done = false;
     ui.horizontal(|ui| {
@@ -642,11 +653,11 @@ pub fn multiline_field(ui: &mut Ui, id: Id, value: &str, hint: &str, rows: usize
         done = r.inner.lost_focus() || left;
     });
     if done {
-        ui.data_mut(|d| d.remove::<String>(id));
+        ui.data_mut(|d| d.remove::<(String, u64)>(id));
         return (text != value).then_some(text);
     }
     if ui.memory(|m| m.has_focus(te)) {
-        ui.data_mut(|d| d.insert_temp(id, text));
+        ui.data_mut(|d| d.insert_temp(id, (text, pass)));
     }
     None
 }
