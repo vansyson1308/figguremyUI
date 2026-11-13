@@ -11,6 +11,9 @@ pub struct HistoryEntry {
     /// Who made the step: the AI agent it ran for (as [`crate::Session::agent`] names it), `None`
     /// for the user.
     pub author: Option<String>,
+    /// The document's revision once the step was made (or, on the redo stack, undone): a change
+    /// after it with no undo step of its own would be lost when this snapshot comes back.
+    pub revision: u64,
 }
 
 /// Who a step with no agent is by, in results and messages.
@@ -26,6 +29,9 @@ pub struct Change {
     pub label: String,
     /// The AI agent that made it, `None` for the user (or somebody else in a live session).
     pub author: Option<String>,
+    /// The change has an undo step (it made one, or it is an undo or redo moving along the
+    /// history): bringing back an earlier snapshot doesn't lose it, the step keeps it.
+    pub stepped: bool,
 }
 
 impl Change {
@@ -89,6 +95,9 @@ pub struct Interaction {
     /// their outlines, box and everything else that doesn't depend on where they are can follow
     /// by shifting what was worked out from `doc` (#1571). `None` for any other change.
     pub moved_by: Option<(f64, f64)>,
+    /// Who started the gesture: the AI agent it runs for (as [`crate::Session::agent`] names it),
+    /// `None` for the user. Nobody else's command changes the document until it ends (`busy`).
+    pub by: Option<String>,
 }
 
 /// The text being edited on the canvas.
@@ -137,6 +146,9 @@ pub struct DocState {
     pub revision: u64,
     /// The committed changes counted so far ([`Self::doc_revision`]).
     doc_rev: u64,
+    /// The revision the document was last saved (or opened, or reverted) at: the changes after it
+    /// are the unsaved work ([`Self::others_work`]).
+    saved_rev: u64,
     /// The document as of `doc_rev`, to notice a change nobody recorded (not kept alive by this).
     rev_doc: std::sync::Weak<Document>,
     /// The last committed changes, oldest first (at most [`MAX_CHANGES`]).
@@ -231,6 +243,7 @@ impl DocState {
             path,
             revision: 1,
             doc_rev: 1,
+            saved_rev: 1,
             changes: std::collections::VecDeque::new(),
             live_authors: (Vec::new(), Vec::new()),
             view: ViewState::default(),
@@ -378,12 +391,26 @@ impl DocState {
     /// The document changed for good just now: the next revision, remembered as `label` by
     /// `author` (an agent, `None` for the user).
     pub(crate) fn committed(&mut self, label: &str, author: Option<&str>) {
+        self.commit(label, author, false);
+    }
+
+    /// [`Self::committed`] for a change with an undo step: one that pushes a step, an undo, a redo.
+    pub(crate) fn committed_step(&mut self, label: &str, author: Option<&str>) {
+        self.commit(label, author, true);
+    }
+
+    fn commit(&mut self, label: &str, author: Option<&str>, stepped: bool) {
         self.doc_rev += 1;
         self.rev_doc = Arc::downgrade(self.document_itself());
+        // Back at what the file holds (a save that renames the document, an undo to the saved
+        // state): nothing after this revision is unsaved.
+        if Arc::ptr_eq(self.document_itself(), &self.saved_doc) {
+            self.saved_rev = self.doc_rev;
+        }
         if self.changes.len() >= MAX_CHANGES {
             self.changes.pop_front();
         }
-        self.changes.push_back(Change { revision: self.doc_rev, label: label.to_string(), author: author.map(str::to_string) });
+        self.changes.push_back(Change { revision: self.doc_rev, label: label.to_string(), author: author.map(str::to_string), stepped });
     }
 
     /// A tab that takes this one's place (the file read again from disk) carries on its revisions:
@@ -394,11 +421,23 @@ impl DocState {
         self.committed(label, author);
     }
 
+    /// The newest change after `revision` made by somebody other than `agent` that has no undo
+    /// step: what bringing back a snapshot from `revision` would take back for good. A change the
+    /// log no longer remembers counts as the user's.
+    pub(crate) fn others_change_since(&self, revision: u64, agent: &str) -> Option<Change> {
+        let since = self.changes_since(revision);
+        if let Some(c) = since.iter().rev().find(|c| !c.stepped && c.author.as_deref() != Some(agent)) {
+            return Some(c.clone());
+        }
+        let forgotten = since.first().map_or(self.doc_rev > revision, |c| c.revision > revision + 1);
+        forgotten.then(|| Change { revision: revision + 1, label: "a change no longer remembered".into(), author: None, stepped: false })
+    }
+
     /// The changes after `revision` that are still remembered, oldest first.
     pub fn changes_since(&self, revision: u64) -> Vec<Change> {
         let mut out: Vec<Change> = self.changes.iter().filter(|c| c.revision > revision).cloned().collect();
         if self.unrecorded_change() {
-            out.push(Change { revision: self.doc_rev + 1, label: "Edit".into(), author: None });
+            out.push(Change { revision: self.doc_rev + 1, label: "Edit".into(), author: None, stepped: false });
         }
         out
     }
@@ -447,7 +486,8 @@ impl DocState {
     /// Push a snapshot undo step: the document was `before` (shown with `selection` on `page`),
     /// and `author` (an agent, `None` for the user) made the edit.
     pub(crate) fn push_undo(&mut self, label: &str, author: Option<&str>, before: Arc<Document>, selection: Vec<NodeId>, page: NodeId) {
-        self.history.undo.push(HistoryEntry { label: label.to_string(), doc: before, selection, page, author: author.map(str::to_string) });
+        let revision = self.doc_rev;
+        self.history.undo.push(HistoryEntry { label: label.to_string(), doc: before, selection, page, author: author.map(str::to_string), revision });
         if self.history.undo.len() > self.history.limit.max(1) {
             self.history.undo.remove(0);
         }
@@ -502,7 +542,34 @@ impl DocState {
 
     pub fn mark_saved(&mut self) {
         self.saved_doc = self.doc.clone();
+        self.saved_rev = self.doc_revision();
         self.versions_changed = false;
+    }
+
+    /// What somebody other than `agent` (an AI agent's name as [`crate::Session::agent`] gives it)
+    /// would lose if this tab's document were replaced or closed: the newest of `undo` (the undo
+    /// steps as `(label, author)`, newest first) they made, else their newest unsaved change.
+    /// `(label, author)`; `None` when everything there is to lose is the agent's own.
+    pub(crate) fn others_work(&self, agent: &str, mut undo: impl Iterator<Item = (String, Option<String>)>) -> Option<(String, String)> {
+        if let Some((label, author)) = undo.find(|(_, author)| author.as_deref() != Some(agent)) {
+            return Some((label, author.unwrap_or_else(|| USER_AUTHOR.into())));
+        }
+        if !self.is_dirty() {
+            return None;
+        }
+        let since = self.changes_since(self.saved_rev);
+        if let Some(c) = since.iter().rev().find(|c| c.author.as_deref() != Some(agent)) {
+            return Some((c.label.clone(), c.author_name().to_string()));
+        }
+        // Unsaved with no change on record since the save (a recovered file, a change the log no
+        // longer remembers, the version history or branches): nobody can say it was the agent's.
+        let remembered = since.first().is_some_and(|c| c.revision == self.saved_rev + 1);
+        let changed = !Arc::ptr_eq(self.document_itself(), &self.saved_doc);
+        match (remembered, changed) {
+            (true, true) if !self.versions_changed => None,
+            (_, true) => Some(("unsaved changes".into(), USER_AUTHOR.into())),
+            (_, false) => Some(("unsaved changes to the version history or branches".into(), USER_AUTHOR.into())),
+        }
     }
 
     pub fn doc_mut(&mut self) -> &mut Document {

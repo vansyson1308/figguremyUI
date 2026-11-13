@@ -31,9 +31,14 @@ pub enum EngineError {
     /// `ifRevision` named another revision than the document is at ([`crate::Session::execute`]).
     #[error("{0}")]
     Conflict(Box<Conflict>),
-    /// An AI agent's undo or redo would take back a step somebody else made.
+    /// An AI agent's undo or redo would take back a step somebody else made, or its command
+    /// (`file.revert`, `file.close`…) would throw away their unsaved work or undo history.
     #[error("{}", other_author_text(.cmd, .label, .author))]
     OtherAuthor { cmd: String, label: String, author: String },
+    /// An AI agent's change to a document while somebody else (`by`: an agent's name, `None` for
+    /// the user) is in the middle of a gesture or text edit on it: refused, nothing changed.
+    #[error("{}", busy_text(.cmd, .by.as_deref()))]
+    Busy { cmd: String, by: Option<String> },
     /// Step `step` of a batch, which runs `command`, failed with `error`.
     #[error("step {step} ({command}): {error}")]
     Step { step: usize, command: String, error: Box<EngineError> },
@@ -62,13 +67,14 @@ pub struct Conflict {
 impl std::fmt::Display for Conflict {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Conflict { cmd, document: (_, name), expected, actual, since } = self;
+        let name = prose(name);
         write!(f, "conflict: `{cmd}` expected revision {expected} of \"{name}\", but it is at revision {actual}: nothing was changed.")?;
         if expected > actual {
             return write!(f, " Revision {expected} is not one this document has had (was another document meant, or was the app restarted?).");
         }
         let missing = (actual - expected).saturating_sub(since.len() as u64);
         if !since.is_empty() {
-            let list: Vec<String> = since.iter().map(|c| format!("{} ({})", c.label, c.author_name())).collect();
+            let list: Vec<String> = since.iter().map(|c| format!("{} ({})", prose(&c.label), prose(c.author_name()))).collect();
             write!(f, " Changed since: {}", list.join(", "))?;
             if missing > 0 {
                 write!(f, ", after {missing} earlier change(s) no longer remembered")?;
@@ -80,10 +86,43 @@ impl std::fmt::Display for Conflict {
 }
 
 fn other_author_text(cmd: &str, label: &str, author: &str) -> String {
-    let verb = if cmd == "edit.redo" { "redo" } else { "undo" };
-    format!(
-        "`{cmd}` would {verb} \"{label}\", a step made by {author}, not by you: nothing was changed. Pass {{\"others\": true}} to {verb} it anyway"
-    )
+    let (label, author) = (prose(label), prose(author));
+    match cmd {
+        "edit.undo" | "edit.redo" => {
+            let verb = if cmd == "edit.redo" { "redo" } else { "undo" };
+            format!(
+                "`{cmd}` would {verb} \"{label}\", a step made by {author}, not by you: nothing was changed. Leave it, or ask them; pass `others: true` only if the person asked you to {verb} their step"
+            )
+        }
+        _ => format!(
+            "`{cmd}` would discard \"{label}\", made by {author}, not by you, with the rest of the unsaved work or undo history that isn't yours: nothing was changed. Leave the file as it is, or ask them (they can save, revert or close it themselves)"
+        ),
+    }
+}
+
+fn busy_text(cmd: &str, by: Option<&str>) -> String {
+    let who = by.map_or_else(|| "a person".to_string(), |a| format!("another AI agent ({})", prose(a)));
+    format!("`{cmd}`: {who} is in the middle of a gesture or text edit on this file; nothing was changed, try again shortly")
+}
+
+/// Text from a document (its name, a step's label, an author) as error prose shows it: one line
+/// of at most 60 characters, control characters written as escapes and backticks as quotes, so
+/// it can't break the message or pass for part of it.
+pub(crate) fn prose(text: &str) -> String {
+    const MAX: usize = 60;
+    let mut out = String::new();
+    for (i, c) in text.chars().enumerate() {
+        if i == MAX {
+            out.push('…');
+            break;
+        }
+        match c {
+            '`' => out.push('\''),
+            c if c.is_control() => out.extend(c.escape_debug()),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// A [`EngineError::BadParams`] message. In a batch it leads with the step, and names the command
@@ -144,6 +183,7 @@ impl EngineError {
             EngineError::Unsupported { .. } => "unsupportedHere",
             EngineError::Conflict(_) => "conflict",
             EngineError::OtherAuthor { .. } => "otherAuthor",
+            EngineError::Busy { .. } => "busy",
             EngineError::Step { error, .. } => error.code(),
             EngineError::Waiting => "waiting",
             EngineError::Internal { .. } => "internal",
@@ -196,6 +236,10 @@ impl EngineError {
                 d["command"] = json!(cmd);
                 d["label"] = json!(label);
                 d["author"] = json!(author);
+            }
+            EngineError::Busy { cmd, by } => {
+                d["command"] = json!(cmd);
+                d["by"] = json!(by.as_deref().unwrap_or(crate::USER_AUTHOR));
             }
             EngineError::Step { step, command, error } => {
                 error.fill_detail(d);

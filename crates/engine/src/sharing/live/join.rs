@@ -67,6 +67,9 @@ fn reconnect(s: &mut Session, _: &Value) -> Result<Value> {
             net.retry(id);
         }
     } else if rejoinable {
+        // Joining again starts the tab's undo history over.
+        let uid = s.ds()?.uid;
+        s.refuse_discarding(CMD, uid)?;
         s.live_rejoin(CMD, id)?;
     } else {
         return Err(bad(CMD, "this file has no lost live session to reconnect"));

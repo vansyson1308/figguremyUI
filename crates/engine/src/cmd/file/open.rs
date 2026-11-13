@@ -89,7 +89,7 @@ fn open_tab(s: &mut Session, p: &Value) -> Result<Value> {
         if s.live().doc_uid.is_some() {
             return Err(EngineError::Disabled("file.open".into(), "leave the live session before reading the file again".into()));
         }
-        revert(s)?;
+        revert(s, "file.open")?;
         return Ok(json!({"index": i, "reloaded": true}));
     }
     // Stamped before reading: a change made during the read makes the next save refuse.
@@ -119,18 +119,27 @@ fn open_tab(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(out)
 }
 
-/// Replace the active tab's document with its file as saved (`file.revert`, `file.open {reload}`).
-pub(super) fn revert(s: &mut Session) -> Result<()> {
-    let path = s.ds()?.path.clone().ok_or_else(|| EngineError::Disabled("file.revert".into(), "the file was never saved".into()))?;
+/// Replace the active tab's document with its file as saved (`file.revert`, `file.open {reload}`,
+/// named by `cmd`). An AI agent is refused when that would throw away somebody else's unsaved work
+/// or undo history ([`Session::refuse_discarding`]). For anyone, unsaved work goes into the version
+/// history first ("Before revert"), and the versions the tab had beside the file's stay: the
+/// history is written with the file's next save.
+pub(super) fn revert(s: &mut Session, cmd: &str) -> Result<()> {
+    let path = s.ds()?.path.clone().ok_or_else(|| EngineError::Disabled(cmd.into(), "the file was never saved".into()))?;
+    let uid = s.ds()?.uid;
+    s.refuse_discarding(cmd, uid)?;
     // Stamped before reading: a change made during the read makes the next save refuse.
     let on_disk = crate::library::stat(&path).ok();
     let (loaded, _) = load_path(&path, None)?;
     let i = s.active;
-    let uid = s.ds()?.uid;
     let actor = s.agent.clone();
     if let Some(slot) = s.docs.get_mut(i) {
+        if slot.is_dirty() && slot.changed_since_checkpoint() {
+            super::add_version(slot, BEFORE_REVERT, "", true);
+        }
+        let versions = kept_versions(loaded.versions, &slot.versions);
         let mut fresh = DocState::new(loaded.doc, Some(path.clone()))
-            .with_versions(loaded.versions)
+            .with_versions(versions)
             .with_branches(loaded.branches)
             .with_images_left_in_file(&path, loaded.images_past_budget);
         fresh.on_disk = on_disk;
@@ -141,6 +150,19 @@ pub(super) fn revert(s: &mut Session) -> Result<()> {
     // Edits on its branch tabs are reverted too.
     crate::branches::close_tabs(s, uid, None);
     Ok(())
+}
+
+/// What the version that keeps a document's unsaved work before a revert is called.
+pub(crate) const BEFORE_REVERT: &str = "Before revert";
+
+/// The versions a reverted tab keeps: the file's (`from_file`), then those the tab had that the
+/// file doesn't (newest kept when there is no room for all), oldest first.
+fn kept_versions(mut from_file: Vec<Version>, had: &[Version]) -> Vec<Version> {
+    let missing: Vec<&Version> = had.iter().filter(|v| !from_file.iter().any(|f| f.id == v.id)).collect();
+    let room = figcraft_format::MAX_VERSIONS.saturating_sub(from_file.len());
+    from_file.extend(missing.iter().skip(missing.len().saturating_sub(room)).map(|v| (*v).clone()));
+    from_file.sort_by_key(|v| v.time);
+    from_file
 }
 
 /// [`open`] for a file given as base64 `data` (a file dropped without a path on disk): `name` tells

@@ -567,11 +567,25 @@ fn refuse_others_step(s: &Session, p: &Value, cmd: &str) -> Result<()> {
         Some(_) => return Err(crate::error::bad_param(cmd, "others", "`others` must be true or false")),
     };
     let Some(agent) = s.agent.as_deref().filter(|_| !others) else { return Ok(()) };
-    match s.next_history_step(cmd == "edit.undo") {
-        Some((label, author)) if author.as_deref() != Some(agent) => {
-            Err(EngineError::OtherAuthor { cmd: cmd.into(), label, author: author.unwrap_or_else(|| crate::USER_AUTHOR.into()) })
-        }
-        _ => Ok(()),
+    let back = cmd == "edit.undo";
+    if let Some((label, author)) = s.next_history_step(back).filter(|(_, author)| author.as_deref() != Some(agent)) {
+        return Err(EngineError::OtherAuthor { cmd: cmd.into(), label, author: author.unwrap_or_else(|| crate::USER_AUTHOR.into()) });
+    }
+    // The step is the agent's own, but an undo or redo brings back a whole snapshot: a change
+    // somebody else made since, with no undo step of its own (a direct edit, the first save's
+    // rename), would go with it.
+    let Ok(ds) = s.ds() else { return Ok(()) };
+    if s.live_doc(ds.uid) {
+        return Ok(());
+    }
+    let step = if back { ds.history.undo.last() } else { ds.history.redo.last() };
+    match step.and_then(|e| ds.others_change_since(e.revision, agent)) {
+        Some(c) => Err(EngineError::OtherAuthor {
+            cmd: cmd.into(),
+            label: format!("{} (made after your step, with no undo step of its own)", c.label),
+            author: c.author_name().to_string(),
+        }),
+        None => Ok(()),
     }
 }
 

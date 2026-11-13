@@ -22,10 +22,40 @@ impl Session {
     /// changes outside a command — a pointer gesture, typed text — is that author's in the undo
     /// history, as a command's is with [`Session::execute_as`].
     pub fn acting_as<T>(&mut self, agent: Option<&str>, f: impl FnOnce(&mut Self) -> T) -> T {
-        let was = std::mem::replace(&mut self.agent, agent.map(crate::cmd::comment::agent_author));
-        let r = f(self);
+        let name = agent.map(crate::cmd::comment::agent_author);
+        self.with_actor(name, f)
+    }
+
+    /// Run `f` with [`Session::agent`] set to `actor` (a name as it keeps it, `None` for the
+    /// user), and put back who acted before afterwards, also when `f` panics (the panic then goes
+    /// on to the caller): a caught panic must not leave the next request running as the agent.
+    pub(crate) fn with_actor<T>(&mut self, actor: Option<String>, f: impl FnOnce(&mut Self) -> T) -> T {
+        let was = std::mem::replace(&mut self.agent, actor);
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self)));
         self.agent = was;
-        r
+        match r {
+            Ok(v) => v,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    }
+
+    /// Refuse an AI agent command `cmd` when it would replace or close the document in tab `uid`
+    /// (with its branch tabs) and so throw away somebody else's unsaved work or undo history:
+    /// nobody but the person who made them can tell what may go ([`EngineError::OtherAuthor`]).
+    /// The user (no agent) is never refused here.
+    pub(crate) fn refuse_discarding(&self, cmd: &str, uid: u64) -> Result<()> {
+        let Some(me) = self.agent.as_deref() else { return Ok(()) };
+        for ds in self.docs.iter().filter(|d| d.uid == uid || d.branch_of.as_ref().is_some_and(|(main, _)| *main == uid)) {
+            let found = if self.live_doc(ds.uid) {
+                ds.others_work(me, ds.live_undo_authors().map(|a| ("a step of the live session's undo history".to_string(), a.clone())))
+            } else {
+                ds.others_work(me, ds.history.undo.iter().rev().map(|h| (h.label.clone(), h.author.clone())))
+            };
+            if let Some((label, author)) = found {
+                return Err(EngineError::OtherAuthor { cmd: cmd.to_string(), label, author });
+            }
+        }
+        Ok(())
     }
 
     /// Put open file `target` in front for one request (a control call naming its `document`),

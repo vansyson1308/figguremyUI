@@ -31,7 +31,15 @@ pub use export::{
 };
 use export::{export, export_frames_pdf, export_layers, pdf_bytes};
 use load::font_report;
-pub use load::{MAX_DOCUMENT_FILE, load, load_bytes, load_path};
+pub use load::{IMAGE_FORMATS, MAX_DOCUMENT_FILE, OPEN_FORMATS, load, load_bytes, load_path};
+
+/// What `file.save` writes, by extension: the native file, and an experimental `.fig` copy.
+pub const SAVE_FORMATS: &[&str] = &["figcraft", "fig"];
+
+/// What `file.export` writes: the layer formats, then the whole file as `.fig` or a Penpot archive.
+pub fn export_formats() -> Vec<&'static str> {
+    figcraft_doc::ExportFormat::ALL.iter().map(|f| f.ext()).chain(["fig", "penpot"]).collect()
+}
 #[cfg(test)]
 pub(crate) use load::{installed_family, sketch_line};
 pub(crate) use load::{load_fig, read_capped, recovered, recovered_from, variables_param, write};
@@ -175,7 +183,13 @@ pub fn specs() -> Vec<CommandSpec> {
             true,
             super::create::place_image
         ),
-        spec!("file.close", "Close tab", "{index?, force? (discard unsaved changes)}", false, close),
+        spec!(
+            "file.close",
+            "Close tab",
+            "{index?, force? (discard unsaved changes)}  refused to an AI agent when the tab holds unsaved work or undo steps somebody else made (code otherAuthor), with or without force",
+            false,
+            close
+        ),
         spec!("file.moveTab", "Move tab", "{from, to} (indices among open documents)", false, |s, p| {
             let from = req_index("file.moveTab", p, "from")?;
             let to = req_index("file.moveTab", p, "to")?;
@@ -230,10 +244,10 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "file.revert",
             "Revert to saved",
-            "{}  leave the live session first, if any → {ok, id, revision}: the reverted document has a new `id` and its next revision",
+            "{}  leave the live session first, if any → {ok, id, revision}: the reverted document has a new `id` and its next revision. Unsaved work is kept in the version history first (\"Before revert\", written with the next save). Refused to an AI agent when it would throw away unsaved work or undo steps somebody else made (code otherAuthor)",
             false,
             |s, _| {
-                revert(s)?;
+                revert(s, "file.revert")?;
                 Ok(with_document(s, json!({"ok": true})))
             }
         ),
@@ -281,15 +295,29 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             Ok(version_json(i, v))
         }),
-        spec!("version.delete", "Delete version", "{id | index}", false, |s, p| {
-            let ds = s.ds_mut()?;
-            let i = version_index("version.delete", ds, p)?;
-            let v = ds.versions_mut().remove(i);
-            if ds.preview.as_ref().is_some_and(|pv| pv.id == v.id) {
-                ds.end_preview();
+        spec!(
+            "version.delete",
+            "Delete version",
+            "{id | index}  refused to an AI agent: the version history is how a person gets back to earlier work",
+            false,
+            |s, p| {
+                if let Some(me) = s.agent.as_deref() {
+                    return Err(bad(
+                        "version.delete",
+                        format!(
+                            "a person deletes versions: the version history is how they get back to earlier work, and an AI agent ({me}) doesn't remove from it. Leave it, or ask them"
+                        ),
+                    ));
+                }
+                let ds = s.ds_mut()?;
+                let i = version_index("version.delete", ds, p)?;
+                let v = ds.versions_mut().remove(i);
+                if ds.preview.as_ref().is_some_and(|pv| pv.id == v.id) {
+                    ds.end_preview();
+                }
+                ok()
             }
-            ok()
-        }),
+        ),
         spec!(
             "version.preview",
             "View version",
@@ -474,6 +502,7 @@ fn vd_compat_param(cmd: &str, p: &Value) -> Result<Option<VdCompat>> {
 fn close(s: &mut Session, p: &Value) -> Result<Value> {
     let i = if get(p, "index").is_none() { s.active } else { req_index("file.close", p, "index")? };
     let Some(ds) = s.docs.get(i) else { return Err(bad("file.close", "no such document")) };
+    s.refuse_discarding("file.close", ds.uid)?;
     // A branch tab's edits are in its main file already (which then has unsaved changes).
     if ds.branch_of.is_none() && ds.is_dirty() && !boolean(p, "force").unwrap_or(false) {
         s.request_ui("dialog.unsaved", json!({"index": i}));

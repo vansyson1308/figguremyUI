@@ -78,18 +78,38 @@ impl Session {
         if let Some(why) = self.active_read_only() {
             return Err(EngineError::Disabled(label.to_string(), why.into()));
         }
+        let by = self.agent.clone();
         let ds = self.ds_mut()?;
         if ds.preview.is_some() {
             return Err(EngineError::Disabled(label.to_string(), PREVIEW_READ_ONLY.into()));
         }
-        if ds.interaction.is_none() {
-            ds.interaction = Some(Interaction { label: label.to_string(), doc: ds.doc.clone(), selection: ds.selection.clone(), moved_by: None });
+        match &ds.interaction {
+            None => {
+                ds.interaction =
+                    Some(Interaction { label: label.to_string(), doc: ds.doc.clone(), selection: ds.selection.clone(), moved_by: None, by });
+            }
+            // An agent doesn't take over somebody else's gesture or text edit.
+            Some(it) if by.is_some() && it.by != by => return Err(EngineError::Busy { cmd: label.to_string(), by: it.by.clone() }),
+            Some(_) => {}
         }
         Ok(())
     }
 
+    /// Refuse what an AI agent would do to the active document while somebody else's gesture or
+    /// text edit is in progress on it (`cmd` names what was refused): the person's work in hand is
+    /// theirs to finish, and a change made under it would be lost when it ends or be committed as
+    /// part of their step.
+    pub fn refuse_foreign_gesture(&self, cmd: &str) -> Result<()> {
+        let Some(me) = &self.agent else { return Ok(()) };
+        match self.ds().ok().and_then(|d| d.interaction.as_ref()) {
+            Some(it) if it.by.as_ref() != Some(me) => Err(EngineError::Busy { cmd: cmd.to_string(), by: it.by.clone() }),
+            _ => Ok(()),
+        }
+    }
+
     /// Replace the document with `f(snapshot)` for a live preview during a gesture.
     pub fn preview(&mut self, f: impl FnOnce(&mut Document, &mut Vec<NodeId>) -> Result<()>) -> Result<()> {
+        self.refuse_foreign_gesture("gesture")?;
         let ds = self.ds_mut()?;
         let Some(it) = ds.interaction.clone() else { return Err(EngineError::Other("no gesture in progress".into())) };
         let mut doc = (*it.doc).clone();
@@ -115,6 +135,7 @@ impl Session {
 
     /// Finish a gesture as one undo step (no step if nothing changed).
     pub fn commit_interaction(&mut self) -> Result<()> {
+        self.refuse_foreign_gesture("gesture")?;
         let ds = self.ds_mut()?;
         let Some(it) = ds.interaction.take() else { return Ok(()) };
         let (uid, page) = (ds.uid, ds.page);
@@ -129,6 +150,7 @@ impl Session {
 
     /// Abandon a gesture, restoring the document.
     pub fn cancel_interaction(&mut self) -> Result<()> {
+        self.refuse_foreign_gesture("gesture")?;
         let ds = self.ds_mut()?;
         if let Some(it) = ds.interaction.take() {
             ds.doc = it.doc;
@@ -165,8 +187,14 @@ impl Session {
             ds.settle_revision();
         }
         let Some(e) = ds.history.undo.pop() else { return Ok(false) };
-        let redo =
-            HistoryEntry { label: e.label.clone(), doc: ds.doc.clone(), selection: ds.selection.clone(), page: ds.page, author: e.author.clone() };
+        let redo = HistoryEntry {
+            label: e.label.clone(),
+            doc: ds.doc.clone(),
+            selection: ds.selection.clone(),
+            page: ds.page,
+            author: e.author.clone(),
+            revision: e.revision,
+        };
         ds.doc = e.doc;
         cmd::facilitate::keep(&redo.doc, &mut ds.doc);
         ds.history.redo.push(redo);
@@ -177,7 +205,12 @@ impl Session {
         ds.clean_selection();
         ds.revision += 1;
         if counted {
-            ds.committed(&format!("Undo {}", e.label), actor.as_deref());
+            ds.committed_step(&format!("Undo {}", e.label), actor.as_deref());
+        }
+        // A redo brings back the document as of this undo.
+        let now = ds.recorded_revision();
+        if let Some(r) = ds.history.redo.last_mut() {
+            r.revision = now;
         }
         let (uid, doc) = (ds.uid, ds.doc.clone());
         if self.clipboard.source_doc == uid {
@@ -214,8 +247,14 @@ impl Session {
             ds.settle_revision();
         }
         let Some(e) = ds.history.redo.pop() else { return Ok(false) };
-        let undo =
-            HistoryEntry { label: e.label.clone(), doc: ds.doc.clone(), selection: ds.selection.clone(), page: ds.page, author: e.author.clone() };
+        let undo = HistoryEntry {
+            label: e.label.clone(),
+            doc: ds.doc.clone(),
+            selection: ds.selection.clone(),
+            page: ds.page,
+            author: e.author.clone(),
+            revision: e.revision,
+        };
         ds.doc = e.doc;
         cmd::facilitate::keep(&undo.doc, &mut ds.doc);
         ds.history.undo.push(undo);
@@ -226,7 +265,12 @@ impl Session {
         ds.clean_selection();
         ds.revision += 1;
         if counted {
-            ds.committed(&format!("Redo {}", e.label), actor.as_deref());
+            ds.committed_step(&format!("Redo {}", e.label), actor.as_deref());
+        }
+        // An undo brings back the document as of this redo.
+        let now = ds.recorded_revision();
+        if let Some(u) = ds.history.undo.last_mut() {
+            u.revision = now;
         }
         Ok(true)
     }

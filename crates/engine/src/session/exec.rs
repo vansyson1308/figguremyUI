@@ -24,6 +24,13 @@ pub(crate) fn finite_check_candidates(doc: &Document, before: &Document) -> Vec<
     doc.changed_ids(before, usize::MAX).unwrap_or_default()
 }
 
+/// Somebody else's gesture or text edit in progress, as an AI agent's command found it.
+struct Gesture {
+    by: Option<String>,
+    interaction: Option<crate::Interaction>,
+    text_edit: Option<crate::TextEdit>,
+}
+
 /// The reserved parameter every command takes: the revision the active document must be at.
 pub const IF_REVISION: &str = "ifRevision";
 
@@ -43,6 +50,16 @@ fn conditional(id: &str, params: &Value) -> Result<(Option<u64>, Option<Value>)>
 }
 
 impl Session {
+    /// Refuse `what` (a control method that changes the document outside a command: a pointer
+    /// gesture, a key, typed text) unless the active document is at revision `expected`, as a
+    /// command's `ifRevision` is checked ([`EngineError::Conflict`]).
+    pub fn require_revision(&mut self, what: &str, expected: u64) -> Result<()> {
+        if self.counts_alone() {
+            self.docs.iter_mut().for_each(DocState::settle_revision);
+        }
+        self.check_revision(what, expected)
+    }
+
     /// Refuse command `id` unless the active document is at revision `expected` (`ifRevision`).
     fn check_revision(&self, id: &str, expected: u64) -> Result<()> {
         let ds = self.ds()?;
@@ -94,14 +111,15 @@ impl Session {
     /// none), or for the user (`None`): the comments it makes are signed with the agent's name and
     /// marked as an agent's, and the app shows where it works ([`Session::agent_presence_at`]).
     pub fn execute_as(&mut self, agent: Option<&str>, id: &str, params: &Value) -> Result<Value> {
-        let was = std::mem::replace(&mut self.agent, agent.map(cmd::comment::agent_author));
-        let before = agent.and_then(|_| self.agent_before());
-        let r = self.execute(id, params);
-        if agent.is_some() {
-            self.note_agent(before);
-        }
-        self.agent = was;
-        r
+        // Who acted before comes back afterwards, also after a panic.
+        self.with_actor(agent.map(cmd::comment::agent_author), |s| {
+            let before = agent.and_then(|_| s.agent_before());
+            let r = s.execute(id, params);
+            if agent.is_some() {
+                s.note_agent(before);
+            }
+            r
+        })
     }
 
     /// Run a command by id. Mutations become one undo step; a failure or panic leaves the document
@@ -146,6 +164,12 @@ impl Session {
         if let Some(expected) = if_revision {
             self.check_revision(id, expected)?;
         }
+        // Somebody else's gesture or text edit in progress on the document: an AI agent's command
+        // may read, but what it would change is refused and rolled back (`busy`).
+        let gesture = self.foreign_gesture();
+        if gesture.is_some() && textpreview::COMMANDS.contains(&id) {
+            return Err(EngineError::Busy { cmd: id.to_string(), by: gesture.and_then(|g| g.by) });
+        }
         if textpreview::COMMANDS.contains(&id) {
             // A live preview is no edit: no undo step, normalisation or rollback here.
             let r = guard::run(id, || (spec.run)(self, params));
@@ -154,8 +178,11 @@ impl Session {
             }
             return r;
         }
-        // Every other command acts on the document itself, not on a live text preview.
-        textpreview::end(self);
+        // Every other command acts on the document itself, not on a live text preview (one a
+        // person shows during their gesture stays: the command may only read).
+        if gesture.is_none() {
+            textpreview::end(self);
+        }
         if ENDS_PREVIEW.contains(&id)
             && (!matches!(id, "file.save" | "file.saveAs") || cmd::file::save_ends_preview(self, id, params))
             && let Ok(ds) = self.ds_mut()
@@ -173,6 +200,7 @@ impl Session {
         let group_depth_before = self.group_depth;
         let pending_events_before = self.pending_events.len();
         let result = guard::run(id, || (spec.run)(self, params))
+            .and_then(|v| self.check_foreign_gesture(id, &before, gesture.as_ref()).map(|()| v))
             .and_then(|v| self.check_instance_structure(id, &before).map(|()| v))
             .and_then(|v| self.check_preview(id, &before).map(|()| v))
             .and_then(|v| self.check_live_access(id, &before).map(|()| v))
@@ -210,6 +238,11 @@ impl Session {
                     ds.doc = doc;
                     ds.selection = sel;
                     ds.page = page;
+                    // The gesture the command was refused for goes on as it was.
+                    if let Some(g) = &gesture {
+                        ds.interaction.clone_from(&g.interaction);
+                        ds.text_edit.clone_from(&g.text_edit);
+                    }
                     // What a group or an undo inside it counted is taken back with the edit.
                     if let Some(mark) = revision_before {
                         ds.restore_revision(mark);
@@ -239,6 +272,29 @@ impl Session {
             Err(EngineError::Internal { .. }) => self.restore_after_internal_error(group_depth, pending_events),
             Err(_) => {}
         }
+    }
+
+    /// The gesture or text edit somebody other than the AI agent this runs for has in progress on
+    /// the active document, as it is now (`None`: no agent, or nobody else's gesture).
+    fn foreign_gesture(&self) -> Option<Gesture> {
+        let ds = self.ds().ok()?;
+        let it = ds.interaction.as_ref().filter(|it| self.agent.is_some() && it.by != self.agent)?;
+        Some(Gesture { by: it.by.clone(), interaction: ds.interaction.clone(), text_edit: ds.text_edit.clone() })
+    }
+
+    /// An AI agent's command that changed the document, or the gesture or text edit, somebody
+    /// else has in progress on it (`gesture`, as it was before) is refused (it is rolled back).
+    fn check_foreign_gesture(&self, id: &str, before: &Option<(Arc<Document>, Vec<NodeId>, NodeId, u64)>, gesture: Option<&Gesture>) -> Result<()> {
+        let (Some(g), Some((bdoc, _, _, uid))) = (gesture, before) else { return Ok(()) };
+        let Some(ds) = self.docs.iter().find(|d| d.uid == *uid) else { return Ok(()) };
+        let same_gesture = match (&ds.interaction, &g.interaction) {
+            (Some(now), Some(was)) => Arc::ptr_eq(&now.doc, &was.doc) && now.label == was.label,
+            _ => false,
+        };
+        if Arc::ptr_eq(&ds.doc, bdoc) && same_gesture && ds.text_edit == g.text_edit {
+            return Ok(());
+        }
+        Err(EngineError::Busy { cmd: id.to_string(), by: g.by.clone() })
     }
 
     /// A version shown in place of the document is read-only: refuse an edit (it is rolled back).
@@ -356,7 +412,10 @@ impl Session {
         if self.counts_alone()
             && let Some(ds) = self.docs.iter_mut().find(|d| d.uid == uid && d.unrecorded_change())
         {
-            ds.committed(label.unwrap_or("Edit"), author.as_deref());
+            match label {
+                Some(label) => ds.committed_step(label, author.as_deref()),
+                None => ds.committed("Edit", author.as_deref()),
+            }
         }
         if self.live_doc(uid) {
             return self.live_edit(uid, label);

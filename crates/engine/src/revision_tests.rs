@@ -282,7 +282,9 @@ fn an_agents_undo_stays_in_its_own_work() {
     let e = s.execute_as(Some("Claude"), "edit.undo", &json!({})).unwrap_err();
     assert!(matches!(&e, EngineError::OtherAuthor { label, author, .. } if label == "Set properties" && author == "user"), "{e:?}");
     let text = e.to_string();
-    assert!(text.contains("\"Set properties\"") && text.contains("made by user") && text.contains("\"others\": true"), "{text}");
+    assert!(text.contains("\"Set properties\"") && text.contains("made by user") && text.contains("Leave it, or ask them"), "{text}");
+    // `others` is for when the person asked, and the refusal says so (review R2-03).
+    assert!(text.contains("pass `others: true` only if the person asked you to undo their step"), "{text}");
     let d = e.detail();
     assert_eq!((d["code"].clone(), d["label"].clone(), d["author"].clone()), (json!("otherAuthor"), json!("Set properties"), json!("user")), "{d}");
     assert!(Arc::ptr_eq(&doc, &s.ds().unwrap().doc), "the user's edit is still there");

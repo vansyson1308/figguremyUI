@@ -190,6 +190,8 @@ mod a11y_keys_tests;
 #[cfg(test)]
 mod agent_presence_tests;
 #[cfg(test)]
+mod agent_safety_tests;
+#[cfg(test)]
 mod al_behaviour_tests;
 #[cfg(test)]
 mod al_content_align_tests;
