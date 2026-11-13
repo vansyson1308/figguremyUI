@@ -27,6 +27,7 @@ pub mod keymap;
 pub mod measure;
 pub mod proto_run;
 pub mod proto_sim;
+pub mod proto_snapshot;
 pub mod proto_verify;
 mod selection;
 mod sharing;

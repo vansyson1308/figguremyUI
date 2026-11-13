@@ -16,8 +16,12 @@ mod export_hidden_roots;
 mod export_profile;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod export_xml;
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::disallowed_methods)]
+mod full_loop;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod garbage;
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod guidance;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod inspect_fields;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -28,5 +32,7 @@ mod overlay_anchor;
 mod protocol;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod screenshot_pixel_limit;
+#[allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod verification_tools;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::disallowed_methods)]
 mod working_document;

@@ -483,15 +483,38 @@ fn capabilities_say_what_this_build_really_has() {
     assert_eq!(about(&c.call("inspect_document", json!({"depth": 0}))), working);
     // Features are read from the commands that are registered, not written down as true.
     let f = &caps["features"];
-    for (feature, command) in
-        [("prototypeSimulator", "proto.simulate"), ("scenarios", "proto.scenario.run"), ("flowCheck", "proto.check"), ("designContext", "design.get")]
-    {
+    for (feature, command) in [
+        ("prototypeSimulator", "proto.simulate"),
+        ("prototypeSnapshot", "proto.snapshot"),
+        ("scenarios", "proto.scenario.run"),
+        ("flowCheck", "proto.check"),
+        ("designContext", "design.get"),
+    ] {
         assert_eq!(f[feature], has(command), "{feature} is there exactly when `{command}` is");
+        // This build has the simulator, the flow check and the scenarios beside the design context.
+        assert_eq!(f[feature], true, "{feature}: {f}");
     }
     let rules = c.run("design.check.rules", json!({}));
     let ids: Vec<Value> = rules.as_array().unwrap().iter().map(|r| r["id"].clone()).collect();
-    assert!(!ids.is_empty());
     assert_eq!(f["checks"], json!(ids));
+    // The design rules and, with the flow check in the build, the flow and scenario rules.
+    assert!(ids.len() >= 17, "{ids:?}");
+    for rule in [
+        "contrast.text",
+        "text.clipped",
+        "target.small",
+        "context.missingLink",
+        "flow.brokenTarget",
+        "flow.deadEnd",
+        "flow.trappedOverlay",
+        "flow.unreachable",
+        "flow.noStart",
+        "scenario.fails",
+        "scenario.none",
+        "scenario.unvisited",
+    ] {
+        assert!(ids.contains(&json!(rule)), "`{rule}` is not among the checks: {ids:?}");
+    }
     for on in ["workingDocument", "conflictDetection", "historyAuthors", "structuredErrors", "engineErrorCodes", "appIdentity"] {
         assert_eq!(f[on], true, "{on}: {f}");
     }
@@ -553,9 +576,17 @@ fn capabilities_of_an_older_app_are_not_claimed() {
     assert_eq!(caps["commands"], 3);
     assert_eq!(caps["workingDocument"], json!({"id": 7, "name": "Old", "front": true}), "no revision where the app has none");
     let f = &caps["features"];
-    for off in
-        ["prototypeSimulator", "scenarios", "flowCheck", "designContext", "conflictDetection", "historyAuthors", "engineErrorCodes", "appIdentity"]
-    {
+    for off in [
+        "prototypeSimulator",
+        "prototypeSnapshot",
+        "scenarios",
+        "flowCheck",
+        "designContext",
+        "conflictDetection",
+        "historyAuthors",
+        "engineErrorCodes",
+        "appIdentity",
+    ] {
         assert_eq!(f[off], false, "{off}: {f}");
     }
     assert_eq!(f["checks"], json!([]));
