@@ -110,9 +110,14 @@ fn fields_and_outline_survive_every_depth_retry() {
             assert!(!result.is_error, "{}", result.first_text());
             let value: Value = serde_json::from_str(result.first_text()).unwrap();
             assert!(value["truncated"].is_object(), "{tool}: {value}");
-            assert!(backend.calls.len() > 1, "must exercise retries: {tool}");
-            for (called, params) in &backend.calls {
-                assert_eq!(called, method);
+            // The tool's reads of the tree; beside them it only asks which documents are open, to
+            // say which one the result is about.
+            let (reads, others): (Vec<_>, Vec<_>) = backend.calls.iter().partition(|(called, _)| called == method);
+            assert!(reads.len() > 1, "must exercise retries: {tool}");
+            for (called, params) in others {
+                assert_eq!((called.as_str(), params["command"].as_str()), ("engine.execute", Some("doc.list")), "{tool}");
+            }
+            for (_, params) in reads {
                 for key in ["fields", "outline"] {
                     assert_eq!(params.get(key), options.get(key), "{tool}: {params}");
                 }

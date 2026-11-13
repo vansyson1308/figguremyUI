@@ -31,6 +31,21 @@ fn fake_app() -> u16 {
     port
 }
 
+/// The next request on a connection that isn't the question a new connection starts with
+/// (`app.info`). That one is answered as an app from before it answers, so the fakes below go on
+/// speaking one request per connection.
+fn next_request(reader: &mut BufReader<std::net::TcpStream>, out: &mut std::net::TcpStream) -> Value {
+    loop {
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        let request: Value = serde_json::from_str(&line).unwrap();
+        if request["method"] != "app.info" {
+            return request;
+        }
+        writeln!(out, "{}", json!({"id": request["id"], "ok": false, "error": "unknown method `app.info`"})).unwrap();
+    }
+}
+
 fn call(s: &mut Server, tool: &str, args: Value) -> Value {
     let line = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": tool, "arguments": args}}).to_string();
     let r: Value = serde_json::from_str(&s.handle_line(&line).unwrap()).unwrap();
@@ -113,9 +128,7 @@ fn lost_mutation_reply_is_not_replayed_and_next_call_reconnects() {
         for lose_reply in [true, false] {
             let (mut stream, _) = listener.accept().unwrap();
             stream.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
-            let mut line = String::new();
-            BufReader::new(stream.try_clone().unwrap()).read_line(&mut line).unwrap();
-            let request: Value = serde_json::from_str(&line).unwrap();
+            let request = next_request(&mut BufReader::new(stream.try_clone().unwrap()), &mut stream);
             let method = request["method"].as_str().unwrap();
             methods.push(method.to_string());
             let result = h.call(method, request["params"].clone()).unwrap();
@@ -148,9 +161,7 @@ fn a_connection_the_app_closed_while_idle_is_replaced_before_sending() {
         for _ in 0..2 {
             let (mut stream, _) = listener.accept().unwrap();
             stream.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
-            let mut line = String::new();
-            BufReader::new(stream.try_clone().unwrap()).read_line(&mut line).unwrap();
-            let request: Value = serde_json::from_str(&line).unwrap();
+            let request = next_request(&mut BufReader::new(stream.try_clone().unwrap()), &mut stream);
             let method = request["method"].as_str().unwrap();
             methods.push(method.to_string());
             let result = h.call(method, request["params"].clone()).unwrap();
@@ -191,11 +202,109 @@ fn a_tool_call_naming_its_document_edits_that_file_and_not_the_one_in_front() {
     assert_eq!(r["isError"], false, "{r}");
     let list = text(&call(&mut s, "run_command", json!({"command": "doc.list"})));
     assert_eq!((list[0]["id"].clone(), list[0]["active"].clone(), list[1]["active"].clone()), (back.clone(), json!(false), json!(true)));
-    let front = text(&call(&mut s, "inspect_document", json!({"depth": 1})));
+    // A call without `document` stays on the working document (the one first read, then named),
+    // whichever tab is in front; the tab in front is read by naming it.
+    let working = text(&call(&mut s, "inspect_document", json!({"depth": 1})));
+    assert_eq!((working["id"].clone(), working["pages"][0]["children"].as_array().map_or(0, Vec::len)), (back.clone(), 1), "{working}");
+    let front = text(&call(&mut s, "inspect_document", json!({"depth": 1, "document": list[1]["id"]})));
     assert_eq!((front["name"].as_str(), front["pages"][0]["children"].as_array().map_or(0, Vec::len)), (Some("Front"), 0));
     let behind = text(&call(&mut s, "inspect_document", json!({"depth": 1, "document": back})));
     assert_eq!(behind["pages"][0]["children"].as_array().map_or(0, Vec::len), 1, "{behind}");
     let e = call(&mut s, "inspect_document", json!({"document": 999_999}));
     assert_eq!(e["isError"], true);
+    // This fake app gives only the text of an error, as an app from before error codes does: the
+    // server still knows a document that is not open, and lists the ones that are.
+    let error = &e["structuredContent"]["error"];
+    assert_eq!(error["code"], "noDocument", "{e}");
+    assert!(error["message"].as_str().unwrap().contains("no open document 999999") && error["documents"].as_array().unwrap().len() == 2, "{e}");
+    let e = call(&mut s, "run_command", json!({"command": "nope.nope"}));
+    assert_eq!(e["structuredContent"]["error"]["code"], "error", "only the text is known: {e}");
+    assert_eq!(e["structuredContent"]["error"]["message"], "unknown command `nope.nope`");
     assert_eq!(call(&mut s, "pointer", json!({"x": 0, "y": 0, "document": back}))["isError"], true, "pointer takes no `document`");
+}
+
+/// A fake app like [`fake_app`] that also says what its errors are (`errorDetail`) and which run
+/// of the app it is (`app.info`), as the app is meant to. It has `runs` sessions, one per run of
+/// the app: the method `test.restart` (the fake's own) ends the connection and the run, so the
+/// next connection reaches the next session.
+fn fake_app_runs(runs: usize) -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        let mut apps: Vec<Headless> = (0..runs).map(|_| Headless::new()).collect();
+        let mut run = 0;
+        for stream in listener.incoming().flatten() {
+            let mut out = stream.try_clone().unwrap();
+            for line in BufReader::new(stream).lines() {
+                let Ok(line) = line else { break };
+                let v: Value = serde_json::from_str(&line).unwrap_or(Value::Null);
+                let method = v["method"].as_str().unwrap_or("");
+                if method == "test.restart" {
+                    run = (run + 1).min(runs - 1);
+                    let _ = writeln!(out, "{}", json!({"id": v["id"], "ok": true, "result": null}));
+                    break;
+                }
+                let app = &mut apps[run];
+                let reply = match app.call(method, v["params"].clone()) {
+                    Ok(r) => json!({"id": v["id"], "ok": true, "result": r}),
+                    Err(e) => json!({"id": v["id"], "ok": false, "error": e, "errorDetail": app.take_error_detail()}),
+                };
+                if writeln!(out, "{reply}").is_err() {
+                    break;
+                }
+            }
+        }
+    });
+    port
+}
+
+#[test]
+fn an_attached_app_that_says_what_its_errors_are_is_believed() {
+    let mut s = Server::new(Box::new(Attached::port(fake_app_runs(1)).unwrap()));
+    let text = |r: &Value| -> Value { serde_json::from_str(r["content"][0]["text"].as_str().unwrap()).unwrap() };
+    let made = call(&mut s, "create_node", json!({"type": "rectangle", "name": "Card"}));
+    let doc = made["structuredContent"]["document"].clone();
+    assert_eq!((doc["front"].clone(), doc["revision"].clone()), (json!(true), json!(2)), "{made}");
+    let id = text(&made)["id"].clone();
+    let error = |r: Value| r["structuredContent"]["error"].clone();
+    let e = error(call(&mut s, "get_node", json!({"id": 424_242})));
+    assert_eq!((e["code"].clone(), e["node"].clone(), e["document"]["id"].clone()), (json!("noSuchNode"), json!(424_242), doc["id"].clone()), "{e}");
+    let e = error(call(&mut s, "run_command", json!({"command": "nope.nope"})));
+    assert_eq!((e["code"].clone(), e["command"].clone()), (json!("unknownCommand"), json!("nope.nope")), "{e}");
+    let e = error(call(&mut s, "set_properties", json!({"ids": [id], "props": {"x": 4}, "ifRevision": 1})));
+    assert_eq!((e["code"].clone(), e["expected"].clone(), e["actual"].clone()), (json!("conflict"), json!(1), json!(2)), "{e}");
+    assert_eq!(e["since"][0]["author"], "AI agent", "the client gave no name: {e}");
+    // What the app says about itself reaches get_capabilities.
+    let caps = text(&call(&mut s, "get_capabilities", json!({})));
+    assert_eq!((caps["backend"].clone(), caps["window"].clone(), caps["player"].clone()), (json!("attached"), json!(true), json!(true)), "{caps}");
+    assert!(caps["app"]["instance"].is_string(), "{caps}");
+    assert_eq!((caps["features"]["engineErrorCodes"].clone(), caps["features"]["appIdentity"].clone()), (json!(true), json!(true)), "{caps}");
+    assert_eq!(caps["workingDocument"]["id"], doc["id"]);
+}
+
+/// F-08 seen from a client: the app is restarted while the server runs. The ids the server
+/// remembers belong to the run that is gone, so the next call fails, once, says so, and changes
+/// nothing in the new run; after that the server starts over with the tab in front.
+#[test]
+fn a_restarted_app_fails_one_call_and_nothing_lands_in_the_new_run() {
+    let mut s = Server::new(Box::new(Attached::port(fake_app_runs(2)).unwrap()));
+    let text = |r: &Value| -> Value { serde_json::from_str(r["content"][0]["text"].as_str().unwrap()).unwrap() };
+    let made = call(&mut s, "create_node", json!({"type": "rectangle", "name": "Before the restart"}));
+    assert_eq!(made["isError"], false, "{made}");
+    let id = text(&made)["id"].clone();
+    let first_run = text(&call(&mut s, "get_capabilities", json!({})))["app"]["instance"].clone();
+    s.backend().call("test.restart", json!({})).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let r = call(&mut s, "set_properties", json!({"ids": [id], "props": {"name": "After"}}));
+    assert_eq!(r["isError"], true, "{r}");
+    let e = &r["structuredContent"]["error"];
+    assert_eq!((e["code"].clone(), e["restarted"].clone()), (json!("transport"), json!(true)), "{r}");
+    assert!(e["message"].as_str().unwrap().contains("was restarted") && e["message"].as_str().unwrap().contains("stale"), "{r}");
+    // The new run was not touched, and the next call works there.
+    let doc = call(&mut s, "inspect_document", json!({"depth": 1}));
+    assert_eq!(doc["isError"], false, "{doc}");
+    assert_eq!(text(&doc)["pages"][0]["children"].as_array().map_or(0, Vec::len), 0, "{doc}");
+    assert_eq!(doc["structuredContent"]["document"]["revision"], 1);
+    let second_run = text(&call(&mut s, "get_capabilities", json!({})))["app"]["instance"].clone();
+    assert!(second_run.is_string() && second_run != first_run, "{first_run} {second_run}");
 }

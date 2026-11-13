@@ -17,7 +17,7 @@ pub enum ReadError {
 
 pub fn list() -> Value {
     json!({"resources": [
-        {"uri": DOC_URI, "name": "document", "title": "Active document", "description": "The active document as JSON (current page's layer tree, pages, styles, selection, history), like inspect_document.", "mimeType": "application/json"},
+        {"uri": DOC_URI, "name": "document", "title": "Working document", "description": "The working document as JSON (current page's layer tree, pages, styles, selection, history), like inspect_document.", "mimeType": "application/json"},
         {"uri": COMMANDS_URI, "name": "commands", "title": "Command catalog", "description": "Every FigCraft command with label, menu, shortcut and parameter docs.", "mimeType": "application/json"},
         {"uri": COMMENTS_URI, "name": "comments", "title": "Open comments", "description": "Every open comment thread on every page, as JSON (the same objects as comment.list).", "mimeType": "application/json"},
     ]})
@@ -30,19 +30,28 @@ pub fn templates() -> Value {
     ]})
 }
 
-pub fn read(b: &mut dyn Backend, uri: &str) -> Result<Value, ReadError> {
+/// Read resource `uri`. `document`: the working document (its id), which the document, node and
+/// comments resources are read from; without one they are the tab in front's.
+pub fn read(b: &mut dyn Backend, uri: &str, document: Option<&Value>) -> Result<Value, ReadError> {
+    let in_document = |mut params: Value| {
+        if let (Some(d), Some(o)) = (document, params.as_object_mut()) {
+            o.insert("document".into(), d.clone());
+        }
+        params
+    };
     if uri == DOC_URI {
-        return b.call("document.inspect", json!({"depth": 8})).map_err(ReadError::Backend);
+        return b.call("document.inspect", in_document(json!({"depth": 8}))).map_err(ReadError::Backend);
     }
     if uri == COMMANDS_URI {
         return b.call("engine.commands", json!({})).map_err(ReadError::Backend);
     }
     if uri == COMMENTS_URI {
-        return b.call("engine.execute", json!({"command": "comment.list", "params": {"page": "all", "filter": "open"}})).map_err(ReadError::Backend);
+        let list = json!({"command": "comment.list", "params": {"page": "all", "filter": "open"}});
+        return b.call("engine.execute", in_document(list)).map_err(ReadError::Backend);
     }
     if let Some(id) = uri.strip_prefix("figcraft://node/") {
         let Some(id) = figcraft_engine::params::id_of(&Value::String(id.to_string())) else { return Err(ReadError::NotFound(uri.into())) };
-        return match b.call("node.get", json!({"id": id.0, "depth": 2})) {
+        return match b.call("node.get", in_document(json!({"id": id.0, "depth": 2}))) {
             Ok(Value::Null) => Err(ReadError::NotFound(uri.into())),
             Ok(v) => Ok(v),
             Err(e) if e.contains("no such node") => Err(ReadError::NotFound(uri.into())),

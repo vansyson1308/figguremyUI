@@ -23,12 +23,12 @@ mod tools;
 #[cfg(test)]
 mod gradient_tests;
 
-pub use backend::{Attached, Backend, decode_data, page_children};
+pub use backend::{Attached, Backend, decode_data, error_detail, page_children};
 pub use headless::Headless;
 pub use prompts::{PROMPTS, PromptArg, PromptDef};
 pub use resources::{COMMAND_TEMPLATE, COMMANDS_URI, DOC_URI, NODE_TEMPLATE};
 pub use server::{INSTRUCTIONS, PROTOCOL_VERSION, SUPPORTED_VERSIONS, Server};
-pub use tools::{TOOL_NAMES, ToolResult, call_tool, tool_definitions};
+pub use tools::{TOOL_NAMES, ToolResult, ToolState, call_tool, call_tool_in, tool_definitions};
 
 /// Width and height of a PNG from its IHDR chunk.
 pub fn png_size(bytes: &[u8]) -> Option<(u32, u32)> {

@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use crate::backend::Backend;
 use crate::prompts;
 use crate::resources;
-use crate::tools::{call_tool, tool_definitions};
+use crate::tools::{ToolState, call_tool_in, tool_definitions};
 
 /// The MCP revision we implement.
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
@@ -25,10 +25,17 @@ pub const INTERNAL_ERROR: i64 = -32603;
 pub const RESOURCE_NOT_FOUND: i64 = -32002;
 
 /// The longest line we accept (32 MiB); longer lines are rejected without parsing.
-const MAX_LINE: usize = 32 * 1024 * 1024;
+pub(crate) const MAX_LINE: usize = 32 * 1024 * 1024;
 
 /// The `instructions` string sent on initialize.
-pub const INSTRUCTIONS: &str = "FigCraft is an interface design tool: pages hold frames, \
+pub const INSTRUCTIONS: &str = "Call get_capabilities first: it says which backend this is (headless, or attached to the running app), \
+whether there is a window and a prototype player, which features and checks this build really has, and the open documents. \
+Every call without `document` acts on the working document (chosen by open_file, use_document or a call that names `document`; never \
+just the tab in front), and every result names the document it read or changed with its id, name and revision, so check that it is the \
+one you meant. To avoid writing over somebody else's edit, pass the revision you last saw as `ifRevision` on run_command, batch, \
+create_node, set_properties, undo or redo: when the document changed since, nothing is changed and the error (code `conflict`) lists what \
+was done in between. A failed call says what failed in words and, after that, as JSON {error: {code, message, ...}}. \
+FigCraft is an interface design tool: pages hold frames, \
 groups, shapes, text, components and instances, with auto layout, styles, variables and prototyping. \
 Coordinates are page units (1 unit = 1 px at 100% zoom), x right and y DOWN. create_node and set_properties \
 take x/y RELATIVE TO THE PARENT (the page when there is no parent, so page coordinates); inspect_document \
@@ -55,7 +62,13 @@ pub struct Server {
     /// The client's name from `initialize` (`clientInfo.title`, else `.name`; empty until then):
     /// every command runs as this AI agent, so its comments are signed with it, not the user's name.
     agent: String,
+    /// The working document: what calls without `document` act on ([`ToolState`]).
+    tools: ToolState,
 }
+
+/// The control methods that run for the agent: its name goes with them (`agent`), so that what
+/// they change is the agent's step in the undo history and its comments are signed with it.
+const AGENT_METHODS: &[&str] = &["engine.execute", "ui.pointer", "ui.key", "ui.type"];
 
 /// The backend as the MCP client's AI agent: `engine.execute` carries its name (`agent`).
 struct AsAgent<'a> {
@@ -65,7 +78,7 @@ struct AsAgent<'a> {
 
 impl Backend for AsAgent<'_> {
     fn call(&mut self, method: &str, mut params: Value) -> Result<Value, String> {
-        if method == "engine.execute"
+        if AGENT_METHODS.contains(&method)
             && let Some(p) = params.as_object_mut()
         {
             p.insert("agent".into(), json!(self.agent));
@@ -79,6 +92,14 @@ impl Backend for AsAgent<'_> {
 
     fn describe(&self) -> String {
         self.inner.describe()
+    }
+
+    fn take_error_detail(&mut self) -> Option<Value> {
+        self.inner.take_error_detail()
+    }
+
+    fn app_info(&mut self) -> Option<Value> {
+        self.inner.app_info()
     }
 
     fn render_png(&mut self, ids: &[u64], scale: f64) -> Result<Vec<u8>, String> {
@@ -102,6 +123,30 @@ fn error(id: Value, code: i64, message: impl Into<String>) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message.into()}})
 }
 
+/// A request that failed: the JSON-RPC code and message, and for a program what kind of failure
+/// it is (`data`: `{code, message, …}`, as a failed tool call's `structuredContent.error`).
+struct Refusal {
+    code: i64,
+    message: String,
+    data: Option<Value>,
+}
+
+impl From<(i64, String)> for Refusal {
+    fn from((code, message): (i64, String)) -> Self {
+        Self { code, message, data: None }
+    }
+}
+
+impl Refusal {
+    fn to_value(&self, id: Value) -> Value {
+        let mut v = error(id, self.code, self.message.clone());
+        if let Some(data) = &self.data {
+            v["error"]["data"] = data.clone();
+        }
+        v
+    }
+}
+
 /// The name an `initialize` request gives its client (`clientInfo.title`, else `.name`; empty
 /// without one). The engine keeps 64 characters of it; this only bounds what each call carries.
 fn client_name(params: &Value) -> String {
@@ -115,7 +160,7 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 
 impl Server {
     pub fn new(backend: Box<dyn Backend>) -> Self {
-        Self { backend, initialized: false, roots: None, agent: String::new() }
+        Self { backend, initialized: false, roots: None, agent: String::new(), tools: ToolState::default() }
     }
 
     /// Confine the files every request reads and writes to `roots` (see
@@ -216,11 +261,15 @@ impl Server {
         // A bug that panics fails this request only; the server keeps serving.
         let roots = self.roots.clone();
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| confined(roots.as_ref(), || self.request(method, &params)))).unwrap_or_else(
-            |p| Err((INTERNAL_ERROR, format!("internal error in `{method}`: {} (please report this bug)", panic_message(p.as_ref())))),
+            |p| {
+                let message = format!("internal error in `{method}`: {} (please report this bug)", panic_message(p.as_ref()));
+                let data = Some(crate::backend::error_detail("internal", &message));
+                Err(Refusal { code: INTERNAL_ERROR, message, data })
+            },
         );
         Some(match r {
             Ok(r) => response(id, r),
-            Err((code, m)) => error(id, code, m),
+            Err(refusal) => refusal.to_value(id),
         })
     }
 
@@ -244,7 +293,7 @@ impl Server {
         AsAgent { inner: self.backend.as_mut(), agent: &self.agent }
     }
 
-    fn request(&mut self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
+    fn request(&mut self, method: &str, params: &Value) -> Result<Value, Refusal> {
         match method {
             "initialize" => {
                 self.agent = client_name(params);
@@ -267,18 +316,26 @@ impl Server {
                 let name = params.get("name").and_then(Value::as_str).ok_or((INVALID_PARAMS, "missing tool `name` (a string)".to_string()))?;
                 let args = params.get("arguments").cloned().unwrap_or(Value::Null);
                 if !(args.is_object() || args.is_null()) {
-                    return Err((INVALID_PARAMS, "`arguments` must be an object".into()));
+                    return Err((INVALID_PARAMS, "`arguments` must be an object".to_string()).into());
                 }
                 if !crate::tools::TOOL_NAMES.contains(&name) {
-                    return Err((INVALID_PARAMS, format!("unknown tool `{name}`")));
+                    let message = format!("unknown tool `{name}`");
+                    let mut data = crate::backend::error_detail("unknownTool", &message);
+                    data["tool"] = json!(name);
+                    return Err(Refusal { code: INVALID_PARAMS, message, data: Some(data) });
                 }
-                Ok(call_tool(&mut self.as_agent(), name, &args).to_value())
+                // The tools remember the working document between calls; the backend acts as the
+                // client's agent.
+                let mut backend = AsAgent { inner: self.backend.as_mut(), agent: &self.agent };
+                Ok(call_tool_in(&mut self.tools, &mut backend, name, &args).to_value())
             }
             "resources/list" => Ok(resources::list()),
             "resources/templates/list" => Ok(resources::templates()),
             "resources/read" => {
                 let uri = params.get("uri").and_then(Value::as_str).ok_or((INVALID_PARAMS, "missing `uri` (a string)".to_string()))?;
-                let v = resources::read(&mut self.as_agent(), uri).map_err(|e| match e {
+                // The document resources are the working document's, as the tools' results are.
+                let document = self.tools.document();
+                let v = resources::read(&mut self.as_agent(), uri, document.as_ref()).map_err(|e| match e {
                     resources::ReadError::NotFound(uri) => (RESOURCE_NOT_FOUND, format!("resource not found: {uri}")),
                     resources::ReadError::Backend(why) => (INTERNAL_ERROR, why),
                 })?;
@@ -288,10 +345,10 @@ impl Server {
             "prompts/get" => {
                 let name = params.get("name").and_then(Value::as_str).ok_or((INVALID_PARAMS, "missing prompt `name` (a string)".to_string()))?;
                 let args = params.get("arguments").cloned().unwrap_or(Value::Null);
-                prompts::get(name, &args).map_err(|e| (INVALID_PARAMS, e))
+                Ok(prompts::get(name, &args).map_err(|e| (INVALID_PARAMS, e))?)
             }
             "logging/setLevel" => Ok(json!({})),
-            other => Err((METHOD_NOT_FOUND, format!("method not found: {other}"))),
+            other => Err((METHOD_NOT_FOUND, format!("method not found: {other}")).into()),
         }
     }
 }
