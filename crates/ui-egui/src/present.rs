@@ -476,3 +476,6 @@ mod tests;
 
 #[cfg(test)]
 mod press_click_tests;
+
+#[cfg(test)]
+mod sim_parity_tests;
