@@ -310,23 +310,27 @@ fn rotation_of(v: &Value) -> Option<DeviceRotation> {
     }
 }
 
-/// Ask the UI to present (full screen or in the preview pane) from `start`, else the selected
-/// top-level frame, the page's first flow or its first frame.
+/// Where a prototype starts when no frame is named: the selected layer's top-level frame, else
+/// the page's first flow, else its first frame.
+pub(crate) fn default_start(ds: &crate::DocState) -> Option<NodeId> {
+    ds.selection
+        .first()
+        .and_then(|i| ds.doc.top_level_frame(*i))
+        .or_else(|| match &ds.doc.node(ds.page)?.kind {
+            NodeKind::Page { flows, .. } => flows.first().map(|f| f.start),
+            _ => None,
+        })
+        .or_else(|| ds.doc.top_frames(ds.page).first().copied())
+}
+
+/// Ask the UI to present (full screen or in the preview pane) from `start`, else from
+/// [`default_start`].
 fn open_player(s: &mut Session, p: &Value, cmd: &str, ui: &str) -> Result<Value> {
     let ds = s.ds()?;
     let start = match id(p, "start") {
         // A layer inside a frame presents its top-level frame.
         Some(f) => ds.doc.top_level_frame(f).ok_or_else(|| bad(cmd, "`start` isn't a frame or inside one"))?,
-        None => ds
-            .selection
-            .first()
-            .and_then(|i| ds.doc.top_level_frame(*i))
-            .or_else(|| match &ds.doc.node(ds.page)?.kind {
-                NodeKind::Page { flows, .. } => flows.first().map(|f| f.start),
-                _ => None,
-            })
-            .or_else(|| ds.doc.top_frames(ds.page).first().copied())
-            .ok_or_else(|| bad(cmd, "no frame to present"))?,
+        None => default_start(ds).ok_or_else(|| bad(cmd, "no frame to present"))?,
     };
     s.request_ui(ui, json!({"start": start}));
     Ok(json!({"start": start}))

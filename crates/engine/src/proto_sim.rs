@@ -57,6 +57,7 @@ pub(crate) mod tests;
 
 pub use render::{render, render_png};
 pub use state::{OverlayInfo, State, VariantInfo};
+pub(crate) use steps::gesture_name;
 pub use vars::find_variable;
 
 /// The most "after delay" interactions one [`StepAction::Wait`] follows before it reports a loop.
