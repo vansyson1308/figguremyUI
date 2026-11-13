@@ -379,6 +379,38 @@ impl Variables {
         self.get_by_id(key).or_else(|| self.variables.iter().find(|v| v.name == key))
     }
 
+    /// The variable a command's caller names, the one way every command reads it: its id, else
+    /// `Collection/name` (as the prototype simulator reports variables), else its name when only
+    /// one variable has it. Whole names are compared: collection and variable names may hold `/`.
+    /// The error says which of these failed (none, or several by that name).
+    pub fn find(&self, key: &str) -> Result<&Variable, String> {
+        if let Some(v) = self.get_by_id(key) {
+            return Ok(v);
+        }
+        let qualified = |v: &Variable| {
+            self.collection_by_id(&v.collection).is_some_and(|c| {
+                c.name.len() + 1 + v.name.len() == key.len()
+                    && key.starts_with(c.name.as_str())
+                    && key[c.name.len()..].starts_with('/')
+                    && key.ends_with(v.name.as_str())
+            })
+        };
+        let found: Vec<&Variable> = self.variables.iter().filter(|v| v.name == key || qualified(v)).collect();
+        match found.as_slice() {
+            [one] => Ok(one),
+            [] => Err(format!("no such variable `{key}` (name it by its id, `Collection/name` or a name only one variable has)")),
+            more => {
+                let mut names: Vec<String> = more
+                    .iter()
+                    .map(|v| format!("{}/{}", self.collection_by_id(&v.collection).map_or(v.collection.as_str(), |c| c.name.as_str()), v.name))
+                    .collect();
+                names.sort();
+                names.dedup();
+                Err(format!("ambiguous variable `{key}`: {} (name one as `Collection/name`, or by its id)", names.join(", ")))
+            }
+        }
+    }
+
     /// Look up an already resolved variable id (a stored binding or alias): exact ids only, so a
     /// variable named like an id never stands in for it.
     pub fn get_by_id(&self, id: &str) -> Option<&Variable> {

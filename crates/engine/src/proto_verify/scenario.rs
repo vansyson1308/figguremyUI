@@ -169,6 +169,7 @@ pub(super) fn run_stored(s: &mut Session, p: &Value) -> Result<Value> {
         "passed": failed == 0,
         "simulated": true,
         "notModelled": super::run::NOT_MODELLED,
+        "knownDifferences": super::run::known_differences(),
         "total": results.len(),
         "failed": failed,
         "results": results,

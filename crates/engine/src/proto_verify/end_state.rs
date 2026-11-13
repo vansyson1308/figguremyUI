@@ -60,10 +60,13 @@ fn own_proposal(cmd: &str, me: Option<&str>, e: &EndState, doing: &str, at: &str
 pub(super) fn set(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "proto.endState.set";
     let id = req_id(cmd, p, "id")?;
-    let on = match get(p, "on") {
-        Some(v) => bool_of(v).ok_or_else(|| bad(cmd, format!("`on` must be true or false (got {})", figcraft_format::clip(&v.to_string(), 40))))?,
-        None => true,
+    let said_on = match get(p, "on") {
+        Some(v) => {
+            Some(bool_of(v).ok_or_else(|| bad(cmd, format!("`on` must be true or false (got {})", figcraft_format::clip(&v.to_string(), 40))))?)
+        }
+        None => None,
     };
+    let on = said_on.unwrap_or(true);
     let reason = get(p, "reason").map(|v| parse::text(cmd, v, "reason").map(|r| r.trim().to_string())).transpose()?;
     let me = agent(s).map(str::to_string);
     let doc = s.doc()?;
@@ -96,8 +99,11 @@ pub(super) fn set(s: &mut Session, p: &Value) -> Result<Value> {
                     (_, Some(r)) => e.reason.clone_from(r),
                     (_, None) => {}
                 }
-                // A person declaring what an agent proposed stands behind it.
-                if me.is_none() {
+                // A person who declares what an agent proposed (`on: true` said, or the frame named
+                // alone) stands behind it; a call that only gives a new reason edits the proposal
+                // and leaves it one (proto.endState.accept accepts it).
+                let reworded = reason.is_some() && said_on.is_none();
+                if me.is_none() && !reworded {
                     e.status = EndStateStatus::Accepted;
                 }
             }

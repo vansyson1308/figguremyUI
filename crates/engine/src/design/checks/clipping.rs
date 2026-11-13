@@ -17,6 +17,32 @@ use crate::check::Found;
 
 pub(super) const TEXT: &str = "text.clipped";
 pub(super) const CONTENT: &str = "layout.clippedContent";
+pub(super) const NO_FONT: &str = "text.noFont";
+
+/// `text.noFont`: text that has no font to be laid out with. Its size, whether it fits and its
+/// contrast can't be measured, so the checks that read them are blind to it (review X-01).
+pub(super) fn no_font(doc: &Document, scope: &[NodeId]) -> Vec<Found> {
+    shown_layers(doc, scope)
+        .into_iter()
+        .filter(|id| {
+            doc.node(*id).is_some_and(|n| matches!(&n.kind, NodeKind::Text(t) if !t.characters.trim().is_empty() && !crate::fonts::lays_out(t)))
+        })
+        .map(|id| Found {
+            rule: NO_FONT,
+            severity: Severity::Note,
+            nodes: vec![id],
+            subject: String::new(),
+            message: format!(
+                "Text {} has no font to be laid out with: it draws nothing here, and its size, fit and contrast weren't measured",
+                named(doc, id)
+            ),
+            evidence: "no font in this session gives a face for its family or the fallback one".into(),
+            suggestion:
+                "run with fonts (the craft-fonts build input, or system fonts) and check again; text.missingFonts lists the families the file names"
+                    .into(),
+        })
+        .collect()
+}
 
 /// Differences up to this many px are rounding, not clipping.
 const SLACK: f64 = 0.5;
@@ -93,6 +119,11 @@ pub(super) fn text(doc: &Document, scope: &[NodeId]) -> Vec<Found> {
     let mut out = Vec::new();
     for id in shown_layers(doc, scope) {
         let Some(n) = doc.node(id).filter(|n| matches!(n.kind, NodeKind::Text(_))) else { continue };
+        // Without a font the text isn't laid out: whether it fits is unknown (`text.noFont` says
+        // so), never a pass and never a cut.
+        if matches!(&n.kind, NodeKind::Text(t) if !crate::fonts::lays_out(t)) {
+            continue;
+        }
         let too_big =
             overflow(n).map(|(need, have)| format!("the text needs {}×{} px, its box is {}×{} px", px(need.0), px(need.1), px(have.0), px(have.1)));
         let clipped = cut(doc, id);

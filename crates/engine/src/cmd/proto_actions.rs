@@ -195,7 +195,7 @@ fn canonical_inputs(cmd: &str, vars: &Variables, v: &mut Value, depth: usize) ->
 fn canonical_action_names(vars: &Variables, o: &mut serde_json::Map<String, Value>) {
     match o.get("type").and_then(Value::as_str) {
         Some("setVariable") => {
-            if let Some(v) = o.get("variable").and_then(Value::as_str).and_then(|n| vars.get(n)) {
+            if let Some(v) = o.get("variable").and_then(Value::as_str).and_then(|n| vars.find(n).ok()) {
                 o.insert("variable".into(), json!(v.id));
             }
         }

@@ -235,3 +235,59 @@ fn fonts_load_from_files_and_rescans_report_new_families() {
     let r = s.execute("text.rescanFonts", &json!({})).unwrap();
     assert!(r["added"].is_array());
 }
+
+/// Review X-01: in a session with no fonts at all, text is laid out 1 px wide and draws nothing.
+/// The checks that measure text say they couldn't, instead of passing it: `contrast.text` becomes
+/// `contrast.unmeasured` ("no font to lay it out with"), `text.clipped` leaves it to `text.noFont`
+/// (which runs from the first stage), and `design.check` warns once.
+#[test]
+fn without_any_font_the_text_checks_say_they_are_blind() {
+    let mut s = Session::new();
+    let frame = id_of(&s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 300, "height": 200, "name": "Screen"})).unwrap()["id"]).unwrap();
+    // Light grey on white (fails contrast), in a fixed box far too small (clipped).
+    let t = id_of(
+        &s.execute(
+            "text.create",
+            &json!({"text": "Far too much text for this box", "x": 10, "y": 10, "parent": frame, "props": {"fill": "#DDDDDD", "fontSize": 16}}),
+        )
+        .unwrap()["id"],
+    )
+    .unwrap();
+    s.execute("node.set", &json!({"ids": [t], "props": {"textAutoResize": "none", "width": 20, "height": 8}})).unwrap();
+    let rules = json!({"rules": ["contrast.text", "contrast.unmeasured", "text.clipped", "text.noFont"]});
+    let with_fonts = s.execute("design.check", &rules).unwrap();
+    let ids = |v: &Value| v["findings"].as_array().unwrap().iter().map(|f| f["rule"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+    assert!(ids(&with_fonts).contains(&"contrast.text".to_string()) && ids(&with_fonts).contains(&"text.clipped".to_string()), "{with_fonts}");
+    assert_eq!(with_fonts["warnings"], json!([]));
+    crate::fonts::WITHOUT_FONTS.with(|w| w.set(true));
+    let blind = s.execute("design.check", &rules).unwrap();
+    let stage_run = s.execute("design.check", &json!({})).unwrap();
+    crate::fonts::WITHOUT_FONTS.with(|w| w.set(false));
+    let found = ids(&blind);
+    assert!(
+        !found.contains(&"contrast.text".to_string()) && !found.contains(&"text.clipped".to_string()),
+        "nothing measured passes or fails: {blind}"
+    );
+    let unmeasured = blind["findings"].as_array().unwrap().iter().find(|f| f["rule"] == "contrast.unmeasured").unwrap();
+    assert_eq!(unmeasured["evidence"], "no font to lay it out with");
+    assert!(found.contains(&"text.noFont".to_string()), "{blind}");
+    let warnings = blind["warnings"].as_array().unwrap();
+    assert!(warnings.len() == 1 && warnings[0].as_str().unwrap().contains("no fonts at all"), "{blind}");
+    // At the first stage (exploring) the blind spot is reported too.
+    assert_eq!(stage_run["stage"], "exploring");
+    assert!(ids(&stage_run).contains(&"text.noFont".to_string()), "{stage_run}");
+}
+
+/// Review R2 (suspicion): fitting text to fonts when no box changes is no edit: no undo step, no
+/// new revision (the document was taken for writing, which copied it).
+#[test]
+fn refitting_nothing_is_no_edit() {
+    let mut s = Session::new();
+    s.execute("text.create", &json!({"text": "Hamburgefonstiv", "x": 0, "y": 0})).unwrap();
+    s.execute("text.refit", &json!({})).unwrap();
+    let (rev, depth) = (s.ds().unwrap().doc_revision(), s.undo_depth().0);
+    for cmd in ["text.refit", "text.rescanFonts"] {
+        s.execute(cmd, &json!({})).unwrap();
+        assert_eq!((s.ds().unwrap().doc_revision(), s.undo_depth().0), (rev, depth), "{cmd}");
+    }
+}

@@ -30,7 +30,7 @@ pub fn rules() -> Vec<Rule> {
         },
         Rule {
             id: contrast::UNMEASURED,
-            about: "Text whose contrast (WCAG 2.2 SC 1.4.3) could not be measured with certainty: a gradient, image or pattern fill, a blend mode, a mask or another layer overlapping it is in the way, or the text is drawn by a stroke alone. Reported so it isn't taken as passing; check it by eye.",
+            about: "Text whose contrast (WCAG 2.2 SC 1.4.3) could not be measured with certainty: a gradient, image or pattern fill, a blend mode, a mask or another layer overlapping it is in the way, the text is drawn by a stroke alone, or there is no font to lay it out with. Reported so it isn't taken as passing; check it by eye.",
             run: |f, scope| contrast::unmeasured(f.doc, &scope.roots(f.doc)),
             unsettled: None,
         },
@@ -38,6 +38,12 @@ pub fn rules() -> Vec<Rule> {
             id: clipping::TEXT,
             about: "Text that doesn't fit: a fixed-size text box whose laid-out text is taller or wider than the box (boxes set to truncate are left alone), or a text layer cut by a frame around it that clips its content and doesn't scroll that way. A fact about the file, not a threshold from a standard: any cut counts, with 0.5 px allowed for rounding.",
             run: |f, scope| clipping::text(f.doc, &scope.roots(f.doc)),
+            unsettled: None,
+        },
+        Rule {
+            id: clipping::NO_FONT,
+            about: "Text with no font to be laid out with (a build without fonts, run without system fonts): it draws nothing, and text.clipped and contrast.text can't measure it, so it is reported instead of passing. Runs at every stage, because it means the checks themselves are blind. A family that is only missing (drawn in the fallback font) is not this; text.missingFonts lists those.",
+            run: |f, scope| clipping::no_font(f.doc, &scope.roots(f.doc)),
             unsettled: None,
         },
         Rule {
@@ -91,7 +97,7 @@ fn external_rules() -> Vec<Rule> {
 /// doesn't know (another module's) runs from `converging`.
 pub fn min_stage(rule_id: &str) -> Stage {
     match rule_id {
-        "flow.brokenTarget" | context::MISSING_LINK => Stage::Exploring,
+        "flow.brokenTarget" | context::MISSING_LINK | clipping::NO_FONT => Stage::Exploring,
         context::BRIEF_INCOMPLETE | context::UNTESTED_ASSUMPTION | context::STALE_DECISION | "scenario.none" | "scenario.unvisited" => Stage::Ready,
         _ => Stage::Converging,
     }

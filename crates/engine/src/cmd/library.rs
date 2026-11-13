@@ -242,7 +242,7 @@ fn alias(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "library.aliasVariable";
     let own = req_string(cmd, p, "variable")?;
     let doc = s.doc()?;
-    let kind = doc.variables.get(&own).filter(|v| !is_remote_variable(doc, &v.id)).map(|v| v.kind);
+    let kind = doc.variables.find(&own).ok().filter(|v| !is_remote_variable(doc, &v.id)).map(|v| v.kind);
     let kind = kind.ok_or_else(|| bad(cmd, format!("no local variable `{own}`")))?;
     let (lib, key) = variable_arg(s, cmd, p, "alias")?;
     if lib.doc.variables.get_by_id(&key).is_some_and(|v| v.kind != kind) {

@@ -25,6 +25,7 @@ mod end_state;
 mod flow;
 mod parse;
 mod run;
+pub use run::{KNOWN_DIFFERENCES, NOT_MODELLED};
 mod scenario;
 
 #[cfg(test)]
@@ -58,7 +59,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "proto.endState.set",
             "Mark as end of flow",
-            "{id (a top-level frame), reason? (why the flow may end here; required from an AI agent), on? (default true; false takes the declaration back)}  declares a frame where a flow may end on purpose, so flow.deadEnd doesn't report it. The user's declaration stands at once (and accepts an AI agent's proposal for the frame). An AI agent's is a proposal: the frame stays a dead end until a person accepts it (proto.endState.accept); an agent changes and takes back only its own proposals → {id, endState (declared and accepted), status: proposed|accepted|null, author, reason, note? (when proposed)}",
+            "{id (a top-level frame), reason? (why the flow may end here; required from an AI agent), on? (default true; false takes the declaration back)}  declares a frame where a flow may end on purpose, so flow.deadEnd doesn't report it. The user's declaration stands at once; on a frame an AI agent proposed, the user's call with `on: true` or with the frame alone accepts the proposal, while one that only gives a new `reason` leaves it proposed. An AI agent's is a proposal: the frame stays a dead end until a person accepts it (proto.endState.accept); an agent changes and takes back only its own proposals → {id, endState (declared and accepted), status: proposed|accepted|null, author, reason, note? (when proposed)}",
             true,
             end_state::set
         ),
@@ -84,7 +85,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 steps_doc!(),
                 ", expect? ",
                 expect_doc!(),
-                " (checked after the last step), stopOnFailure? (default true: stop at the first step that fails)}  plays the steps headless on a copy of the file, which never changes. The result is the simulator's: it follows the player's rules for what state comes next, and nobody watched the player do it → {passed, simulated: true, notModelled: [what the simulator leaves out], start, state: {screen, screenName, overlays: [{id, name}], history, variables (those the run changed), modes, variants: [{instance, component, name}], endState}, steps: [{index, action, note?, fired, effects, problem?, failures, state: {screen, screenName, overlays}}], failures (of the final expect), failedStep?, stepsTaken}. A step fails when it can't run (the layer isn't on what shows: the top overlay if one is open, else the screen), when a gesture or key sets nothing off, when an action can't run, or when its expect doesn't hold. A gesture reaches the first interaction with its trigger on the layer or a layer around it; hover and press last until the next step; wait fires every pending after-delay; scrolling, timing, devices and the player's own keys aren't simulated"
+                " (checked after the last step), stopOnFailure? (default true: stop at the first step that fails)}  plays the steps headless on a copy of the file, which never changes. The result is the simulator's: it follows the player's rules for what state comes next, and nobody watched the player do it → {passed, simulated: true, notModelled: [what the simulator leaves out], knownDifferences: [where the simulator and the app's player still differ], start, state: {screen, screenName, overlays: [{id, name}], history, variables (those the run changed), modes, variants: [{instance, component, name}], endState}, steps: [{index, action, note?, fired, effects, problem?, failures, state: {screen, screenName, overlays}}], failures (of the final expect), failedStep?, stepsTaken}. A step fails when it can't run (the layer isn't on what shows: the top overlay if one is open, else the screen), when a gesture or key sets nothing off, when an action can't run, or when its expect doesn't hold. A gesture reaches the first interaction with its trigger on the layer or a layer around it; hover and press last until the next step; wait fires every pending after-delay; scrolling, timing, devices and the player's own keys aren't simulated"
             ),
             false,
             simulate
@@ -126,7 +127,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "proto.scenario.run",
             "Run scenarios",
-            "{id? (a scenario id: S1; default: every stored scenario)}  runs them headless on a copy of the file, each stopping at its first failing step; simulated, as proto.simulate → {passed (no scenario failed), simulated: true, notModelled: [what the simulator leaves out], total, failed, results: [{id, name, passed, failedStep? (index), failures (of that step, else of the final expect), steps (as proto.simulate), stepsTaken}]}",
+            "{id? (a scenario id: S1; default: every stored scenario)}  runs them headless on a copy of the file, each stopping at its first failing step; simulated, as proto.simulate → {passed (no scenario failed), simulated: true, notModelled: [what the simulator leaves out], knownDifferences: [where it and the player still differ], total, failed, results: [{id, name, passed, failedStep? (index), failures (of that step, else of the final expect), steps (as proto.simulate), stepsTaken}]}",
             false,
             scenario::run_stored
         ),
@@ -160,6 +161,7 @@ fn simulate(s: &mut Session, p: &Value) -> Result<Value> {
         "passed": r.passed,
         "simulated": true,
         "notModelled": run::NOT_MODELLED,
+        "knownDifferences": run::known_differences(),
         "start": start,
         "state": r.state,
         "steps": run::steps_json(&steps, &r),

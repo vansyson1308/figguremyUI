@@ -45,7 +45,7 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![spec!(
         CMD,
         "Picture of a prototype state",
-        "{start? (a top-level frame id; default as proto.simulate: the selected frame, else the first flow, else the first frame), steps? [the steps proto.simulate takes: {type: gesture, node, gesture?} | {type: key, key} | {type: wait} | {type: clickOutside} | {type: setVariable, variable, value}, the shorthand {click: <layer id>} (any gesture's name) or {key: \"Enter\"}; a step's expect and note are accepted and not looked at; default: none, the start screen as it opens], scale? (pixels per page unit, 0.1 to 4; default 1; lowered so that the larger side is at most 4096 pixels), path? (write the PNG there instead of returning it)}  plays the steps headless on a copy of the file, which never changes, and draws the state they lead to: the screen with the open overlays over it where the player puts them, each over its dimming colour. Every step runs, also after one that set nothing off. The picture is the screen's own box: no device, nothing scrolled, no animation in progress → {format: png, width, height, scale (the one used), start, state (as proto.simulate), steps: [{index, action, fired, effects, problem?, state: {screen, screenName, overlays}}], stepsTaken, simulated: true, data (base64) | path + bytes}",
+        "{start? (a top-level frame id; default as proto.simulate: the selected frame, else the first flow, else the first frame), steps? [the steps proto.simulate takes: {type: gesture, node, gesture?} | {type: key, key} | {type: wait} | {type: clickOutside} | {type: setVariable, variable, value}, the shorthand {click: <layer id>} (any gesture's name) or {key: \"Enter\"}; a step's expect and note are accepted and not looked at; default: none, the start screen as it opens], scale? (pixels per page unit, 0.1 to 4; default 1; lowered so that the larger side is at most 4096 pixels), path? (write the PNG there instead of returning it)}  plays the steps headless on a copy of the file, which never changes, and draws the state they lead to: the screen with the open overlays over it where the player puts them, each over its dimming colour. Every step runs, also after one that set nothing off. The picture is the screen's own box: no device, nothing scrolled, no animation in progress → {format: png, width, height, scale (the one used), start, state (as proto.simulate), steps: [{index, action, fired, effects, problem?, state: {screen, screenName, overlays}}], stepsTaken, simulated: true, notModelled, knownDifferences (as proto.simulate), data (base64) | path + bytes}",
         false,
         snapshot
     )]
@@ -207,6 +207,8 @@ fn snapshot(s: &mut Session, p: &Value) -> Result<Value> {
         "steps": reports,
         "stepsTaken": steps.len(),
         "simulated": true,
+        "notModelled": crate::proto_verify::NOT_MODELLED,
+        "knownDifferences": crate::proto_verify::KNOWN_DIFFERENCES.iter().map(|(_, says)| *says).collect::<Vec<_>>(),
     });
     let Some(o) = out.as_object_mut() else { return Ok(out) };
     match path {

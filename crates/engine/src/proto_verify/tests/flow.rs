@@ -265,6 +265,44 @@ fn change_to_is_broken_only_where_the_player_would_change_nothing() {
     assert!(why.len() == 1 && why[0].contains("isn't a component"), "{why:?}");
 }
 
+/// Review X-02: a change-to on an instance whose variant property is bound to a variable that
+/// names another variant is undone as the player applies bindings again: reported, with how to
+/// fix it. Not when the same interaction sets the variable, nor when nothing is bound.
+#[test]
+fn a_change_to_a_binding_puts_back_is_reported() {
+    let mut s = Session::new();
+    let (a, b) = (frame(&mut s, "A", 0.0), frame(&mut s, "B", 400.0));
+    let (set, [_off, on]) = toggle(&mut s, b);
+    let instance = idv(&ex(&mut s, "instance.create", json!({"component": set, "x": 20, "y": 20, "parent": a})));
+    flow(&mut s, a);
+    assert!(problems(&check(&mut s), "flow.brokenTarget").is_empty());
+    ex(&mut s, "variable.createCollection", json!({"name": "Form"}));
+    let var = ex(&mut s, "variable.create", json!({"collection": "Form", "name": "toggle", "type": "string", "value": "Off"}))["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    ex(&mut s, "variable.bind", json!({"ids": [instance], "field": "componentProperties/State", "variable": "Form/toggle"}));
+    let v = check(&mut s);
+    let found = problems(&v, "flow.brokenTarget");
+    assert_eq!(found.len(), 1, "{v}");
+    let p = &found[0];
+    let evidence = p["evidence"].as_str().unwrap();
+    assert!(
+        evidence.contains("`State` of instance") && evidence.contains("bound to variable `toggle`") && evidence.contains("\"Off\""),
+        "{evidence}"
+    );
+    assert!(p["suggestion"].as_str().unwrap().contains("setVariable"), "{p}");
+    // The same interaction setting the variable keeps the binding in step: nothing to report.
+    let doc = s.doc().unwrap().clone();
+    let with_set = vec![Action::SetVariable { variable: var.clone(), value: json!("On"), expr: None }, Action::ChangeTo { dest: on }];
+    assert!(broken(&doc, instance, with_set).is_empty());
+    // A variable that names the variant changed to, or no variant at all, puts nothing back.
+    for value in ["On", "Sideways"] {
+        ex(&mut s, "variable.set", json!({"variable": var, "value": value}));
+        assert!(problems(&check(&mut s), "flow.brokenTarget").is_empty(), "{value}");
+    }
+}
+
 #[test]
 fn what_an_instance_can_be_changed_to_counts_as_what_the_screen_can_do() {
     let mut s = Session::new();

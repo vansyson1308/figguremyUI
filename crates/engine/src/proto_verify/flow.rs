@@ -454,6 +454,40 @@ fn broken(doc: &Document, node: NodeId, a: &Action) -> Option<String> {
     }
 }
 
+/// Why "change to" `dest` on `node`, in an interaction whose actions are `actions`, shows nothing
+/// for long: the instance it changes has the variant property that tells `dest` from what it shows
+/// bound to a string variable that names another value, and the player applies bindings again
+/// as the change settles, which puts that variant back (review X-02). Not when the same
+/// interaction sets that variable (the binding then follows the change), nor when the variable's
+/// value names no variant (a binding like that changes nothing).
+fn bound_back(doc: &Document, node: NodeId, dest: NodeId, actions: &[Action]) -> Option<String> {
+    let inst = proto_run::change_to_target(doc, node, dest)?;
+    let n = doc.node(inst)?;
+    let set = crate::components::variant_set(doc, dest)?;
+    let wanted = doc.node(dest).map(|d| crate::components::variant_props(&d.name))?;
+    let options = crate::components::variant_options(doc, set);
+    let modes = doc.modes_for(inst);
+    let sets_it = |var: &str| walk(actions).any(|a| matches!(a, Action::SetVariable { variable, .. } if variable == var));
+    for (key, var) in &n.bound {
+        let Some(prop) = key.strip_prefix(crate::components::PROP_BINDING) else { continue };
+        let (Some(want), Some((_, values))) = (wanted.get(prop), options.iter().find(|(o, _)| o == prop)) else { continue };
+        if sets_it(var) {
+            continue;
+        }
+        let Some(figcraft_doc::VariableValue::String(held)) = doc.variables.resolve(var, &modes) else { continue };
+        if held != *want && values.contains(&held) {
+            let name = doc.variables.get_by_id(var).map_or(var.as_str(), |v| v.name.as_str());
+            let held = figcraft_format::clip(&held, 60);
+            return Some(format!(
+                "`{prop}` of instance {} is bound to variable `{name}`, which holds \"{held}\" here: the player puts the instance back to {prop}={held} as soon as it changes, so it never shows {}",
+                label(doc, inst),
+                label(doc, dest)
+            ));
+        }
+    }
+    None
+}
+
 /// The first of `ids` that names no variable.
 fn unknown_variable<'a>(doc: &Document, ids: Vec<&'a str>) -> Option<&'a str> {
     ids.into_iter().find(|id| doc.variables.get_by_id(id).is_none())
@@ -508,6 +542,8 @@ struct Broken {
     led_by: Option<NodeId>,
     message: String,
     evidence: String,
+    /// It can't work because a binding puts the variant back ([`bound_back`]).
+    unbind: bool,
 }
 
 /// `flow.brokenTarget` on `page`: the actions of every layer on it (as the player has them, so
@@ -535,7 +571,11 @@ fn broken_targets(doc: &Document, page: NodeId) -> Vec<Found> {
                     {
                         roots.push_back((*dest, led_by.or(Some(id))));
                     }
-                    let Some(why) = broken(doc, id, a) else { continue };
+                    let bound = match a {
+                        Action::ChangeTo { dest } => bound_back(doc, id, *dest, &it.actions),
+                        _ => None,
+                    };
+                    let Some(why) = broken(doc, id, a).or_else(|| bound.clone()) else { continue };
                     let (owner, index) = origin(doc, id, k);
                     let subject = format!("action:{owner}:{index}:{at}");
                     let player = (owner != id).then_some(id);
@@ -552,6 +592,7 @@ fn broken_targets(doc: &Document, page: NodeId) -> Vec<Found> {
                                     led_by,
                                     message: format!("{} on {} can't work: {why}", a.label(), label(doc, owner)),
                                     evidence: format!("{}, {} → {}: {why}", label(doc, owner), it.trigger.label(), a.label()),
+                                    unbind: bound.is_some(),
                                 },
                             );
                         }
@@ -576,7 +617,11 @@ fn broken_targets(doc: &Document, page: NodeId) -> Vec<Found> {
                 subject,
                 message: b.message,
                 evidence: format!("{}{through}", b.evidence),
-                suggestion: "Point the action at something that exists (proto.interaction.set), or remove it (proto.interaction.remove).".into(),
+                suggestion: if b.unbind {
+                    "Set the variable instead of changing the variant (a setVariable action in the same interaction), or unbind the property (variable.bind with variable null).".into()
+                } else {
+                    "Point the action at something that exists (proto.interaction.set), or remove it (proto.interaction.remove).".into()
+                },
             })
         })
         .collect()

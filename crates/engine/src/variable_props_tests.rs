@@ -61,8 +61,11 @@ fn ambiguous_and_unknown_variable_names_are_errors_but_ids_still_work() {
     assert_bound(&s, id, "fill", &vid);
     let e = s.execute("node.set", &json!({"id": id, "props": {"fill": {"$var": "missing/surface"}}})).unwrap_err().to_string();
     assert!(e.contains("no such variable `missing/surface`"), "{e}");
-    // The existing command still uses the first match, not the new strict resolver.
-    run(&mut s, "variable.bind", json!({"id": id, "field": "fill", "variable": "palette/surface"}));
+    // Every command that takes a variable reads it the same way (review X-03): an ambiguous
+    // name is refused by `variable.bind` too, and `Collection/name` says which.
+    let e = s.execute("variable.bind", &json!({"id": id, "field": "fill", "variable": "palette/surface"})).unwrap_err().to_string();
+    assert!(e.contains("ambiguous variable `palette/surface`"), "{e}");
+    run(&mut s, "variable.bind", json!({"id": id, "field": "fill", "variable": "Theme/palette/surface"}));
     assert_bound(&s, id, "fill", &vid);
 }
 
@@ -77,12 +80,27 @@ fn variable_ids_choose_between_variables_with_the_same_name() {
     let id = create(&mut s, json!({"fill": {"$var": second}}));
     assert_eq!(s.doc().unwrap().node(id).unwrap().bound.get("fill"), Some(&second));
     assert_eq!(color(&s, id, "fill").to_hex(), "FF0000");
-    // `variable.bind` deliberately keeps its first id-or-name match.
-    run(&mut s, "variable.bind", json!({"id": id, "field": "fill", "variable": "palette/surface"}));
+    // `variable.bind` reads it as every command does: `Collection/name` chooses.
+    run(&mut s, "variable.bind", json!({"id": id, "field": "fill", "variable": "Theme/palette/surface"}));
     assert_bound(&s, id, "fill", &first);
     run(&mut s, "node.set", json!({"id": id, "props": {"fill": {"$var": second}}}));
     assert_eq!(s.doc().unwrap().node(id).unwrap().bound.get("fill"), Some(&second));
     assert_eq!(color(&s, id, "fill").to_hex(), "FF0000");
+}
+
+/// Review X-03: `variable.set`, `variable.update` and the other commands that take a variable
+/// accept `Collection/name`, as the simulator reports variables, and a name only one has.
+#[test]
+fn every_command_takes_a_variable_by_id_collection_and_name_or_unique_name() {
+    let (mut s, vid) = setup();
+    run(&mut s, "variable.set", json!({"variable": "Theme/palette/surface", "value": "#00FF00"}));
+    run(&mut s, "variable.set", json!({"variable": "palette/surface", "value": "#00FF00"}));
+    run(&mut s, "variable.set", json!({"variable": vid, "value": "#00FF00"}));
+    run(&mut s, "variable.update", json!({"variable": "Theme/palette/surface", "description": "Cards"}));
+    let copy = run(&mut s, "variable.duplicate", json!({"variable": "Theme/palette/surface"}));
+    assert!(copy.is_object(), "{copy}");
+    let e = s.execute("variable.set", &json!({"variable": "Nope/palette/surface", "value": "#00FF00"})).unwrap_err().to_string();
+    assert!(e.contains("no such variable `Nope/palette/surface`"), "{e}");
 }
 
 #[test]

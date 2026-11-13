@@ -376,7 +376,18 @@ pub fn specs() -> Vec<CommandSpec> {
             "{section?: brief|assumptions|decisions|flow|findings|alternatives, on? (false closes it)}  shows the file's design context in the app, for a person to read and edit: the brief, assumptions, decisions, scenarios and flow, findings, alternatives (design.get reads the same; a no-op headless)",
             false,
             |s, p| {
-                let section = p.get("section").and_then(Value::as_str).map(|x| x.chars().take(40).collect::<String>());
+                const SECTIONS: [&str; 6] = ["brief", "assumptions", "decisions", "flow", "findings", "alternatives"];
+                let section = match p.get("section") {
+                    None | Some(Value::Null) => None,
+                    Some(Value::String(x)) if SECTIONS.contains(&x.as_str()) => Some(x.clone()),
+                    Some(other) => {
+                        let shown = figcraft_format::clip(&other.to_string(), 40);
+                        return Err(crate::bad(
+                            "view.designContext",
+                            format!("`section`: no section {shown}; the sections are {}", SECTIONS.join(", ")),
+                        ));
+                    }
+                };
                 s.request_ui("panel.designContext", json!({"section": section, "on": boolean(p, "on")}));
                 ok()
             }

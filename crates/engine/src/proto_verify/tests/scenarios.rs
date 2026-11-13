@@ -440,6 +440,19 @@ fn an_end_state_an_agent_declares_is_a_proposal_that_exempts_nothing_until_a_per
     );
 }
 
+/// Review R2-07: a person who only rewords an agent's proposal hasn't accepted it.
+#[test]
+fn a_persons_edit_of_a_proposals_reason_leaves_it_proposed() {
+    let (mut s, _a, b, _go) = a_dead_end();
+    as_agent(&mut s, "proto.endState.set", json!({"id": b, "reason": "The order is placed here"}));
+    let r = ex(&mut s, "proto.endState.set", json!({"id": b, "reason": "The order is placed"}));
+    assert_eq!((&r["status"], &r["endState"], &r["reason"]), (&json!("proposed"), &json!(false), &json!("The order is placed")), "{r}");
+    assert_eq!(screen(&check(&mut s), b)["endStateProposedBy"], json!(AGENT_NAME));
+    // Saying `on: true` is declaring it: that accepts, as proto.endState.accept does.
+    let r = ex(&mut s, "proto.endState.set", json!({"id": b, "on": true}));
+    assert_eq!((&r["status"], &r["endState"], &r["author"]), (&json!("accepted"), &json!(true), &json!(AGENT_NAME)), "{r}");
+}
+
 #[test]
 fn a_person_accepts_an_agents_end_state_and_from_then_on_it_is_theirs() {
     let (mut s, a, b, go) = a_dead_end();

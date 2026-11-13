@@ -49,7 +49,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
         spec!(
             "design.check",
             "Check design",
-            "{scope?: [layer ids] (each with everything inside it; default: the current page: its top-level frames for the rules that measure layers, and for the flow.* and scenario.* rules everything proto.check reports for the page, also what is about the page itself or a layer outside every frame), rules?: [rule ids] (run exactly these; default: the rules the file's stage calls for, see design.stage.set and design.check.rules)}  measures the file; hidden layers are skipped; nothing is stored. With `scope`, a flow or scenario finding is kept when a layer it names is in scope, and one about a page as a whole when the scope holds that page or one of its top-level frames → {findings: [{rule, severity, nodes, subject? (what it is about when that isn't the layers: scenario:S1, overlay:12, page:1…), message, evidence, suggestion, kind: \"check\"}] (by severity, rule, layer), summary: {total, bySeverity: {blocker, major, minor, note}, byRule}, rules: [{id, about}] (the rules that ran), skipped: [{id, reason}] (the rules that didn't), stage}",
+            "{scope?: [layer ids] (each with everything inside it; default: the current page: its top-level frames for the rules that measure layers, and for the flow.* and scenario.* rules everything proto.check reports for the page, also what is about the page itself or a layer outside every frame), rules?: [rule ids] (run exactly these; default: the rules the file's stage calls for, see design.stage.set and design.check.rules)}  measures the file; hidden layers are skipped; nothing is stored. With `scope`, a flow or scenario finding is kept when a layer it names is in scope, and one about a page as a whole when the scope holds that page or one of its top-level frames → {findings: [{rule, severity, nodes, subject? (what it is about when that isn't the layers: scenario:S1, overlay:12, page:1…), message, evidence, suggestion, kind: \"check\"}] (by severity, rule, layer), summary: {total, bySeverity: {blocker, major, minor, note}, byRule}, rules: [{id, about}] (the rules that ran), skipped: [{id, reason}] (the rules that didn't), stage, warnings: [what the whole run can't see, said once: e.g. a session with no fonts at all, where no text is measured]}",
             false,
             check
         ),
@@ -181,7 +181,21 @@ fn check(s: &mut Session, p: &Value) -> Result<Value> {
         "rules": run.ran.iter().map(|r| json!({"id": r.id, "about": r.about})).collect::<Vec<_>>(),
         "skipped": skipped_json(&run),
         "stage": doc.design.stage,
+        "warnings": check_warnings(),
     }))
+}
+
+/// What a whole run of the checks can't see, said once: a session without any font lays out no
+/// text, so every text rule is blind (review X-01).
+fn check_warnings() -> Vec<String> {
+    let mut out = Vec::new();
+    if crate::fonts::none_at_all() {
+        out.push(
+            "this session has no fonts at all (a build without craft-fonts, run without system fonts): text draws nothing and isn't measured, so text.clipped and contrast.text can't pass it; text.noFont and contrast.unmeasured list it"
+                .to_string(),
+        );
+    }
+    out
 }
 
 fn record(s: &mut Session, p: &Value) -> Result<Value> {

@@ -41,7 +41,10 @@ fn steps_run_in_order_and_each_reports_what_happened() {
     assert_eq!((&r["passed"], &r["stepsTaken"], &r["failures"], &r["start"]), (&json!(true), &json!(2), &json!([]), &json!(a)), "{r}");
     // What passed is a simulated run, and the result says what the simulator leaves out.
     assert_eq!(r["simulated"], json!(true));
-    assert_eq!(r["notModelled"].as_array().map(Vec::len), Some(5), "{r}");
+    assert_eq!(r["notModelled"].as_array().map(Vec::len), Some(crate::proto_verify::NOT_MODELLED.len()), "{r}");
+    // And where it still does something else than the app's player (review R2-08).
+    let known: Vec<&str> = crate::proto_verify::KNOWN_DIFFERENCES.iter().map(|(_, says)| *says).collect();
+    assert_eq!(r["knownDifferences"], json!(known), "{r}");
     assert!(r["notModelled"][0].as_str().unwrap().starts_with("animation and timing"), "{r}");
     assert!(r.get("failedStep").is_none());
     let steps = r["steps"].as_array().unwrap();

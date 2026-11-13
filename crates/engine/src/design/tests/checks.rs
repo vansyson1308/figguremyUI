@@ -15,10 +15,11 @@ const TARGET: &str = "target.small";
 
 /// Every rule `design.check` knows, in the order it lists them: the design rules, then the
 /// prototype flow and scenario rules.
-const ALL_RULES: [&str; 17] = [
+const ALL_RULES: [&str; 18] = [
     CONTRAST,
     UNMEASURED,
     TEXT_CLIPPED,
+    "text.noFont",
     CLIPPED,
     TARGET,
     "context.missingLink",
@@ -393,7 +394,8 @@ fn the_stage_decides_which_rules_run_and_the_rest_are_listed_as_skipped() {
     // action that can't work).
     let r = ex(&mut s, "design.check", json!({}));
     assert_eq!(r["stage"], "exploring");
-    assert_eq!(ran(&r), ["context.missingLink", "flow.brokenTarget"]);
+    // And text with no font to lay it out with: then the text checks themselves are blind.
+    assert_eq!(ran(&r), ["text.noFont", "context.missingLink", "flow.brokenTarget"]);
     assert_eq!(
         skipped(&r),
         [
@@ -438,6 +440,7 @@ fn the_stage_decides_which_rules_run_and_the_rest_are_listed_as_skipped() {
             CONTRAST,
             UNMEASURED,
             TEXT_CLIPPED,
+            "text.noFont",
             CLIPPED,
             TARGET,
             "context.missingLink",
@@ -514,10 +517,12 @@ fn the_rule_list_says_what_each_measures_and_from_which_stage() {
     assert_eq!(
         stages,
         [
-            // contrast.text, contrast.unmeasured, text.clipped, layout.clippedContent, target.small
+            // contrast.text, contrast.unmeasured, text.clipped, text.noFont (exploring: without
+            // fonts the text checks are blind), layout.clippedContent, target.small
             "converging",
             "converging",
             "converging",
+            "exploring",
             "converging",
             "converging",
             // context.missingLink, .briefIncomplete, .untestedAssumption, .staleDecision

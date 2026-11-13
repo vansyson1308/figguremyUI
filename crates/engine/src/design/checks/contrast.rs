@@ -24,6 +24,9 @@ use crate::check::Found;
 pub(super) const TEXT: &str = "contrast.text";
 pub(super) const UNMEASURED: &str = "contrast.unmeasured";
 
+/// Why text with no font to lay it out with isn't measured.
+pub(super) const NO_FONT: &str = "no font to lay it out with";
+
 /// WCAG 2.2 SC 1.4.3: the ratio normal text needs, and the one large text needs.
 const NEED: f64 = 4.5;
 const NEED_LARGE: f64 = 3.0;
@@ -297,6 +300,10 @@ fn read(doc: &Document, n: &Node) -> Option<Reading> {
     let area = doc.world_bounds(n.id).filter(|b| b.width() > 0.0 && b.height() > 0.0)?;
     if t.characters.trim().is_empty() || n.opacity <= 0.0 {
         return None;
+    }
+    // Text with no font draws nothing: there is no contrast to measure, and none passes.
+    if !crate::fonts::lays_out(t) {
+        return Some(Reading::Unmeasured(NO_FONT.into()));
     }
     if !plain_blend(n) {
         return Some(Reading::Unmeasured("the text has a blend mode".into()));

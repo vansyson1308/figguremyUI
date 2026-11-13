@@ -330,7 +330,10 @@ fn list_field(doc: &Document, target: &PaintTarget) -> Option<String> {
 /// variable that isn't a color, or a gradient. Scopes don't refuse, as with `variable.bind`; they
 /// only filter what the menu offers ([`in_scope`]).
 pub fn bind_refusal(doc: &Document, targets: &[PaintTarget], variable: &str) -> Option<String> {
-    let Some(var) = doc.variables.get(variable) else { return Some("no such variable".into()) };
+    let var = match doc.variables.find(variable) {
+        Ok(v) => v,
+        Err(e) => return Some(e),
+    };
     if var.kind != VariableType::Color {
         return Some("a color variable is required".into());
     }
@@ -350,7 +353,7 @@ pub fn bind_refusal(doc: &Document, targets: &[PaintTarget], variable: &str) -> 
 /// Whether `variable`'s scopes cover every slot of `targets` (a variable hidden from pickers has
 /// none), so the Selection colors menu offers it there.
 pub fn in_scope(doc: &Document, targets: &[PaintTarget], variable: &str) -> bool {
-    let Some(var) = doc.variables.get(variable) else { return false };
+    let Ok(var) = doc.variables.find(variable) else { return false };
     targets.iter().all(|target| {
         let list = if target.fills { BoundList::Fills } else { BoundList::Strokes };
         let field = format!("{}/{}/color", list.prefix(), target.index);
@@ -366,7 +369,7 @@ fn bind_variable(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(why) = bind_refusal(doc, &targets, &name) {
         return Err(bad(CMD, why));
     }
-    let vid = doc.variables.get(&name).map(|v| v.id.clone()).ok_or_else(|| bad(CMD, "no such variable"))?;
+    let vid = doc.variables.find(&name).map(|v| v.id.clone()).map_err(|e| bad(CMD, e))?;
     for target in &targets {
         if let Some(field) = list_field(s.doc()?, target) {
             let n = s.doc_mut()?.get_mut(target.id)?;
