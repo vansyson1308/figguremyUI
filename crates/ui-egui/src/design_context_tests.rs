@@ -831,8 +831,8 @@ fn scenarios_say_who_wrote_them_and_a_run_says_it_was_simulated() {
     w.button("Run all");
     let run = w.shown()["scenarioRun"].clone();
     assert_eq!(run["simulated"], json!(true));
-    assert_eq!(run["notModelled"].as_array().map(Vec::len), Some(5));
-    let line = "Simulated (not modelled: animation and timing; scroll position; drag direction; the device frame and responsive resizing; pointer hit-testing)";
+    assert_eq!(run["notModelled"].as_array().map(Vec::len), Some(figcraft_engine::proto_verify::NOT_MODELLED.len()));
+    let line = "Simulated (not modelled: animation and timing; scroll position; drag direction; the device frame and responsive resizing; pointer hit-testing; a gesture step is one trigger; the player's own keys; widgets)";
     assert!(w.says(line), "one quiet line, so a pass isn't read as a watched session: {:?}", w.texts());
 }
 

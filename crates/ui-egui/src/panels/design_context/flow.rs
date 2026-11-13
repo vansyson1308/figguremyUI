@@ -167,14 +167,14 @@ fn scenario(app: &mut FigApp, ui: &mut Ui, cx: &Cx, s: &Scenario) {
 }
 
 /// "Simulated: <what the simulator leaves out>", for a result the simulator gave (`simulated`),
-/// each item without the engine's explanation in brackets (which the line shows on hover): the
-/// line is there so a pass is not read as a session somebody watched.
+/// each item without the engine's explanation (what follows a bracket or a colon; the line shows
+/// it on hover): the line is there so a pass is not read as a session somebody watched.
 pub(super) fn simulated(result: &Value) -> Option<(String, String)> {
     if result["simulated"].as_bool() != Some(true) {
         return None;
     }
     let left_out: Vec<&str> = result["notModelled"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
-    let short: Vec<&str> = left_out.iter().map(|s| s.split(" (").next().unwrap_or(s).trim()).collect();
+    let short: Vec<&str> = left_out.iter().map(|s| s.split([':', '(']).next().unwrap_or(s).trim()).collect();
     Some((trf("Simulated (not modelled: {items})", &[("items", &short.join("; "))]), left_out.join("\n")))
 }
 

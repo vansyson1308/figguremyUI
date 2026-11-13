@@ -116,10 +116,21 @@ fn an_agents_gestures_are_its_own_undo_steps() {
     handle(&mut u, "engine.execute", json!({"command": "select.set", "params": {"ids": [rect]}})).unwrap();
     handle(&mut u, "ui.key", agent(json!({"key": "ArrowRight"}))).unwrap();
     assert_eq!((x(&u), steps(&mut u)[0].1.as_str()), (61.0, "Claude (agent)"));
-    // (Typed text runs as the agent too, but a text edit is one step, credited when the edit
-    // ends: to whoever ends it. That is the engine's rule, not this channel's.)
+    // Typed text runs as the agent too (a text edit is one step, credited when the edit ends:
+    // to whoever ends it; that is the engine's rule, not this channel's). While the person edits
+    // a text, the agent's typing waits: refused as busy, the text unchanged.
     let t = id(&handle(&mut u, "engine.execute", json!({"command": "text.create", "params": {"text": "Hi", "x": 10, "y": 300}})).unwrap());
     handle(&mut u, "engine.execute", json!({"command": "text.edit.begin", "params": {"id": t}})).unwrap();
+    let characters = |u: &Harness| u.app.session.doc().unwrap().node(t).and_then(|n| n.kind.text().map(|x| x.characters.clone()));
+    let before = characters(&u);
+    let e = handle(&mut u, "ui.type", agent(json!({"text": "!"}))).unwrap_err();
+    assert!(e.contains("in the middle of a gesture or text edit"), "{e}");
+    assert_eq!(u.app.control_error.as_ref().map(|d| d["code"].clone()), Some(json!("busy")));
+    assert_eq!(characters(&u), before, "the person's text is as it was");
+    assert!(u.app.session.agent.is_none(), "not left acting after a refused typing");
+    handle(&mut u, "engine.execute", json!({"command": "text.edit.end"})).unwrap();
+    // In a text edit the agent began itself, its typing goes in.
+    handle(&mut u, "engine.execute", agent(json!({"command": "text.edit.begin", "params": {"id": t, "caret": 2}}))).unwrap();
     handle(&mut u, "ui.type", agent(json!({"text": "!"}))).unwrap();
     assert!(u.app.session.agent.is_none(), "not left acting after typing");
     // Without `agent`, gestures stay the user's, and the agent is not left set.
