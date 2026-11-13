@@ -334,12 +334,21 @@ tool, `ArrowUp`/`ArrowDown` open the previous/next thread of the Comments panel'
 (returns `{"comment": id}`). While text is being edited, the text shortcuts (Bold, alignment,
 size steps, Save…) run and other keys go to the text editor. Shortcuts follow the platform the app
 runs on (`cmd` is Cmd on macOS and Ctrl elsewhere; on macOS `ctrl` is the separate Control key).
-Returns `{"command": id}` for shortcuts.
+Returns `{"command": id}` for shortcuts. Refused while the presenter plays (see `ui.pointer`).
 
 ### `ui.type {text}`
+`ui.pointer`, `ui.key` and `ui.type` act on the editor's canvas. While the presenter plays a
+prototype over it they are refused, with an error that says a prototype is playing and where the
+input goes instead, rather than selecting and editing layers of a canvas nobody sees: send the
+player's input with `ui.input` (window points; `ui.inspect` → `presenter.hotspots` gives each
+reacting layer's rect), or play the prototype without a window with the `proto.simulate` command.
+With the preview pane open the canvas still shows, so they work as usual; only a `ui.pointer` given
+in screen points (`sx`, `sy`) that lands on the pane is refused, since it would reach the canvas
+under the pane.
+
 
 Type into the text being edited (start editing with a double-click, `text.edit.begin {id}`, or the
-text tool).
+text tool). Refused while the presenter plays (see `ui.pointer`).
 
 `ui.pointer`, `ui.key` and `ui.type` take `agent` like `engine.execute` (**app side pending**: the
 headless MCP backend reads it; the desktop app ignores it, so there a gesture an agent makes is
@@ -495,6 +504,19 @@ echo '{"id":1,"method":"engine.execute","params":{"command":"frame.create","para
 read -r reply <&3; echo "$reply"
 echo '{"id":2,"method":"ui.screenshot","params":{"path":"/tmp/figcraft.png"}}' >&3
 read -r reply <&3; echo "$reply"
+```
+
+### `app.info {}`
+
+Which run of the app answers: `{"instance", "version", "pid"}`. `instance` is 32 hex digits made
+once when the app starts; it stays the same for as long as that process runs and differs in every
+other run, so a client that reconnects (or finds the port answered by something else) can tell
+whether it reached the same app, with the same open files and undo history, or another one.
+`version` is the app's version and `pid` its process id (0 in the browser). It needs no open file.
+
+```json
+{"id":1,"method":"app.info"}
+{"id":1,"result":{"instance":"5f0c2a9e41d7b3a86e1f0c2a9e41d7b3","pid":41327,"version":"0.18.1"}}
 ```
 
 For agents, prefer the MCP server (`figcraft-cli mcp --attach 7979`, see `docs/mcp.md`): it wraps

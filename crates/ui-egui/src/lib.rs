@@ -860,6 +860,9 @@ pub struct FigApp {
 }
 
 /// What to do with the result of a command run in the background.
+    /// An id for this run of the app, made once at start (control channel `app.info`): a client
+    /// that reconnects tells from it whether it reached the same app.
+    pub instance: String,
 pub type Done = Box<dyn FnOnce(&mut FigApp, &egui::Context, Value)>;
 
 #[cfg(test)]

@@ -923,6 +923,15 @@ keeps it until the page reloads). The player's state is
 in `inspect_ui` (`presenter`, `preview`: screen, scroll, `scale`, `zoom`, `pan`, the screen's
 `hotspots` and whether they are flashing, the `inspected` layer) when attached, and
 `ui.set {presentScroll: [x, y]}` scrolls its screen (see [control-protocol.md](control-protocol.md)).
+While the presenter plays in the attached app, `pointer`, `key` and `type_text` into the text
+being edited are refused with an error that says a prototype is playing: they act on the editor's
+canvas, which the presenter covers (they used to select and edit its layers unseen). The player
+takes raw window input (the control channel's `ui.input`), and `proto.simulate` plays the same
+rules without a window. In the player, one press and release on a layer with While pressing and
+On click shows the pressed state and then runs the click, and Mouse up and On click on one layer
+both run, the mouse up first. A click, key or delay that fires while a hover or pressed state
+shows acts on the state under it: what it did (an overlay opened, a variable set) stays when the
+pointer leaves, and the hover doesn't follow a click to another screen.
 The presenter's Options menu offers Responsive next to the size options (without a device) or
 Responsive / Fixed size (on one), the same `proto.settings {responsive}`; its flow picker lists each
 flow with its description.
