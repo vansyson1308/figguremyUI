@@ -67,7 +67,9 @@ fn find_trigger(doc: &Document, id: NodeId, want: impl Fn(&Trigger) -> bool) -> 
 
 pub(super) fn step(sim: &mut Sim, action: &StepAction) -> StepOutcome {
     let mut log = Log::default();
-    if sim.revert() {
+    // A click on the hovered layer keeps the hover (the pointer hasn't left it); every other step
+    // ends the hover or press of the step before first.
+    if !sim.hover_stays_for(action) && sim.revert() {
         log.effects.push("the hover or press of the step before ended".into());
     }
     match action {

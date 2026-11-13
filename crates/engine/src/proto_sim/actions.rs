@@ -7,7 +7,7 @@ use figcraft_geom::Rect;
 use serde_json::Value;
 
 use super::vars::{full_name, value_on, value_text};
-use super::{Overlay, Sim, label};
+use super::{Overlay, Sim, Temp, label};
 use crate::proto_run;
 
 /// What the actions of one step did, in words.
@@ -82,10 +82,14 @@ impl Sim {
 
 /// Run the actions of interaction `k` on `node` (the player's `fire`). `rect` is where the layer
 /// sits on the screen when a pointer gesture fired it. A "while hovering / pressing" interaction
-/// that did something leaves the state to revert to in `sim.temp`.
+/// that did something leaves the state to revert to in `sim.temp`. The interaction is the one
+/// `node` plays in what shows; a lasting one that fires while a hover is in effect (a click on
+/// the hovered layer: the hovered variant's own click, say) runs on the state under the hover,
+/// which is laid back over the result afterwards (the player's `lift_temp` and `lay_temp`).
 pub(super) fn fire(sim: &mut Sim, node: NodeId, k: usize, rect: Option<Rect>, log: &mut Log) -> bool {
     let Some(it) = sim.shown.node(node).and_then(|n| n.interactions.get(k)).cloned() else { return false };
     let temporary = matches!(it.trigger, Trigger::OnHover | Trigger::OnPress);
+    let lifted = if temporary { None } else { sim.lift() };
     let snap = (temporary && sim.temp.is_none()).then(|| sim.snapshot());
     if it.actions.is_empty() {
         log.nothing(format!("the interaction on {} has no actions", label(&sim.shown, node)));
@@ -94,13 +98,41 @@ pub(super) fn fire(sim: &mut Sim, node: NodeId, k: usize, rect: Option<Rect>, lo
     for a in &it.actions {
         did |= perform(sim, a, node, rect, 0, log);
     }
+    if let Some(t) = lifted {
+        lay_back(sim, t, log);
+    }
     if did
         && rect.is_some()
         && let Some(s) = snap
     {
-        sim.temp = Some(s);
+        sim.temp = Some(Temp { snap: s, node, press: it.trigger == Trigger::OnPress, actions: it.actions.clone() });
     }
     did
+}
+
+/// After a lasting interaction ran under a lifted hover: when the same screen and overlays still
+/// show and the layer still plays that hover, it goes back over what the interaction left (its
+/// actions run again, and the state to revert to is the interaction's result); otherwise the
+/// hover is over (an instance the click changed to a variant without it, a click that opened an
+/// overlay or left the screen).
+fn lay_back(sim: &mut Sim, mut t: Temp, log: &mut Log) {
+    let trigger = if t.press { Trigger::OnPress } else { Trigger::OnHover };
+    let plays = sim.shown.node(t.node).is_some_and(|n| n.interactions.iter().any(|it| it.trigger == trigger && it.actions == t.actions));
+    let what = label(&sim.shown, t.node);
+    if sim.temp.is_some() || t.snap.screen != sim.screen || !super::same_overlays(&t.snap.overlays, &sim.overlays) || !plays {
+        log.effects.push(format!("the hover on {what} ended"));
+        return;
+    }
+    let snap = sim.snapshot();
+    let rect = sim.rect_on_screen(t.node);
+    // Laying it back is not something the step did: what its actions say isn't reported again.
+    let mut again = Log::default();
+    for a in &t.actions.clone() {
+        perform(sim, a, t.node, rect, 0, &mut again);
+    }
+    t.snap = snap;
+    sim.temp = Some(t);
+    log.effects.push(format!("the hover on {what} shows again over the result: the pointer is still over it"));
 }
 
 /// One action of an interaction on `node` (the player's `perform_at`); `depth` counts the

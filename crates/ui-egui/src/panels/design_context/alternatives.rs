@@ -10,8 +10,8 @@ use serde_json::{Value, json};
 
 use super::records::submit;
 use super::{
-    Cx, Form, FormEnd, FormKind, Ran, act, body, button, chip, draft, entry, flow_row, form_end, go_to, go_to_entry, heading, link, pad, part,
-    primary, quiet, refusal_for, strong,
+    Cx, Form, FormEnd, FormKind, Ran, act, author_name, body, button, chip, draft, entry, flow_row, form_end, go_to, go_to_entry, heading, link, pad,
+    part, primary, quiet, refusal_for, strong,
 };
 use crate::FigApp;
 use crate::i18n::{tr, tr_noop, trf};
@@ -161,6 +161,9 @@ fn alternative_set(app: &mut FigApp, ui: &mut Ui, cx: &Cx, set: &AlternativeSet,
         if set.chosen == Some(set.source) {
             chip(ui, tr("Chosen"));
         }
+        if set.proposal.as_ref().is_some_and(|p| p.node == set.source) {
+            chip(ui, tr("Proposed"));
+        }
     });
     for m in &set.members {
         ui.add_space(8.0);
@@ -171,6 +174,7 @@ fn alternative_set(app: &mut FigApp, ui: &mut Ui, cx: &Cx, set: &AlternativeSet,
         }
     }
     ui.add_space(8.0);
+    proposal(app, ui, cx, set);
     if form.as_ref().is_some_and(|f| matches!(&f.kind, FormKind::Choose(id, _) if *id == set.id)) {
         choose_form(app, ui, cx, set, form);
     }
@@ -206,11 +210,42 @@ fn alternative_set(app: &mut FigApp, ui: &mut Ui, cx: &Cx, set: &AlternativeSet,
     }
 }
 
+/// A choice an AI agent proposed for the set, waiting for a person: who proposes which frame and
+/// why, and Accept (which accepts the proposed decision and so makes the choice). Choosing
+/// another one by hand also settles it.
+fn proposal(app: &mut FigApp, ui: &mut Ui, cx: &Cx, set: &AlternativeSet) {
+    let Some(p) = &set.proposal else { return };
+    let decision = cx.design.decisions.iter().find(|d| d.id == p.decision);
+    let who = decision.map_or_else(|| tr("An AI agent").to_string(), |d| author_name(&d.author).to_string());
+    let name = set.members.iter().find(|m| m.node == p.node).map(|m| m.name.clone()).or_else(|| {
+        let n = cx.name(p.node)?;
+        Some(if p.node == set.source { trf("{name} (the original)", &[("name", &n)]) } else { n.to_string() })
+    });
+    let name = name.unwrap_or_else(|| trf("missing layer ({id})", &[("id", &p.node)]));
+    let rationale = decision.map_or("", |d| d.rationale.as_str());
+    // (The member it proposes carries the "Proposed" mark; the sentence says the rest.)
+    strong(ui, &trf("{agent} proposes “{member}”: {rationale}", &[("agent", &who), ("member", &name), ("rationale", &rationale)]));
+    quiet(ui, tr("Waiting for you: nothing is chosen until you accept it or choose another."));
+    ui.add_space(2.0);
+    flow_row(ui, |ui| {
+        if widgets::button(ui, tr("Accept"), true, true).clicked() {
+            act(app, &set.id, "design.decision.accept", json!({"id": p.decision}));
+        }
+        if link(ui, &p.decision).on_hover_text(tr("The proposed decision")).clicked() {
+            go_to_entry(app, &p.decision);
+        }
+    });
+    ui.add_space(8.0);
+}
+
 fn member(app: &mut FigApp, ui: &mut Ui, cx: &Cx, set: &AlternativeSet, m: &Alternative, form: &mut Option<Form>) {
     flow_row(ui, |ui| {
         strong(ui, &m.name);
         if set.chosen == Some(m.node) {
             chip(ui, tr("Chosen"));
+        }
+        if set.proposal.as_ref().is_some_and(|p| p.node == m.node) {
+            chip(ui, tr("Proposed"));
         }
     });
     flow_row(ui, |ui| {

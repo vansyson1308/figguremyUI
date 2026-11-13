@@ -160,6 +160,39 @@ fn a_mouse_up_and_a_click_on_one_layer_both_run_the_mouse_up_first() {
     assert_eq!(number(&u, "count"), Some(20.0), "(1 + 1) × 10: the mouse up ran, and before the click");
 }
 
+/// A hover that scrolls a list (a scroll-to while hovering) and a click under it: once the
+/// pointer leaves, the list is back where it was. The click's lifted state used to keep the
+/// hover's scroll, which then outlived the hover.
+#[test]
+fn a_click_under_a_hover_that_scrolled_leaves_no_scroll_behind() {
+    let mut s = Session::new();
+    let a = frame(&mut s, "A", 0.0);
+    ex(&mut s, "variable.createCollection", json!({"name": "State"}));
+    ex(&mut s, "variable.create", json!({"collection": "State", "name": "count", "type": "number", "value": 0}));
+    let list = id(&ex(&mut s, "frame.create", json!({"x": 20, "y": 200, "width": 200, "height": 100, "parent": a, "name": "List"})));
+    ex(&mut s, "node.set", json!({"id": list, "props": {"overflow": "vertical", "clipsContent": true}}));
+    ex(&mut s, "shape.rectangle", json!({"x": 0, "y": 0, "width": 200, "height": 600, "parent": list, "props": {"name": "Rows"}}));
+    let last = id(&ex(&mut s, "shape.rectangle", json!({"x": 0, "y": 500, "width": 200, "height": 40, "parent": list, "props": {"name": "Last"}})));
+    let hot = id(&ex(&mut s, "shape.rectangle", json!({"x": 50, "y": 50, "width": 100, "height": 60, "parent": a, "props": {"name": "Hot"}})));
+    on(&mut s, hot, "onHover", json!({"type": "scrollTo", "dest": last}));
+    on(&mut s, hot, "onClick", json!({"type": "setVariable", "variable": "count", "expression": "count + 1"}));
+    let mut u = Harness::new(s);
+    u.run("proto.present", json!({"start": a}));
+    let scrolled = |u: &Harness| u.app.ui.present.as_ref().and_then(|p| p.scroll.get(&list).copied()).is_some_and(|(_, y)| y > 0.0);
+    let at = hotspot(&u, hot);
+    u.frame(vec![Event::PointerMoved(at)]);
+    u.frames(3, Vec::new);
+    assert!(scrolled(&u), "while hovering the list scrolled to its last row");
+    press(&mut u, at);
+    lift(&mut u, at);
+    assert_eq!(number(&u, "count"), Some(1.0), "the click ran");
+    assert!(scrolled(&u), "the pointer is still there: the hover shows again");
+    u.frame(vec![Event::PointerMoved(pos2(at.x + 400.0, at.y + 400.0))]);
+    u.frames(3, Vec::new);
+    assert_eq!(number(&u, "count"), Some(1.0), "the click's count outlives the hover");
+    assert!(!scrolled(&u), "and the hover's scroll went with it");
+}
+
 #[test]
 fn a_press_with_no_click_still_only_reverts() {
     let mut s = Session::new();

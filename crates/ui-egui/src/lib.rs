@@ -192,6 +192,8 @@ mod mirror_tests;
 #[cfg(test)]
 mod missing_fonts_tests;
 #[cfg(test)]
+mod multiline_field_tests;
+#[cfg(test)]
 mod naming_tests;
 #[cfg(test)]
 mod online_tests;
@@ -863,6 +865,12 @@ pub struct FigApp {
     /// An id for this run of the app, made once at start (control channel `app.info`): a client
     /// that reconnects tells from it whether it reached the same app.
     pub instance: String,
+    /// What kind of failure the last control request that failed was (`errorDetail`:
+    /// `{code, message, …}`), kept by [`control::handle`] for the reply it sends.
+    pub(crate) control_error: Option<serde_json::Value>,
+    /// The revision of the file the last `engine.execute` acted on, read right after the command
+    /// ran (the reply's `revision`).
+    pub(crate) control_revision: Option<u64>,
     /// Test-only count of the one IME observation each viewport pass makes.
     #[cfg(test)]
     pub(crate) ime_observations: u32,

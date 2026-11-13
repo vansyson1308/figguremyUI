@@ -1592,7 +1592,9 @@ if the person asked you to take back their step. An undo brings back a whole sna
 also refused when somebody else made a change after the agent's step that has no undo step of its
 own (a direct edit, the first save's rename). The user's own undo in the app takes any step, as
 before. What an agent does with `pointer`, `key` and `type_text` is its step too, and so are the
-commands a `key` stands for (Cmd+Z is the agent's undo, Delete the agent's step).
+commands a `key` stands for (Cmd+Z is the agent's undo, Delete the agent's step), headless and
+attached (the app reads `agent` on those control methods). Attached, the app refuses its
+person-only methods (`ui.input`, `ui.menu.invoke`, `ui.set`) for an agent.
 
 **A person's work is not the agent's to throw away.** An agent's `file.revert`, `file.close`
 (with or without `force`), `open_file {reload: true}`, `branch.merge`, `branch.updateFromMain`,
@@ -1802,7 +1804,11 @@ lists the same in the same words:
 - the player's own keys (R restarts, Z, the arrow keys);
 - widgets (a widget's own behaviour, which its plugin runs in the app).
 
-Hover and press hold until the next step.
+Hover and press hold until the next step. A click, mouse down or mouse up on the hovered layer (or
+one inside it) keeps the hover, as the player does while the pointer stays there: the interaction
+is the one the hovered state plays (a hovered variant's own click counts), it runs on the state
+under the hover, and the hover is laid back over the result while the same screen and overlays
+show.
 
 Where the simulator and the app's player still do different things with the same file and input,
 every result (`proto.simulate`, `proto.scenario.run`, `proto.snapshot`) lists under

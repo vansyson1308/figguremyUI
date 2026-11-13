@@ -10,8 +10,8 @@ use serde_json::{Value, json};
 
 use super::records::submit;
 use super::{
-    Cx, Form, FormEnd, FormKind, Ran, SEVERITIES, act, body, button, chip, choice, draft, entry, flow_row, form_end, heading, layer_links, pad, part,
-    primary, quiet, refusal_for, severity_label, stage, strong,
+    Cx, Form, FormEnd, FormKind, Ran, SEVERITIES, act, author_name, body, button, chip, choice, draft, entry, flow_row, form_end, go_to_entry,
+    heading, layer_links, link, pad, part, primary, quiet, refusal_for, severity_label, stage, strong,
 };
 use crate::FigApp;
 use crate::i18n::{tr, tr_noop, trf};
@@ -103,12 +103,27 @@ pub(super) fn found(app: &mut FigApp, ui: &mut Ui, cx: &Cx, f: &Value) {
     body(ui, text("message"));
     part(ui, tr("What was measured"), text("evidence"));
     part(ui, tr("What would help"), text("suggestion"));
+    subject(app, ui, text("subject"));
     let nodes: Vec<NodeId> = f["nodes"].as_array().into_iter().flatten().filter_map(figcraft_engine::params::id_of).collect();
     if !nodes.is_empty() {
         ui.add_space(2.0);
         quiet(ui, tr("Layers"));
         layer_links(app, ui, cx, &nodes, false);
     }
+}
+
+/// What a check is about when that isn't its layers, where the panel can point to it: a scenario
+/// or a decision (a link to the entry). The other subjects (an action, an overlay, a page, a
+/// link) are said by the message and the layers listed.
+fn subject(app: &mut FigApp, ui: &mut Ui, subject: &str) {
+    let Some(entry) = subject.strip_prefix("scenario:").or_else(|| subject.strip_prefix("decision:")) else { return };
+    ui.add_space(2.0);
+    flow_row(ui, |ui| {
+        quiet(ui, tr("About|subject"));
+        if link(ui, entry).clicked() {
+            go_to_entry(app, entry);
+        }
+    });
 }
 
 pub(super) fn show(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
@@ -155,6 +170,12 @@ fn checks(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
         if let Some(ran) = app.ui.context.recorded.as_ref().filter(|ran| !ran.stale(&cx.doc)) {
             let n = |key: &str| ran.result[key].as_array().map_or(0, Vec::len);
             quiet(ui, &trf("Stored {added} new; {existing} were stored already.", &[("added", &n("added")), ("existing", &n("existing"))]));
+            // The file holds as many findings as it may: what wasn't stored is said, in the
+            // engine's words (narrow the checks, or remove settled findings).
+            if ran.result["truncated"].as_u64().is_some_and(|n| n > 0) {
+                ui.add_space(2.0);
+                body(ui, ran.result["note"].as_str().unwrap_or_default());
+            }
         }
     });
     let Some((result, stale)) = app.ui.context.checks.as_ref().map(|ran| (ran.result.clone(), ran.stale(&cx.doc))) else { return };
@@ -225,6 +246,13 @@ fn finding(app: &mut FigApp, ui: &mut Ui, cx: &Cx, f: &Finding, form: &mut Optio
     part(ui, if check { tr("What was measured") } else { tr("What was observed") }, &f.evidence);
     part(ui, tr("What would help"), &f.suggestion);
     part(ui, tr("Raised by"), &f.source);
+    // Who stored it, when that isn't who raised it: an agent passing on what a person said, or
+    // whoever ran the checks.
+    if !f.recorded_by.is_empty() {
+        let who = author_name(&f.recorded_by);
+        quiet(ui, &if check { trf("Stored by {name}", &[("name", &who)]) } else { trf("Relayed by {name}", &[("name", &who)]) });
+    }
+    subject(app, ui, &f.subject);
     match f.status {
         FindingStatus::Accepted => part(ui, tr("Why it stays as it is"), &f.resolution),
         _ => part(ui, tr("What was changed"), &f.resolution),

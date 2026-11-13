@@ -42,7 +42,8 @@ fn rejects_an_oversized_unterminated_frame_without_dispatch() {
     // Generate bytes as they are written; no giant input string and no terminating newline.
     std::io::copy(&mut std::io::repeat(b' ').take((MAX_LINE + 1) as u64), &mut client).unwrap();
     let mut reader = BufReader::new(client);
-    assert_eq!(reply(&mut reader), json!({"id": null, "ok": false, "error": "message too large"}));
+    let detail = json!({"code": "badParams", "message": "message too large"});
+    assert_eq!(reply(&mut reader), json!({"id": null, "ok": false, "error": "message too large", "errorDetail": detail}));
     assert_eq!(reader.read(&mut [0]).unwrap(), 0);
     worker.join().unwrap().unwrap();
     assert!(pending.lock().unwrap().is_empty());
@@ -67,9 +68,49 @@ fn valid_frames_keep_their_order_ids_and_parameters() {
     assert_eq!(r.id, "test");
     assert_eq!(r.method, "engine.execute");
     assert_eq!(r.params, json!({"command": "shape.rectangle"}));
-    r.reply.send(figcraft_ui_egui::ControlReply { id: r.id, result: Ok(json!({"id": 42})) }).unwrap();
+    r.reply.send(figcraft_ui_egui::ControlReply::new(r.id, Ok(json!({"id": 42})))).unwrap();
     assert_eq!(reply(&mut reader), json!({"id": "test", "ok": true, "result": {"id": 42}}));
     reader.get_ref().shutdown(Shutdown::Write).unwrap();
+    worker.join().unwrap().unwrap();
+}
+
+/// What a failed request's reply line says: the error, what kind it is (`errorDetail`), and for
+/// `engine.execute` the revision the command left.
+#[test]
+fn a_failed_reply_line_carries_its_error_detail_and_the_revision() {
+    let (mut client, server) = pair();
+    let pending = queue();
+    let q = pending.clone();
+    let worker = std::thread::spawn(move || serve(server, q, context(), Duration::from_secs(5)));
+    let mut reader = BufReader::new(client.try_clone().unwrap());
+    let next = |pending: &Queue| {
+        let start = Instant::now();
+        loop {
+            if let Some(r) = pending.lock().unwrap().pop() {
+                break r;
+            }
+            assert!(start.elapsed() < Duration::from_secs(5));
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    };
+    client.write_all(b"{\"id\":1,\"method\":\"engine.execute\",\"params\":{\"command\":\"node.set\"}}\n").unwrap();
+    let r = next(&pending);
+    let detail = json!({"code": "noSuchNode", "message": "stale", "node": 41});
+    r.reply.send(ControlReply { id: r.id, result: Err("no such node 41".into()), detail: Some(detail), revision: Some(7) }).unwrap();
+    assert_eq!(
+        reply(&mut reader),
+        json!({"id": 1, "ok": false, "error": "no such node 41", "errorDetail": {"code": "noSuchNode", "message": "no such node 41", "node": 41}, "revision": 7})
+    );
+    // A failure the UI gave no kind: `failed`. A success carries the revision too.
+    client.write_all(b"{\"id\":2,\"method\":\"window.focus\",\"params\":{}}\n").unwrap();
+    let r = next(&pending);
+    r.reply.send(ControlReply::new(r.id, Err("no window 3".into()))).unwrap();
+    assert_eq!(reply(&mut reader)["errorDetail"], json!({"code": "failed", "message": "no window 3"}));
+    client.write_all(b"{\"id\":3,\"method\":\"engine.execute\",\"params\":{\"command\":\"select.none\"}}\n").unwrap();
+    let r = next(&pending);
+    r.reply.send(ControlReply { revision: Some(8), ..ControlReply::new(r.id, Ok(json!({}))) }).unwrap();
+    assert_eq!(reply(&mut reader), json!({"id": 3, "ok": true, "result": {}, "revision": 8}));
+    client.shutdown(Shutdown::Write).unwrap();
     worker.join().unwrap().unwrap();
 }
 
@@ -106,7 +147,8 @@ fn full_queue_rejects_before_dispatch_and_ui_queue_stays_bounded() {
     let worker = std::thread::spawn(move || serve(server, q, context(), Duration::from_secs(5)));
     client.write_all(b"{\"id\":1,\"method\":\"engine.execute\"}\n").unwrap();
     let mut reader = BufReader::new(client);
-    assert_eq!(reply(&mut reader), json!({"id": 1, "ok": false, "error": "control request queue is full"}));
+    let detail = json!({"code": "failed", "message": "control request queue is full"});
+    assert_eq!(reply(&mut reader), json!({"id": 1, "ok": false, "error": "control request queue is full", "errorDetail": detail}));
     assert_eq!(pending.lock().unwrap().len(), MAX_QUEUED_REQUESTS);
     ui_queue.clear();
     drain_queue(&pending, &mut ui_queue);
@@ -130,7 +172,7 @@ fn a_committed_reply_wins_over_the_transport_timeout() {
     // transport's timeout branch can look at the gate.
     let committed = gate.commit(|| {
         std::fs::write(&path, b"png").unwrap();
-        tx.send(ControlReply { id: json!(7), result: Ok(json!({"path": path.to_string_lossy()})) }).unwrap();
+        tx.send(ControlReply::new(json!(7), Ok(json!({"path": path.to_string_lossy()})))).unwrap();
     });
     assert!(committed.is_some());
     assert!(path.is_file());
@@ -175,7 +217,7 @@ fn a_started_request_times_out_as_still_running() {
     assert_eq!(gate.state(), RequestState::Running, "the timeout doesn't cancel a running request");
     let message = timeout_message(&failure, false, Duration::from_secs(60));
     assert!(message.contains("will take effect") && !message.contains("window"), "{message}");
-    tx.send(ControlReply { id: json!(3), result: Ok(json!({"done": true})) }).unwrap();
+    tx.send(ControlReply::new(json!(3), Ok(json!({"done": true})))).unwrap();
     assert_eq!(wait_for_reply(&rx, &gate, Duration::ZERO).unwrap().id, json!(3), "a reply that made it is the truth");
 }
 
@@ -230,7 +272,7 @@ fn a_raised_timeout_outlasts_the_default() {
     };
     // Well past the connection's 50 ms: the request's own wait still holds.
     std::thread::sleep(Duration::from_millis(200));
-    r.reply.send(ControlReply { id: r.id, result: Ok(json!("late")) }).unwrap();
+    r.reply.send(ControlReply::new(r.id, Ok(json!("late")))).unwrap();
     assert_eq!(reply(&mut reader), json!({"id": 1, "ok": true, "result": "late"}));
     drop(reader);
     worker.join().unwrap().ok();
@@ -344,7 +386,7 @@ fn a_client_that_stops_reading_cannot_hold_a_worker() {
         assert!(start.elapsed() < Duration::from_secs(5));
         std::thread::sleep(Duration::from_millis(1));
     };
-    r.reply.send(figcraft_ui_egui::ControlReply { id: r.id, result: Ok(json!("x".repeat(8 * 1024 * 1024))) }).unwrap();
+    r.reply.send(figcraft_ui_egui::ControlReply::new(r.id, Ok(json!("x".repeat(8 * 1024 * 1024))))).unwrap();
     let err = finished.recv_timeout(Duration::from_secs(5)).unwrap().unwrap_err();
     assert!(matches!(err.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut));
     worker.join().unwrap().unwrap();
@@ -403,7 +445,7 @@ fn a_limit_sized_frame_is_accepted_at_eof() {
     };
     assert_eq!(r.id, 1);
     assert_eq!(r.method, "ui.inspect");
-    r.reply.send(figcraft_ui_egui::ControlReply { id: r.id, result: Ok(json!({})) }).unwrap();
+    r.reply.send(figcraft_ui_egui::ControlReply::new(r.id, Ok(json!({})))).unwrap();
     assert_eq!(reply(&mut BufReader::new(client)), json!({"id": 1, "ok": true, "result": {}}));
     worker.join().unwrap().unwrap();
 }
