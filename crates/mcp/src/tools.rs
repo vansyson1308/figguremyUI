@@ -130,6 +130,11 @@ pub const TOOL_NAMES: &[&str] = &[
     "select",
     "export",
     "screenshot",
+    "design_context",
+    "check_design",
+    "check_prototype",
+    "simulate_prototype",
+    "run_scenarios",
     "open_file",
     "save_file",
     "undo",
@@ -152,6 +157,11 @@ const DOCUMENT_TOOLS: &[&str] = &[
     "select",
     "export",
     "screenshot",
+    "design_context",
+    "check_design",
+    "check_prototype",
+    "simulate_prototype",
+    "run_scenarios",
     "save_file",
     "undo",
     "redo",
@@ -201,7 +211,7 @@ fn tools() -> Vec<Value> {
         tool(
             "get_capabilities",
             "Get capabilities",
-            "What this server and the app behind it can do, as JSON: `backend` (headless: an engine in this process, no window; attached: the running app), `window` and `player` (whether there is a window, and so a live prototype player), the automation `roots` files may be read from and written to, the `workingDocument` ({id, name, revision}) and the open `documents`, how many `commands` there are, the `features` that are really there (prototype simulator, flow check, scenarios, design context, the design check rules, conflict detection, structured errors), `limits` and file `formats`. Call it first, and again after an error with code `transport`.",
+            "What this server and the app behind it can do, as JSON: `backend` (headless: an engine in this process, no window; attached: the running app), `window` and `player` (whether there is a window, and so a live prototype player), the automation `roots` files may be read from and written to, the `workingDocument` ({id, name, revision}) and the open `documents`, how many `commands` there are, the `features` that are really there (prototype simulator and pictures of its states, flow check, scenarios, design context, the design check rules, conflict detection, structured errors), `limits` and file `formats`. Headless, nobody watches: verify by running (check_prototype, run_scenarios, simulate_prototype) and by looking (screenshot). Attached, a person sees every change as it is made and may be editing the same file: read before you write and pass `ifRevision`. Call it first, and again after an error with code `transport`.",
             empty(),
             true,
         ),
@@ -369,6 +379,58 @@ fn tools() -> Vec<Value> {
             true,
         ),
         tool(
+            "design_context",
+            "Design context",
+            "Why the working document is the way it is, as JSON (engine `design.get`). `brief`: who it is for, who asks for it, what they need to get done, where, within which limits and how success would be noticed; every field is optional and none is ever final. `stage`: exploring | converging | ready, which decides the check rules that run. `assumptions`: what the design takes to be true without knowing; each stays `untested` until a person records evidence. `decisions`: a choice and its reasons; `proposed` when an agent recorded it, `accepted` only by a person. `scenarios`: stored walks through the prototype with what must hold along the way (run them with run_scenarios). `endStates`: frames where a flow may end on purpose. `findings`: problems on record; kind `check` was measured by a rule and is settled by running the rule again, `judgement` is somebody's opinion and `feedback` is what a person said, and those two are settled only by a person. `alternatives`: sets of variants kept beside their source, their constraints stated first; a person chooses. `missingLinks`: records that point at layers which no longer exist. Read it before designing and before reporting. Change it with run_command: design.brief.set, design.stage.set, design.assumption.add, design.decision.add, design.finding.add, design.finding.address, design.finding.recheck, design.alternative.create, design.alternative.update, design.alternative.compare, proto.scenario.add, proto.scenario.set, proto.endState.set (list_commands {filter: \"design.\"} and {filter: \"proto.\"} give the parameters). What an agent records is a proposal: the engine refuses an agent that accepts its own decision, marks an assumption supported or refuted, or accepts, verifies or removes what a person must settle.",
+            empty(),
+            true,
+        ),
+        tool(
+            "check_design",
+            "Check design",
+            "Measure the design with deterministic rules (engine `design.check`): the contrast of text against what is behind it, text and content that is cut off, touch targets that are too small, prototype actions whose target is gone, screens with no way out, scenarios that fail, and design-context records that point at nothing or have gone stale. The same file always gives the same findings; each rule states its threshold and the standard that comes from (`rules`, each with `about`). Which rules run depends on the document's stage (exploring: only what breaks the file; converging: also the finish and the flow; ready: also the records themselves) unless `rules` names them, and `skipped` lists every rule that did not run with the reason: report those as not checked. Returns {findings: [{rule, severity, nodes, message, evidence, suggestion}], summary, rules, skipped, stage}. With `record: true` the findings are also stored in the document as open findings (engine `design.check.record`, one undo step) and the result gains `recorded` {added, existing, total} and `stored` (those findings as stored, each with its `id`). To settle one: fix the cause, claim it with run_command design.finding.address {id, resolution}, then design.finding.recheck {id} runs its rule again, and only that marks it verified. This is not a quality score: it finds what these rules can measure and says nothing about whether the design serves its purpose, so a result without findings does not mean the design is good.",
+            obj(
+                json!({
+                    "scope": ids_schema("Layers to check, each with everything inside it (default: the current page's top-level frames)"),
+                    "rules": {"type": "array", "items": {"type": "string"}, "description": "Run exactly these rule ids, whatever the stage (the ids get_capabilities lists under `checks`; run_command design.check.rules says what each measures)"},
+                    "record": boolean("Also store the findings in the document (default false: nothing is stored)"),
+                }),
+                &[],
+            ),
+            false,
+        ),
+        tool(
+            "check_prototype",
+            "Check prototype flow",
+            "Facts about a page's prototype as a graph, without playing or changing anything (engine `proto.check`). `starts`: the flow starts, or the first frame when none is declared. `screens`: each top-level frame with `reachable`, `endState`, `deadEnd` and its outgoing interactions `out` (from which layer, on which trigger, doing what, to where). `problems` ([{rule, severity, nodes, message, evidence, suggestion}]): an action whose target is missing, a screen with no way out that is not a declared end, an overlay that cannot be closed, frames no start reaches, stored scenarios that fail and screens no scenario visits. Every interaction counts as a possible step, so `reachable` means some interaction leads there, not that a person will find it. `ok` says only that these rules found no blocker and no major problem. Run it after wiring or changing interactions and after deleting frames, then run_scenarios. A screen a flow is meant to end on is declared with run_command proto.endState.set {id, reason}.",
+            obj(json!({"page": id_schema("The page to check: its id (default: the current page)")}), &[]),
+            true,
+        ),
+        tool(
+            "simulate_prototype",
+            "Simulate prototype",
+            "Play steps on the prototype without a window and report the state they lead to (engine `proto.simulate`). It works headless and attached, on a copy: the document never changes. `steps` are what a viewer does, in order: {\"click\": <layer id>} (also hover, press, drag, mouseEnter, mouseLeave, mouseDown, mouseUp), {\"key\": \"Enter\"}, {\"type\": \"wait\"} (the pending after-delay interactions fire), {\"type\": \"clickOutside\"} (outside the top overlay) and {\"type\": \"setVariable\", \"variable\": <name>, \"value\": <value>} (stands in for input a prototype cannot take, such as typing); each may carry `expect` and a `note`. `expect`, on a step or at the top for the end, is {screen?, overlays? [ids, bottom first], variables? {name: value}, variants? [{instance, variant}], visible? [ids], hidden? [ids], text? [{node, equals | contains}], endState?}. Returns {passed, start, state: {screen, screenName, overlays, history, variables, modes, variants, endState}, steps: [{index, action, fired, effects, problem?, failures, state}], failures, failedStep?, stepsTaken}. A step fails when its layer is not on what shows (the top overlay if one is open, else the screen), when a gesture or key sets nothing off, when an action cannot run, or when its `expect` does not hold; the run stops there unless `stopOnFailure` is false. With `image: true` a PNG of the final state follows the JSON as image content (the screen with its open overlays; engine `proto.snapshot`), and the JSON gains `image` {width, height, scale}. What the simulator does not model: animation and timing, scroll position, drag direction, the device frame and responsive resizing, and pointer hit-testing through overlapping layers (a gesture names its layer and reaches the first interaction on it or on a layer around it). So `passed` means that these state rules produced this state. It does not mean a person used it, could find the control, or saw it on a device. Keep a walk worth keeping with run_command proto.scenario.add {name, start, steps, expect, purpose}.",
+            obj(
+                json!({
+                    "start": id_schema("The top-level frame to start on (default: the selected frame, else the first flow, else the page's first frame)"),
+                    "steps": {"type": "array", "description": "What the viewer does, in order (at most 500 steps); [] reports the start screen as it opens", "items": {"type": "object", "description": "One step: {\"click\": <layer id>} (or hover, press, drag, mouseEnter, mouseLeave, mouseDown, mouseUp), {\"key\": \"Enter\"}, {\"type\": \"wait\"}, {\"type\": \"clickOutside\"} or {\"type\": \"setVariable\", \"variable\": <name>, \"value\": <value>}; optionally with `expect` (what must hold right after it) and `note`"}},
+                    "expect": {"type": "object", "description": "What must hold after the last step: {screen?, overlays?, variables?, variants?, visible?, hidden?, text?, endState?}"},
+                    "stopOnFailure": boolean("Stop at the first step that fails (default true)"),
+                    "image": boolean("Also return a PNG of the final state as image content (default false)"),
+                    "scale": num("Pixels per page unit for the image, 0.1 to 4 (default 1; lowered so that the larger side is at most 4096 pixels)"),
+                }),
+                &["steps"],
+            ),
+            true,
+        ),
+        tool(
+            "run_scenarios",
+            "Run scenarios",
+            "Run the scenarios stored in the document (engine `proto.scenario.run`): each is a named walk through the prototype with what must hold along the way, played on a copy by the same simulator as simulate_prototype and stopping at its first failing step. `id` runs one (\"S1\"); without it all of them run. Returns {passed, total, failed, results: [{id, name, passed, failedStep?, failures, steps, stepsTaken}]}. Report a failed scenario as failed, and when `total` is 0 say that nothing was run: an empty run is not a pass. Never rewrite a scenario so that it passes; fix the prototype, or leave it failing. Scenarios are stored with run_command proto.scenario.add {name, start, steps, expect, purpose}, changed with proto.scenario.set and listed with proto.scenario.list (or design_context). The simulator's limits apply: no animation or timing, no scroll position, no drag direction, no device frame or responsive resizing, no pointer hit-testing.",
+            obj(json!({"id": string("One scenario's id, e.g. \"S1\" (default: every stored scenario)")}), &[]),
+            true,
+        ),
+        tool(
             "open_file",
             "Open file",
             "Open a .figcraft or .json document (FigCraft or REST API file JSON), a .fig or .sketch file (best effort, with `warnings` for what wasn't imported; .sketch from Sketch 48 or newer), an .svg (becomes vectors) or an image (becomes an image layer) as the active document. Returns the new document's summary.",
@@ -406,7 +468,7 @@ fn tools() -> Vec<Value> {
         tool(
             "pointer",
             "Pointer gesture",
-            "Drive the canvas with the mouse in page coordinates, exactly as a user would with the current tool: click to select, drag to move/resize/marquee, or draw with a shape tool (set `tool` first, e.g. {\"tool\":\"rectangle\",\"kind\":\"drag\",\"x\":0,\"y\":0,\"to\":[200,100]}). `double` on a text layer starts editing it. Returns the selection and tool.",
+            "Drive the canvas with the mouse in page coordinates, exactly as a user would with the current tool: click to select, drag to move/resize/marquee, or draw with a shape tool (set `tool` first, e.g. {\"tool\":\"rectangle\",\"kind\":\"drag\",\"x\":0,\"y\":0,\"to\":[200,100]}). `double` on a text layer starts editing it. Returns the selection and tool. These gestures act on the editor canvas, never on a prototype that is playing: a playing prototype is driven by the person watching it (or by the control channel's `ui.input`), and a gesture sent here while one is open still lands on the canvas behind it. To check what a prototype does, use simulate_prototype or run_scenarios, which work in both backends.",
             obj(
                 json!({
                     "kind": {"type": "string", "enum": ["click", "double", "drag", "down", "move", "up", "hover"], "description": "Gesture (default click)"},
@@ -429,7 +491,7 @@ fn tools() -> Vec<Value> {
         tool(
             "key",
             "Press key",
-            "Press a key or shortcut as if typed on the canvas: a menu shortcut (e.g. {\"key\":\"G\",\"cmd\":true} groups, {\"key\":\"A\",\"alt\":true,\"shift\":false} …), a tool key (R, O, T, F, V…), Escape, Delete, Enter, arrows (nudge; shift = big nudge). While editing text, keys go to the text editor (Backspace, Delete, Left, Right, Home, End, Enter, Escape, SelectAll).",
+            "Press a key or shortcut as if typed on the canvas: a menu shortcut (e.g. {\"key\":\"G\",\"cmd\":true} groups, {\"key\":\"A\",\"alt\":true,\"shift\":false} …), a tool key (R, O, T, F, V…), Escape, Delete, Enter, arrows (nudge; shift = big nudge). While editing text, keys go to the text editor (Backspace, Delete, Left, Right, Home, End, Enter, Escape, SelectAll). Keys go to the editor canvas, never to a prototype that is playing (a person drives that, or the control channel's `ui.input`): a prototype's key interactions are checked with simulate_prototype (a step {\"key\": \"Enter\"}) or run_scenarios.",
             obj(
                 json!({"key": string("Key name: a letter/digit, Escape, Delete, Backspace, Enter, ArrowLeft…"), "shift": boolean("Shift"), "alt": boolean("Alt/Option"), "cmd": boolean("Cmd/Ctrl"), "ctrl": boolean("Ctrl (the Control key on macOS)")}),
                 &["key"],
@@ -846,6 +908,11 @@ fn run_tool(b: &mut dyn Backend, name: &str, a: &Map<String, Value>, moved: &mut
         "select" => select(b, a),
         "export" => export(b, a),
         "screenshot" => screenshot(b, a),
+        "design_context" => Ok(exec(b, "design.get", json!({})).map(|v| ToolResult::json(&v))?),
+        "check_design" => check_design(b, a),
+        "check_prototype" => Ok(exec(b, "proto.check", passed(a, &["page"])).map(|v| ToolResult::json(&v))?),
+        "simulate_prototype" => simulate_prototype(b, a),
+        "run_scenarios" => Ok(exec(b, "proto.scenario.run", passed(a, &["id"])).map(|v| ToolResult::json(&v))?),
         "open_file" => open_file(b, a, moved),
         "save_file" => save_file(b, a),
         "undo" => travel(b, a, "edit.undo"),
@@ -1039,6 +1106,7 @@ fn get_capabilities(state: &mut ToolState, b: &mut dyn Backend) -> Outcome {
         "commands": commands.len(),
         "features": {
             "prototypeSimulator": has("proto.simulate"),
+            "prototypeSnapshot": has("proto.snapshot"),
             "scenarios": has("proto.scenario.run"),
             "flowCheck": has("proto.check"),
             "designContext": has("design.get"),
@@ -1664,6 +1732,96 @@ fn screenshot(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
         "image/png",
         &json!({"source": if ids.is_empty() { "page" } else { "layers" }, "ids": ids, "scale": scale, "width": w, "height": h}),
     ))
+}
+
+/// The arguments `keys` of a call as the parameters of the command it stands for, passed on as
+/// they were given: the command checks them, so its errors name them and what it takes can grow
+/// without this layer knowing.
+fn passed(a: &Map<String, Value>, keys: &[&str]) -> Value {
+    Value::Object(keys.iter().filter_map(|k| a.get(*k).filter(|v| !v.is_null()).map(|v| ((*k).to_string(), v.clone()))).collect())
+}
+
+/// A true-or-false argument; not given is false.
+fn flag(a: &Map<String, Value>, k: &str) -> Result<bool, Failure> {
+    match a.get(k) {
+        None | Some(Value::Null) => Ok(false),
+        Some(Value::Bool(x)) => Ok(*x),
+        Some(_) => Err(Failure::param(k, format!("`{k}` must be true or false"))),
+    }
+}
+
+/// `check_design`: the design measured by its rules (`design.check`, passed through). With
+/// `record` the findings are stored too, and the result says which (`recorded`) and gives them as
+/// stored (`stored`), each with the id the commands that settle a finding take.
+fn check_design(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
+    let params = passed(a, &["scope", "rules"]);
+    if !flag(a, "record")? {
+        return Ok(exec(b, "design.check", params).map(|v| ToolResult::json(&v))?);
+    }
+    // Stored first: when that is refused, nothing is reported as recorded.
+    let recorded = exec(b, "design.check.record", params.clone())?;
+    let mut out = exec(b, "design.check", params)?;
+    let ids: Vec<Value> = ["added", "existing"].iter().filter_map(|k| recorded.get(*k).and_then(Value::as_array)).flatten().cloned().collect();
+    let all = exec(b, "design.finding.list", json!({"kind": "check"}))?;
+    let stored: Vec<Value> = all
+        .get("findings")
+        .and_then(Value::as_array)
+        .map(|found| found.iter().filter(|f| f.get("id").is_some_and(|id| ids.contains(id))).cloned().collect())
+        .unwrap_or_default();
+    if let Some(o) = out.as_object_mut() {
+        o.insert("recorded".into(), recorded);
+        o.insert("stored".into(), Value::Array(stored));
+    }
+    Ok(ToolResult::json(&out))
+}
+
+/// `simulate_prototype`: steps played on the simulator (`proto.simulate`, passed through). With
+/// `image` the state the run ended in is drawn (`proto.snapshot`) and follows the JSON as image
+/// content: the same start, and the steps that ran, so a run that stopped at a failing step is
+/// drawn where it stopped.
+fn simulate_prototype(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
+    let image = flag(a, "image")?;
+    let scale = n_arg(a, "scale").map_err(|e| Failure::param("scale", e))?;
+    if scale.is_some_and(|s| s <= 0.0) {
+        return Err(Failure::param("scale", "`scale` must be above 0"));
+    }
+    let mut run = exec(b, "proto.simulate", passed(a, &["start", "steps", "expect", "stopOnFailure"]))?;
+    if !image {
+        return Ok(ToolResult::json(&run));
+    }
+    let taken = run.get("stepsTaken").and_then(Value::as_u64).map_or(usize::MAX, |n| usize::try_from(n).unwrap_or(usize::MAX));
+    let steps: Vec<Value> = a.get("steps").and_then(Value::as_array).map(|s| s.iter().take(taken).cloned().collect()).unwrap_or_default();
+    let mut params = json!({"steps": steps});
+    for (key, value) in [("start", run.get("start").cloned()), ("scale", scale.map(|s| json!(s)))] {
+        if let Some(v) = value.filter(|v| !v.is_null()) {
+            params[key] = v;
+        }
+    }
+    let drawn = exec(b, "proto.snapshot", params).and_then(|shot| decode_data(&shot).map(|bytes| (shot, bytes)));
+    let (info, bytes) = match drawn {
+        Ok((shot, bytes)) => {
+            let (width, height) = png_info(&bytes);
+            let mut info = json!({"format": "png", "width": width, "height": height, "scale": shot.get("scale")});
+            // An attached app's document can change between the two calls.
+            if shot.get("state") != run.get("state") {
+                info["note"] = json!("the document changed between the run and the picture: the picture shows the state the same steps lead to now");
+            }
+            (info, Some(bytes))
+        }
+        // The run stands without its picture, and the result says why there is none.
+        Err(why) => {
+            b.take_error_detail();
+            (json!({"error": why}), None)
+        }
+    };
+    if let Some(o) = run.as_object_mut() {
+        o.insert("image".into(), info);
+    }
+    let mut result = ToolResult::json(&run);
+    if let Some(bytes) = bytes {
+        result.content.push(json!({"type": "image", "data": base64::engine::general_purpose::STANDARD.encode(&bytes), "mimeType": "image/png"}));
+    }
+    Ok(result)
 }
 
 /// `open_file`: the file opens in front and is the working document from here on (`moved`).

@@ -11,7 +11,12 @@ pub struct Client {
 impl Client {
     /// A headless server, initialized.
     pub fn new() -> Self {
-        let mut c = Self { server: Server::headless(), next: 1 };
+        Self::of(Server::headless())
+    }
+
+    /// `server` (over any backend), initialized.
+    pub fn of(server: Server) -> Self {
+        let mut c = Self { server, next: 1 };
         let r = c.rpc("initialize", json!({"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}}));
         assert!(r.get("result").is_some(), "initialize failed: {r}");
         assert!(c.server.handle_line(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#).is_none());

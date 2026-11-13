@@ -28,5 +28,7 @@ mod overlay_anchor;
 mod protocol;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod screenshot_pixel_limit;
+#[allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod verification_tools;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::disallowed_methods)]
 mod working_document;
