@@ -4,14 +4,18 @@
 //! Two things are a person's to say and are refused to an AI agent: that an assumption was
 //! supported or refuted (that is evidence about people, which an agent's own review isn't), and
 //! that a decision is accepted. An agent proposes; its changes to an accepted decision put it
-//! back to proposed.
+//! back to proposed, and the decision then says who edited it (`editedBy`). What a person
+//! recorded about an assumption (that it was supported or refuted, as it reads, on what
+//! evidence) an agent neither changes nor removes.
 
 use figcraft_doc::design::{Assumption, AssumptionStatus, Brief, Decision, DecisionStatus, DesignContext, Stage};
 use figcraft_doc::{Document, NodeId};
 use serde_json::{Value, json};
 
 use super::checks::missing_links;
-use super::input::{actor, choice, edit, entry_ids, layers, req_choice, req_entry_id, req_layer_id, req_text, room_for, text, text_not_empty, texts};
+use super::input::{
+    actor, agent, choice, edit, entry_ids, layers, req_choice, req_entry_id, req_layer_id, req_text, room_for, shown, text, text_not_empty, texts,
+};
 use crate::cmd::CommandSpec;
 use crate::{Result, Session, bad, spec};
 
@@ -77,14 +81,14 @@ pub(super) fn specs() -> Vec<CommandSpec> {
         spec!(
             "design.assumption.set",
             "Edit assumption",
-            "{id, text?, status?: untested|supported|refuted, evidence?, links?: [layer ids]}  only the given fields change → {assumption}",
+            "{id, text?, status?: untested|supported|refuted, evidence?, links?: [layer ids]}  only the given fields change; an AI agent can't change the text, status or evidence of an assumption a person recorded as supported or refuted (its links it may) → {assumption}",
             true,
             assumption_set
         ),
         spec!(
             "design.assumption.remove",
             "Remove assumption",
-            "{id}  decisions that rested on it no longer list it → {removed}",
+            "{id}  decisions that rested on it no longer list it; an AI agent removes only untested assumptions → {removed}",
             true,
             assumption_remove
         ),
@@ -98,7 +102,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
         spec!(
             "design.decision.set",
             "Edit decision",
-            "{id, title?, rationale?, rejected?, assumptions?: [assumption ids], links?: [layer ids]}  only the given fields change; an AI agent's change to an accepted decision makes it proposed again → {decision}",
+            "{id, title?, rationale?, rejected?, assumptions?: [assumption ids], links?: [layer ids]}  only the given fields change; an AI agent's change to an accepted decision makes it proposed again; a change by anyone but its author is recorded as editedBy → {decision}",
             true,
             decision_set
         ),
@@ -112,7 +116,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
         spec!(
             "design.decision.accept",
             "Accept decision",
-            "{id}  a person stands behind it as the brief is now (it takes the current briefRevision); refused to an AI agent → {decision}",
+            "{id}  a person stands behind it as the brief is now (it takes the current briefRevision); refused to an AI agent. Accepting the decision of an AI agent's proposed choice among alternatives makes that choice (see design.alternative.choose) → {decision, chose?: [{set, node}]}",
             true,
             decision_accept
         ),
@@ -220,7 +224,7 @@ fn check_assumption(cmd: &str, a: &Assumption) -> Result<()> {
 /// found, but not that an assumption holds or fails.
 fn refuse_agent_status(cmd: &str, s: &Session, status: Option<AssumptionStatus>) -> Result<()> {
     match status {
-        Some(st) if s.agent.is_some() && st != AssumptionStatus::Untested => {
+        Some(st) if agent(s).is_some() && st != AssumptionStatus::Untested => {
             Err(bad(cmd, "`status`: only a person records that an assumption was supported or refuted; put what you found in `evidence`"))
         }
         _ => Ok(()),
@@ -251,21 +255,26 @@ fn assumption_set(s: &mut Session, p: &Value) -> Result<Value> {
     let status = choice(cmd, p, "status", &STATUSES)?;
     refuse_agent_status(cmd, s, status)?;
     let evidence = text(cmd, p, "evidence")?;
-    let agent = s.agent.is_some();
+    let me = agent(s).map(str::to_string);
     edit(s, |ctx, doc| {
         let links = layers(cmd, doc, p, "links")?;
         let a = ctx.assumptions.iter_mut().find(|a| a.id == id).ok_or_else(|| bad(cmd, format!("`id`: no assumption {id}")))?;
-        if let Some(t) = statement {
-            // What a person found evidence for is the statement as it reads: an agent rewording
-            // it would carry the finding over to something nobody tested.
-            if agent && a.status != AssumptionStatus::Untested && status.is_none() && t != a.text {
-                return Err(bad(
-                    cmd,
-                    format!(
-                        "`text`: a person recorded {id} as supported or refuted as it reads; add another assumption, or pass `status`: untested with the new text"
-                    ),
-                ));
+        // What a person found out is theirs: the statement as it reads (rewording it would carry
+        // their finding over to something nobody tested), that it was supported or refuted, and
+        // the evidence for it.
+        if let Some(me) = &me
+            && a.status != AssumptionStatus::Untested
+        {
+            let changes = [
+                ("text", statement.as_ref().is_some_and(|t| *t != a.text)),
+                ("status", status.is_some_and(|st| st != a.status)),
+                ("evidence", evidence.as_ref().is_some_and(|e| *e != a.evidence)),
+            ];
+            if let Some((key, _)) = changes.iter().find(|(_, changed)| *changed) {
+                return Err(bad(cmd, format!("`{key}`: {}", persons_assumption(a, me, "change"))));
             }
+        }
+        if let Some(t) = statement {
             a.text = t;
         }
         if let Some(st) = status {
@@ -282,12 +291,28 @@ fn assumption_set(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+/// Why an AI agent (`me`) may not `verb` assumption `a`, which a person settled.
+fn persons_assumption(a: &Assumption, me: &str, verb: &str) -> String {
+    let status = if a.status == AssumptionStatus::Refuted { "refuted" } else { "supported" };
+    format!(
+        "a person recorded {} as {status} (evidence: {}); an AI agent ({me}) doesn't {verb} that. Add another assumption (design.assumption.add) or ask them to {verb} it",
+        a.id,
+        shown(&json!(a.evidence))
+    )
+}
+
 fn assumption_remove(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "design.assumption.remove";
     let id = req_entry_id(cmd, p, "id")?;
+    let me = agent(s).map(str::to_string);
     edit(s, |ctx, _| {
-        if !ctx.assumptions.iter().any(|a| a.id == id) {
+        let Some(a) = ctx.assumptions.iter().find(|a| a.id == id) else {
             return Err(bad(cmd, format!("`id`: no assumption {id}")));
+        };
+        if let Some(me) = &me
+            && a.status != AssumptionStatus::Untested
+        {
+            return Err(bad(cmd, format!("`id`: {}", persons_assumption(a, me, "remove"))));
         }
         ctx.assumptions.retain(|a| a.id != id);
         for d in &mut ctx.decisions {
@@ -325,7 +350,7 @@ fn decision_add(s: &mut Session, p: &Value) -> Result<Value> {
     let title = req_text(cmd, p, "title")?;
     let rationale = req_text(cmd, p, "rationale")?;
     let rejected = text(cmd, p, "rejected")?.unwrap_or_default();
-    let agent = s.agent.clone();
+    let agent = agent(s).map(str::to_string);
     edit(s, |ctx, doc: &Document| {
         let assumptions = assumption_refs(cmd, ctx, p, "assumptions")?.unwrap_or_default();
         let links = layers(cmd, doc, p, "links")?.unwrap_or_default();
@@ -343,7 +368,7 @@ fn decision_set(s: &mut Session, p: &Value) -> Result<Value> {
     let title = text_not_empty(cmd, p, "title")?;
     let rationale = text_not_empty(cmd, p, "rationale")?;
     let rejected = text(cmd, p, "rejected")?;
-    let agent = s.agent.is_some();
+    let (who, by_agent) = (actor(s), agent(s).is_some());
     edit(s, |ctx, doc| {
         let assumptions = assumption_refs(cmd, ctx, p, "assumptions")?;
         let links = layers(cmd, doc, p, "links")?;
@@ -364,9 +389,13 @@ fn decision_set(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(l) = links {
             d.links = l;
         }
-        // What the person accepted is the decision as it read then.
-        if agent && *d != before {
-            d.status = DecisionStatus::Proposed;
+        if *d != before {
+            // The text is no longer all its author's: say who changed it last.
+            d.edited_by = if who == d.author { String::new() } else { who };
+            // What the person accepted is the decision as it read then.
+            if by_agent {
+                d.status = DecisionStatus::Proposed;
+            }
         }
         Ok(json!({"decision": d}))
     })
@@ -375,7 +404,7 @@ fn decision_set(s: &mut Session, p: &Value) -> Result<Value> {
 fn decision_remove(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "design.decision.remove";
     let id = req_entry_id(cmd, p, "id")?;
-    let agent = s.agent.clone();
+    let agent = agent(s).map(str::to_string);
     edit(s, |ctx, _| {
         let Some(d) = ctx.decisions.iter().find(|d| d.id == id) else {
             return Err(bad(cmd, format!("`id`: no decision {id}")));
@@ -390,9 +419,15 @@ fn decision_remove(s: &mut Session, p: &Value) -> Result<Value> {
             ));
         }
         ctx.decisions.retain(|d| d.id != id);
-        // A set of alternatives keeps what was chosen, without a record of why.
-        for v in ctx.alternatives.iter_mut().filter(|v| v.decision == id) {
-            v.decision.clear();
+        // A set of alternatives keeps what was chosen, without a record of why; a proposed choice
+        // goes with the decision that proposed it.
+        for v in ctx.alternatives.iter_mut() {
+            if v.decision == id {
+                v.decision.clear();
+            }
+            if v.proposal.as_ref().is_some_and(|p| p.decision == id) {
+                v.proposal = None;
+            }
         }
         Ok(json!({"removed": id}))
     })
@@ -408,7 +443,7 @@ fn status_word(status: DecisionStatus) -> &'static str {
 fn decision_accept(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "design.decision.accept";
     let id = req_entry_id(cmd, p, "id")?;
-    if s.agent.is_some() {
+    if agent(s).is_some() {
         return Err(bad(cmd, format!("a person accepts a decision: {id} stays proposed until the user accepts it ({} can't)", actor(s))));
     }
     edit(s, |ctx, _| {
@@ -416,6 +451,20 @@ fn decision_accept(s: &mut Session, p: &Value) -> Result<Value> {
         let d = ctx.decisions.iter_mut().find(|d| d.id == id).ok_or_else(|| bad(cmd, format!("`id`: no decision {id}")))?;
         d.status = DecisionStatus::Accepted;
         d.brief_revision = revision;
-        Ok(json!({"decision": d}))
+        let mut out = json!({"decision": d});
+        // The decision of a choice an agent proposed: accepting it makes the choice.
+        let mut chose = Vec::new();
+        for v in &mut ctx.alternatives {
+            let Some(p) = v.proposal.take_if(|p| p.decision == id) else { continue };
+            if p.node == v.source || v.members.iter().any(|m| m.node == p.node) {
+                v.chosen = Some(p.node);
+                v.decision.clone_from(&id);
+                chose.push(json!({"set": v.id, "node": p.node}));
+            }
+        }
+        if let (Some(o), false) = (out.as_object_mut(), chose.is_empty()) {
+            o.insert("chose".into(), json!(chose));
+        }
+        Ok(out)
     })
 }

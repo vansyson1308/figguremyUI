@@ -182,12 +182,38 @@ fn only_a_person_records_that_an_assumption_was_supported_or_refuted() {
     // The user can.
     ex(&mut s, "design.assumption.set", json!({"id": id, "status": "refuted", "evidence": "Interview 3: nobody knew it"}));
     assert_eq!(s.doc().unwrap().design.assumptions[0].status, AssumptionStatus::Refuted);
-    // What was refuted is the statement as it reads: an agent can't reword it and keep the verdict.
-    let e = agent_err(&mut s, "design.assumption.set", json!({"id": id, "text": "Users know the ward name"}));
-    assert!(e.contains("`text`") && e.contains("add another assumption"), "{e}");
-    as_agent(&mut s, "design.assumption.set", json!({"id": id, "text": "Users know the ward name", "status": "untested"}));
-    let a = &s.doc().unwrap().design.assumptions[0];
-    assert_eq!((a.text.as_str(), a.status), ("Users know the ward name", AssumptionStatus::Untested));
+    // What the person found out is theirs: an agent can't reword the statement and keep the
+    // verdict, put it back to untested, replace the evidence, or remove the assumption.
+    let before = super::doc_json(&s);
+    for (cmd, params, key) in [
+        ("design.assumption.set", json!({"id": id, "text": "Users know the ward name"}), "`text`"),
+        ("design.assumption.set", json!({"id": id, "text": "Users know the ward name", "status": "untested"}), "`text`"),
+        ("design.assumption.set", json!({"id": id, "status": "untested"}), "`status`"),
+        ("design.assumption.set", json!({"id": id, "evidence": "My own reading of the layout"}), "`evidence`"),
+        ("design.assumption.set", json!({"id": id, "evidence": ""}), "`evidence`"),
+        ("design.assumption.remove", json!({"id": id}), "`id`"),
+    ] {
+        let e = agent_err(&mut s, cmd, params.clone());
+        assert!(
+            e.contains(key)
+                && e.contains("a person recorded A1 as refuted (evidence: \"Interview 3: nobody knew it\")")
+                && e.contains("an AI agent (Claude (agent)) doesn't")
+                && e.contains("design.assumption.add"),
+            "{cmd} {params}: {e}"
+        );
+        let batch = json!({"commands": [{"command": cmd, "params": params}]});
+        assert!(s.execute_as(Some(super::AGENT), "command.batch", &batch).is_err(), "{cmd} in a batch");
+    }
+    assert_eq!(super::doc_json(&s), before, "the person's record is as they left it");
+    // It may still link the assumption to layers, and repeat what is there.
+    let home = frame(&mut s, "Home", 0.0, 320.0, 480.0);
+    as_agent(&mut s, "design.assumption.set", json!({"id": id, "links": [home], "evidence": "Interview 3: nobody knew it"}));
+    let a = s.doc().unwrap().design.assumptions[0].clone();
+    assert_eq!((a.status, a.evidence.as_str(), a.links), (AssumptionStatus::Refuted, "Interview 3: nobody knew it", vec![home]));
+    // The user changes and removes it; an agent removes one that is untested.
+    ex(&mut s, "design.assumption.set", json!({"id": id, "text": "Users know the ward name", "status": "untested"}));
+    as_agent(&mut s, "design.assumption.remove", json!({"id": id}));
+    assert!(s.doc().unwrap().design.assumptions.is_empty());
 }
 
 #[test]
@@ -218,10 +244,19 @@ fn decisions_record_who_made_them_and_whether_a_person_accepted() {
     let r = ex_undoable(&mut s, "design.decision.accept", json!({"id": "D2"}));
     assert_eq!((r["decision"]["status"].as_str(), r["decision"]["briefRevision"].as_u64()), (Some("accepted"), Some(2)));
 
-    // An agent's change to an accepted decision makes it a proposal again; the author stays.
+    // An agent's change to an accepted decision makes it a proposal again; the author stays, and
+    // the decision says who edited it.
+    assert!(s.doc().unwrap().design.decisions[0].edited_by.is_empty());
     let r = as_agent(&mut s, "design.decision.set", json!({"id": "D1", "rationale": "Thumb reach, and the keyboard covers the top"}));
     assert_eq!(r["decision"]["status"], "proposed");
-    assert_eq!(r["decision"]["author"], "user");
+    assert_eq!((&r["decision"]["author"], &r["decision"]["editedBy"]), (&json!("user"), &json!(AGENT_NAME)));
+    assert_eq!(reopened(&s).design.decisions[0].edited_by, AGENT_NAME, "kept with the file");
+    // The author's own next edit makes the text theirs again; the user's edit of an agent's
+    // decision is recorded the same way.
+    let r = ex_undoable(&mut s, "design.decision.set", json!({"id": "D1", "rationale": "Thumb reach"}));
+    assert!(r["decision"].get("editedBy").is_none(), "{r}");
+    let r = ex_undoable(&mut s, "design.decision.set", json!({"id": "D2", "rejected": "Small type: unreadable at arm's length"}));
+    assert_eq!((&r["decision"]["author"], &r["decision"]["editedBy"]), (&json!(AGENT_NAME), &json!("user")));
     // The user's own edit of an accepted decision leaves it accepted, and a patch keeps the rest.
     let r = ex_undoable(&mut s, "design.decision.set", json!({"id": "D2", "title": "Large type everywhere", "links": [home], "assumptions": []}));
     assert_eq!((r["decision"]["status"].as_str(), r["decision"]["rationale"].as_str()), (Some("accepted"), Some("Read at arm's length")));

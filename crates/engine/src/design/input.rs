@@ -12,17 +12,23 @@ use crate::params::{get, id_of};
 use crate::{Result, Session, bad};
 
 /// Who a command runs for when it isn't an AI agent.
-pub(super) const USER: &str = "user";
+pub(crate) const USER: &str = "user";
 
 /// The AI agent the running command is for, by the name its records are signed with
 /// (`Claude (agent)`); `None`: the user. The one place the design and prototype commands ask.
-pub(super) fn agent(s: &Session) -> Option<&str> {
+pub(crate) fn agent(s: &Session) -> Option<&str> {
     s.agent.as_deref()
 }
 
 /// Who the running command is for: the agent's name (as its comments are signed), else [`USER`].
-pub(super) fn actor(s: &Session) -> String {
+pub(crate) fn actor(s: &Session) -> String {
     agent(s).unwrap_or(USER).to_string()
+}
+
+/// The author of an end state or a scenario as messages name them: a file from before authors
+/// were recorded says nothing, and what it holds is the user's.
+pub(crate) fn author_name(author: &str) -> &str {
+    if author.is_empty() { USER } else { author }
 }
 
 /// Change the design context with `f`, which also sees the document. The file changes (one undo

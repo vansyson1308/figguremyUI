@@ -4,16 +4,20 @@
 //! The source is never changed and nothing is deleted unless asked. A set says what it is
 //! trying to find out and the limits every member has to respect, both stated before the
 //! members are made; each member says what it was made under and what it gives up.
+//!
+//! Choosing is a person's: when an AI agent chooses, the set keeps what was chosen before and
+//! records the agent's pick as a proposal with a proposed decision; a person makes it the choice
+//! by accepting that decision, or chooses themselves.
 
 use std::sync::Arc;
 
-use figcraft_doc::design::{Alternative, AlternativeSet, DesignContext, MAX_TEXT};
+use figcraft_doc::design::{Alternative, AlternativeSet, ChoiceProposal, DecisionStatus, DesignContext, MAX_TEXT};
 use figcraft_doc::{Document, NodeId, NodeKind};
 use serde_json::{Value, json};
 
 use super::compare::{Difference, Facts};
 use super::context::new_decision;
-use super::input::{edit, flag, req_entry_id, req_layer, req_layer_id, req_text, room_for, text, text_not_empty, texts};
+use super::input::{agent, edit, flag, req_entry_id, req_layer, req_layer_id, req_text, room_for, text, text_not_empty, texts};
 use crate::cmd::CommandSpec;
 use crate::params::get;
 use crate::{Result, Session, bad, spec};
@@ -52,14 +56,14 @@ pub(super) fn specs() -> Vec<CommandSpec> {
         spec!(
             "design.alternative.compare",
             "Compare alternatives",
-            "{set}  facts only, no ranking → {set, question, constraints, chosen, decision, members: [{node, name, isSource, constraint, intent, tradeoffs, exists, metrics: {width, height, layers (inside it), depth, textLayers, words, characters, interactive (layers with interactions), instances, components (distinct main components), images, density (area of the layers that hold no others, inside the frame, over the frame's area; 0–1, overlaps count twice)}, readingOrder: [up to 40 texts, top to bottom then left to right, each cut to 80 chars], actions: [names of layers with a click interaction]}] (the source first; hidden layers aren't counted), differences: [{a, b, structure (kinds, nesting or number of layers), order (the texts in reading order, ignoring case and spacing), content (the set of texts), actions (what reacts and what it does), size, layout (places and sizes of layers) and paint (fills, strokes, effects, fonts): null when the structure differs (layers can't be matched one to one), paintOnly, identical}] (each member with the source; members with each other up to 12 members), warnings: [text] (a member that differs from the source only in paint, or not at all; layers that are gone)}",
+            "{set}  facts only, no ranking → {set, question, constraints, chosen, decision, proposal: {node, decision} | null (an AI agent's pending proposal to choose), members: [{node, name, isSource, constraint, intent, tradeoffs, exists, metrics: {width, height, layers (inside it), depth, textLayers, words, characters, interactive (layers with interactions), instances, components (distinct main components), images, density (area of the layers that hold no others, inside the frame, over the frame's area; 0–1, overlaps count twice)}, readingOrder: [up to 40 texts, top to bottom then left to right, each cut to 80 chars], actions: [names of layers with a click interaction]}] (the source first; hidden layers aren't counted), differences: [{a, b, structure (kinds, nesting or number of layers), order (the texts in reading order, ignoring case and spacing), content (the set of texts), actions (what reacts and what it does), size, layout (places and sizes of layers) and paint (fills, strokes, effects, fonts): null when the structure differs (layers can't be matched one to one), paintOnly, identical}] (each member with the source; members with each other up to 12 members), warnings: [text] (a member that differs from the source only in paint, or not at all; layers that are gone)}",
             false,
             compare
         ),
         spec!(
             "design.alternative.choose",
             "Choose alternative",
-            "{set, node (a member, or the source), rationale}  marks it as chosen and records a decision (accepted when the user chooses, proposed when an AI agent does) linked to it; nothing is deleted → {decision, status}",
+            "{set, node (a member, or the source), rationale}  the user's choice marks it as chosen and records an accepted decision linked to it. An AI agent's records a proposal only: a proposed decision, kept on the set as `proposal`; what is chosen doesn't change until a person accepts that decision (design.decision.accept) or chooses themselves. Nothing is deleted → {decision, status: accepted|proposed, chosen (the set's choice after the call; null: none), proposed? (the layer an agent proposed)}",
             true,
             choose
         ),
@@ -306,6 +310,7 @@ fn compare(s: &mut Session, p: &Value) -> Result<Value> {
         "constraints": set.constraints,
         "chosen": set.chosen,
         "decision": set.decision,
+        "proposal": set.proposal,
         "members": rows.iter().map(Row::json).collect::<Vec<_>>(),
         "differences": differences,
         "warnings": warnings,
@@ -316,7 +321,7 @@ fn choose(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "design.alternative.choose";
     let id = req_entry_id(cmd, p, "set")?;
     let rationale = req_text(cmd, p, "rationale")?;
-    let agent = s.agent.clone();
+    let agent = agent(s).map(str::to_string);
     edit(s, |ctx, doc| {
         let node = req_layer(cmd, doc, p, "node")?;
         let set = set_mut(cmd, ctx, &id)?;
@@ -329,10 +334,26 @@ fn choose(s: &mut Session, p: &Value) -> Result<Value> {
         let title: String = format!("Chose \"{name}\"{asked}").chars().take(MAX_TEXT).collect();
         room_for(cmd, "decisions", ctx.decisions.len(), 1)?;
         let decision = new_decision(ctx, agent.as_deref(), title, rationale, vec![node]);
-        let out = json!({"decision": decision.id, "status": decision.status});
         let set = set_mut(cmd, ctx, &id)?;
-        set.chosen = Some(node);
-        set.decision = decision.id.clone();
+        let out = match &agent {
+            // A person's choice stands, and settles whatever an agent had proposed.
+            None => {
+                set.chosen = Some(node);
+                set.decision = decision.id.clone();
+                set.proposal = None;
+                json!({"decision": decision.id, "status": decision.status, "chosen": node})
+            }
+            // An agent proposes: what is chosen stays as a person left it.
+            Some(me) => {
+                let earlier = set.proposal.replace(ChoiceProposal { node, decision: decision.id.clone() });
+                let out = json!({"decision": decision.id, "status": decision.status, "chosen": set.chosen, "proposed": node});
+                // Its own earlier proposal for the set, still pending, is replaced by this one.
+                if let Some(old) = earlier {
+                    ctx.decisions.retain(|d| !(d.id == old.decision && d.status == DecisionStatus::Proposed && d.author == *me));
+                }
+                out
+            }
+        };
         ctx.decisions.push(decision);
         Ok(out)
     })
@@ -361,6 +382,10 @@ fn remove(s: &mut Session, p: &Value) -> Result<Value> {
             if set.chosen == Some(n) {
                 set.chosen = None;
                 set.decision.clear();
+            }
+            // A proposal to choose what is forgotten has nothing left to propose.
+            if set.proposal.as_ref().is_some_and(|p| p.node == n) {
+                set.proposal = None;
             }
             (set.source, vec![n])
         }

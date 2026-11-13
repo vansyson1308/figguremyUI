@@ -6,6 +6,11 @@
 //! never changed by a check or a run (the simulator plays a copy), and what is reported is what
 //! was measured (which screens are reachable, which step failed and why) rather than a verdict on
 //! the design.
+//!
+//! What settles a measured finding is a person's to say, so the two records that can make one go
+//! away have authors: an end state an AI agent declares is a proposal until a person accepts it,
+//! and an agent changes and removes only the scenarios it wrote itself. A convention between
+//! cooperating parties, not a security boundary (see [`crate::design`]).
 
 use figcraft_doc::design::MAX_ENTRIES;
 use serde_json::{Value, json};
@@ -53,11 +58,24 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "proto.endState.set",
             "Mark as end of flow",
-            "{id (a top-level frame), reason? (why the flow may end here), on? (default true; false takes the declaration back)}  declares a frame where a flow may end on purpose, so flow.deadEnd doesn't report it → {id, endState, reason}",
+            "{id (a top-level frame), reason? (why the flow may end here; required from an AI agent), on? (default true; false takes the declaration back)}  declares a frame where a flow may end on purpose, so flow.deadEnd doesn't report it. The user's declaration stands at once (and accepts an AI agent's proposal for the frame). An AI agent's is a proposal: the frame stays a dead end until a person accepts it (proto.endState.accept); an agent changes and takes back only its own proposals → {id, endState (declared and accepted), status: proposed|accepted|null, author, reason, note? (when proposed)}",
             true,
             end_state::set
         ),
-        spec!("proto.endState.list", "List ends of flows", "{}  → {endStates: [{node, name, reason, exists}]}", false, end_state::list),
+        spec!(
+            "proto.endState.accept",
+            "Accept end of flow",
+            "{id (a frame declared as an end state)}  a person stands behind an end state an AI agent proposed: from then on flow.deadEnd doesn't report the frame; refused to an AI agent → {id, endState, status, author, reason}",
+            true,
+            end_state::accept
+        ),
+        spec!(
+            "proto.endState.list",
+            "List ends of flows",
+            "{}  → {endStates: [{node, name, reason, author, status: proposed|accepted, exists}]}",
+            false,
+            end_state::list
+        ),
         spec!(
             "proto.simulate",
             "Simulate prototype",
@@ -79,7 +97,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 steps_doc!(),
                 ", expect? ",
                 expect_doc!(),
-                " (what must hold after the last step), purpose? (what passing shows)}  stores a walk through the prototype with what should be true along the way; every layer it names must exist in the file (layers that only exist once an instance was changed to another variant can't be named: name the instance and expect its variant) → {id}"
+                " (what must hold after the last step), purpose? (what passing shows)}  stores a walk through the prototype with what should be true along the way; every layer it names must exist in the file (layers that only exist once an instance was changed to another variant can't be named: name the instance and expect its variant); it is recorded as written by whoever adds it (the user, or the AI agent) → {id}"
             ),
             true,
             scenario::add
@@ -87,15 +105,21 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "proto.scenario.set",
             "Edit scenario",
-            "{id (a scenario id: S1), name?, start?, steps? (replaces them all; forms as proto.scenario.add), expect? ({} clears it), purpose? (\"\" clears it)}  only the keys given change → {id, scenario}",
+            "{id (a scenario id: S1), name?, start?, steps? (replaces them all; forms as proto.scenario.add), expect? ({} clears it), purpose? (\"\" clears it)}  only the keys given change; an AI agent changes only scenarios it wrote itself → {id, scenario}",
             true,
             scenario::set
         ),
-        spec!("proto.scenario.remove", "Remove scenario", "{id (a scenario id: S1)}  → {removed}", true, scenario::remove),
+        spec!(
+            "proto.scenario.remove",
+            "Remove scenario",
+            "{id (a scenario id: S1)}  an AI agent removes only scenarios it wrote itself → {removed}",
+            true,
+            scenario::remove
+        ),
         spec!(
             "proto.scenario.list",
             "List scenarios",
-            "{}  → {scenarios: [{id, name, purpose?, start, steps: [{action: {type…}, expect?, note?}], expect?}]}",
+            "{}  → {scenarios: [{id, name, purpose?, author?, start, steps: [{action: {type…}, expect?, note?}], expect?}]}",
             false,
             scenario::list
         ),

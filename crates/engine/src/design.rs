@@ -27,6 +27,7 @@ mod tests;
 use crate::cmd::CommandSpec;
 
 pub use checks::{min_stage, rules};
+pub(crate) use input::{USER, actor, agent, author_name};
 
 pub fn specs() -> Vec<CommandSpec> {
     let mut all = context::specs();

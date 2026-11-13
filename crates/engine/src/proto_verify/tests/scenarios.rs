@@ -5,7 +5,7 @@ use figcraft_doc::NodeId;
 use figcraft_doc::design::MAX_ENTRIES;
 use serde_json::{Value, json};
 
-use super::{check, err, file, problems};
+use super::{check, err, file, problems, screen};
 use crate::Session;
 use crate::proto_sim::tests::{button, ex, frame, idv, navigate, state_variables};
 
@@ -60,6 +60,7 @@ fn a_scenario_is_stored_listed_run_edited_and_removed() {
             "id": "S1",
             "name": "Place an order",
             "purpose": "the primary task can be finished from the start screen",
+            "author": "user",
             "start": a,
             "steps": [
                 {"action": {"type": "gesture", "node": next, "gesture": "click"}, "expect": {"screen": b}},
@@ -86,7 +87,7 @@ fn a_scenario_is_stored_listed_run_edited_and_removed() {
     assert!(r["scenario"].get("purpose").is_none(), "an empty purpose clears it");
     ex(&mut s, "proto.scenario.set", json!({"id": "S1", "expect": {}, "start": help, "steps": []}));
     let now = ex(&mut s, "proto.scenario.list", json!({}))["scenarios"][0].clone();
-    assert_eq!(now, json!({"id": "S1", "name": "Order", "start": help, "steps": []}));
+    assert_eq!(now, json!({"id": "S1", "name": "Order", "author": "user", "start": help, "steps": []}));
     // Ids are never given out twice.
     assert_eq!(ex(&mut s, "proto.scenario.add", json!({"name": "Second", "start": a, "steps": []})), json!({"id": "S2"}));
     assert_eq!(ex(&mut s, "proto.scenario.remove", json!({"id": "S2"})), json!({"removed": "S2"}));
@@ -285,13 +286,19 @@ fn end_states_are_top_level_frames_declared_once() {
     let (mut s, [a, _, done, help], [next, _]) = checkout();
     assert_eq!(
         ex(&mut s, "proto.endState.list", json!({})),
-        json!({"endStates": [{"node": done, "name": "Done", "reason": "the order is placed", "exists": true}]})
+        json!({"endStates": [{"node": done, "name": "Done", "reason": "the order is placed", "author": "user", "status": "accepted", "exists": true}]})
     );
-    assert_eq!(ex(&mut s, "proto.endState.set", json!({"id": help})), json!({"id": help, "endState": true, "reason": ""}));
+    assert_eq!(
+        ex(&mut s, "proto.endState.set", json!({"id": help})),
+        json!({"id": help, "endState": true, "status": "accepted", "author": "user", "reason": ""})
+    );
     // Declaring again keeps the reason unless one is given.
     assert_eq!(ex(&mut s, "proto.endState.set", json!({"id": done}))["reason"], json!("the order is placed"));
     assert_eq!(ex(&mut s, "proto.endState.set", json!({"id": done, "reason": " paid "}))["reason"], json!("paid"));
-    assert_eq!(ex(&mut s, "proto.endState.set", json!({"id": help, "on": false})), json!({"id": help, "endState": false, "reason": null}));
+    assert_eq!(
+        ex(&mut s, "proto.endState.set", json!({"id": help, "on": false})),
+        json!({"id": help, "endState": false, "status": null, "reason": null})
+    );
     assert_eq!(s.doc().unwrap().design.end_states.len(), 1);
     // (parameters, what the error names)
     for (params, names) in [
@@ -345,4 +352,236 @@ fn runs_that_set_variables_and_change_variants_leave_the_file_alone() {
     let v = check(&mut s);
     assert!(problems(&v, "scenario.fails").is_empty(), "{v}");
     assert_eq!((file(&s), s.undo_depth()), before, "the file still has the instance off and count at 0");
+}
+
+/// The AI agent the agent-run commands of these tests are for, and its name in records.
+const AGENT: &str = "Claude";
+const AGENT_NAME: &str = "Claude (agent)";
+
+fn as_agent(s: &mut Session, cmd: &str, p: Value) -> Value {
+    s.execute_as(Some(AGENT), cmd, &p).unwrap_or_else(|e| panic!("{cmd} {p} (as an agent): {e}"))
+}
+
+/// The error of a command an agent runs that must be refused, alone and as the only step of a
+/// batch the agent runs; the file is left as it was either way.
+fn agent_refused(s: &mut Session, cmd: &str, p: Value) -> String {
+    let before = (file(s), s.undo_depth());
+    let batch = json!({"commands": [{"command": cmd, "params": p.clone()}]});
+    let in_batch = s.execute_as(Some(AGENT), "command.batch", &batch);
+    assert!(in_batch.is_err(), "{cmd} {p} should be refused to an agent inside a batch too, gave {in_batch:?}");
+    let e = match s.execute_as(Some(AGENT), cmd, &p) {
+        Ok(v) => panic!("{cmd} {p} should be refused to an agent, gave {v}"),
+        Err(e) => e.to_string(),
+    };
+    assert_eq!((file(s), s.undo_depth()), before, "{cmd} was refused but changed the file");
+    e
+}
+
+/// A flow A → B ("Go" on A) on which B has no way out. Returns the session and (a, b, go).
+fn a_dead_end() -> (Session, NodeId, NodeId, NodeId) {
+    let mut s = Session::new();
+    let (a, b) = (frame(&mut s, "A", 0.0), frame(&mut s, "B", 400.0));
+    let go = button(&mut s, "Go", a, 20.0, navigate(b));
+    ex(&mut s, "proto.flow.add", json!({"start": a}));
+    (s, a, b, go)
+}
+
+#[test]
+fn an_end_state_an_agent_declares_is_a_proposal_that_exempts_nothing_until_a_person_accepts_it() {
+    let (mut s, a, b, go) = a_dead_end();
+    ex(&mut s, "design.check.record", json!({"rules": ["flow.deadEnd"]}));
+    // Without a reason an agent declares nothing.
+    for params in [json!({"id": b}), json!({"id": b, "reason": "  "})] {
+        let e = agent_refused(&mut s, "proto.endState.set", params);
+        assert!(e.contains("`reason` is required when an AI agent declares an end state") && e.contains("proto.endState.accept"), "{e}");
+    }
+    // With one, the frame is proposed as an end state: recorded with its author, and still a
+    // dead end for the check, the recheck and a run.
+    let before = file(&s);
+    let r = as_agent(&mut s, "proto.endState.set", json!({"id": b, "reason": "The order is placed here"}));
+    assert_eq!(
+        (&r["endState"], &r["status"], &r["author"], &r["reason"]),
+        (&json!(false), &json!("proposed"), &json!(AGENT_NAME), &json!("The order is placed here"))
+    );
+    assert!(r["note"].as_str().unwrap().contains("until a person accepts it with proto.endState.accept"), "{r}");
+    assert_eq!(
+        serde_json::to_value(&s.doc().unwrap().design.end_states).unwrap(),
+        json!([{"node": b, "reason": "The order is placed here", "author": AGENT_NAME, "status": "proposed"}])
+    );
+    // One undo step that restores the file exactly.
+    let after = file(&s);
+    assert!(s.undo().unwrap());
+    assert_eq!(file(&s), before);
+    assert!(s.redo().unwrap());
+    assert_eq!(file(&s), after);
+    let v = check(&mut s);
+    let dead = problems(&v, "flow.deadEnd");
+    assert_eq!(dead.len(), 1, "{v}");
+    assert!(
+        dead[0]["evidence"]
+            .as_str()
+            .unwrap()
+            .ends_with("; declared as an end state by Claude (agent), waiting for a person to accept (proto.endState.accept)"),
+        "{dead:?}"
+    );
+    assert!(dead[0]["suggestion"].as_str().unwrap().contains("proto.endState.accept"));
+    let sb = screen(&v, b);
+    assert_eq!(
+        (&sb["endState"], &sb["deadEnd"], &sb["endStateProposedBy"], &v["ok"]),
+        (&json!(false), &json!(true), &json!(AGENT_NAME), &json!(false))
+    );
+    let recheck = ex(&mut s, "design.finding.recheck", json!({"id": "F1"}));
+    assert_eq!((recheck["results"][0]["passed"].as_bool(), recheck["results"][0]["status"].as_str()), (Some(false), Some("open")), "{recheck}");
+    let run = ex(&mut s, "proto.simulate", json!({"start": a, "steps": [{"click": go}], "expect": {"endState": true}}));
+    assert_eq!((&run["passed"], &run["state"]["endState"]), (&json!(false), &json!(false)), "a proposal isn't an end state yet: {run}");
+    assert_eq!(
+        ex(&mut s, "proto.endState.list", json!({}))["endStates"],
+        json!([{"node": b, "name": "B", "reason": "The order is placed here", "author": AGENT_NAME, "status": "proposed", "exists": true}])
+    );
+}
+
+#[test]
+fn a_person_accepts_an_agents_end_state_and_from_then_on_it_is_theirs() {
+    let (mut s, a, b, go) = a_dead_end();
+    ex(&mut s, "design.check.record", json!({"rules": ["flow.deadEnd"]}));
+    as_agent(&mut s, "proto.endState.set", json!({"id": b, "reason": "The order is placed here"}));
+    // The agent can't accept it; it may reword its own proposal, or take it back.
+    let e = agent_refused(&mut s, "proto.endState.accept", json!({"id": b}));
+    assert!(e.contains("a person accepts an end state") && e.contains("Claude (agent) can't"), "{e}");
+    as_agent(&mut s, "proto.endState.set", json!({"id": b, "reason": "The order is placed"}));
+    assert_eq!(s.doc().unwrap().design.end_states[0].reason, "The order is placed");
+    // A person accepts: one undo step, and the dead end is settled by the rule.
+    let before = file(&s);
+    let r = ex(&mut s, "proto.endState.accept", json!({"id": b}));
+    assert_eq!((&r["endState"], &r["status"], &r["author"]), (&json!(true), &json!("accepted"), &json!(AGENT_NAME)));
+    let after = file(&s);
+    assert!(s.undo().unwrap());
+    assert_eq!(file(&s), before);
+    assert!(s.redo().unwrap());
+    assert_eq!(file(&s), after);
+    let v = check(&mut s);
+    assert!(problems(&v, "flow.deadEnd").is_empty() && v["ok"] == json!(true), "{v}");
+    assert_eq!((&screen(&v, b)["endState"], screen(&v, b).get("endStateProposedBy")), (&json!(true), None));
+    assert_eq!(ex(&mut s, "design.finding.recheck", json!({"id": "F1"}))["results"][0]["status"], "verified");
+    let run = ex(&mut s, "proto.simulate", json!({"start": a, "steps": [{"click": go}], "expect": {"endState": true}}));
+    assert_eq!(run["passed"], json!(true), "{run}");
+    // Accepted, it is the person's: the agent neither rewords it nor takes it back.
+    for params in [json!({"id": b, "reason": "Anything"}), json!({"id": b, "on": false})] {
+        let e = agent_refused(&mut s, "proto.endState.set", params);
+        assert!(e.contains("is an end state declared by Claude (agent) (accepted)") && e.contains("only its own proposals"), "{e}");
+    }
+    // Accepting again changes nothing; what isn't declared can't be accepted.
+    let depth = s.undo_depth();
+    ex(&mut s, "proto.endState.accept", json!({"id": b}));
+    assert_eq!(s.undo_depth(), depth);
+    assert!(err(&mut s, "proto.endState.accept", json!({"id": go})).contains("isn't declared as an end state"));
+    assert!(err(&mut s, "proto.endState.accept", json!({})).contains("`id`"));
+    // An agent takes back a proposal of its own that nobody accepted.
+    as_agent(&mut s, "proto.endState.set", json!({"id": a, "reason": "A visitor may stop here"}));
+    let r = as_agent(&mut s, "proto.endState.set", json!({"id": a, "on": false}));
+    assert_eq!((&r["endState"], &r["status"]), (&json!(false), &json!(null)));
+    assert_eq!(s.doc().unwrap().design.end_states.len(), 1);
+}
+
+#[test]
+fn an_agent_leaves_a_persons_end_states_alone_and_a_person_settles_an_agents() {
+    let (mut s, a, b, _) = a_dead_end();
+    ex(&mut s, "proto.endState.set", json!({"id": b, "reason": "Paid"}));
+    for params in [json!({"id": b, "reason": "Reworded"}), json!({"id": b, "on": false})] {
+        let e = agent_refused(&mut s, "proto.endState.set", params);
+        assert!(e.contains("is an end state declared by user (accepted)") && e.contains("Ask them to change it"), "{e}");
+    }
+    assert_eq!(s.doc().unwrap().design.end_states[0].reason, "Paid");
+    // An end state from a file written before authors were recorded is the user's too.
+    std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().design).end_states[0].author.clear();
+    let e = agent_refused(&mut s, "proto.endState.set", json!({"id": b, "on": false}));
+    assert!(e.contains("declared by user (accepted)"), "{e}");
+    // The user declaring a frame an agent proposed stands behind it; the user may also drop it.
+    as_agent(&mut s, "proto.endState.set", json!({"id": a, "reason": "A visitor may stop at the start"}));
+    let r = ex(&mut s, "proto.endState.set", json!({"id": a}));
+    assert_eq!((&r["status"], &r["author"], &r["endState"]), (&json!("accepted"), &json!(AGENT_NAME), &json!(true)));
+    ex(&mut s, "proto.endState.set", json!({"id": a, "on": false}));
+    // Saved and reopened, authors and statuses are as they were.
+    as_agent(&mut s, "proto.endState.set", json!({"id": a, "reason": "Proposed again"}));
+    let bytes = figcraft_format::save_bytes(s.doc().unwrap(), None).unwrap();
+    let (back, issues) = figcraft_format::load_bytes(&bytes).unwrap();
+    assert!(issues.is_empty(), "{issues:?}");
+    assert_eq!(back.design.end_states, s.doc().unwrap().design.end_states);
+    assert_eq!(back.design.end_states.len(), 2);
+}
+
+#[test]
+fn an_agent_changes_and_removes_only_the_scenarios_it_wrote() {
+    let (mut s, a, b, go) = a_dead_end();
+    // The user's scenario expects the wrong screen: it fails, and the failure is recorded.
+    ex(&mut s, "proto.scenario.add", json!({"name": "Go on", "start": a, "steps": [{"click": go, "expect": {"screen": a}}]}));
+    assert_eq!(s.doc().unwrap().design.scenarios[0].author, "user");
+    ex(&mut s, "design.check.record", json!({"rules": ["scenario.fails"]}));
+    // An agent can't make the failure go away by rewriting or removing the person's scenario.
+    for (cmd, params) in [
+        ("proto.scenario.set", json!({"id": "S1", "steps": [{"click": go, "expect": {"screen": b}}]})),
+        ("proto.scenario.set", json!({"id": "S1", "name": "Renamed"})),
+        ("proto.scenario.remove", json!({"id": "S1"})),
+    ] {
+        let e = agent_refused(&mut s, cmd, params);
+        assert!(e.contains("`id`: S1 was written by user") && e.contains("only its own scenarios") && e.contains("proto.scenario.add"), "{cmd}: {e}");
+    }
+    let recheck = ex(&mut s, "design.finding.recheck", json!({"id": "F1"}));
+    assert_eq!((recheck["results"][0]["passed"].as_bool(), recheck["results"][0]["status"].as_str()), (Some(false), Some("open")), "{recheck}");
+    // It adds its own, recorded as its own, and edits and removes that one.
+    let before = file(&s);
+    assert_eq!(as_agent(&mut s, "proto.scenario.add", json!({"name": "Mine", "start": a, "steps": [{"click": go}]})), json!({"id": "S2"}));
+    assert_eq!(s.doc().unwrap().design.scenarios[1].author, AGENT_NAME);
+    let after = file(&s);
+    assert!(s.undo().unwrap());
+    assert_eq!(file(&s), before);
+    assert!(s.redo().unwrap());
+    assert_eq!(file(&s), after);
+    assert_eq!(ex(&mut s, "proto.scenario.list", json!({}))["scenarios"][1]["author"], AGENT_NAME);
+    as_agent(&mut s, "proto.scenario.set", json!({"id": "S2", "name": "Mine, renamed"}));
+    // Another agent's scenario isn't its own; a scenario without an author (an older file) is the user's.
+    s.execute_as(Some("Other"), "proto.scenario.add", &json!({"name": "Theirs", "start": a, "steps": []})).unwrap();
+    assert!(agent_refused(&mut s, "proto.scenario.remove", json!({"id": "S3"})).contains("S3 was written by Other (agent)"));
+    std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().design).scenarios[0].author.clear();
+    assert!(agent_refused(&mut s, "proto.scenario.remove", json!({"id": "S1"})).contains("S1 was written by user"));
+    // Saved and reopened, the authors are kept; the user edits and removes any of them, and an
+    // edit doesn't change whose scenario it is.
+    let bytes = figcraft_format::save_bytes(s.doc().unwrap(), None).unwrap();
+    let (back, issues) = figcraft_format::load_bytes(&bytes).unwrap();
+    assert!(issues.is_empty(), "{issues:?}");
+    assert_eq!(back.design.scenarios, s.doc().unwrap().design.scenarios);
+    ex(&mut s, "proto.scenario.set", json!({"id": "S2", "name": "Reviewed"}));
+    assert_eq!(s.doc().unwrap().design.scenarios[1].author, AGENT_NAME);
+    as_agent(&mut s, "proto.scenario.remove", json!({"id": "S2"}));
+    ex(&mut s, "proto.scenario.remove", json!({"id": "S3"}));
+    ex(&mut s, "proto.scenario.remove", json!({"id": "S1"}));
+    assert!(s.doc().unwrap().design.scenarios.is_empty());
+}
+
+#[test]
+fn a_file_written_before_authors_and_subjects_opens_and_works_as_before() {
+    let (mut s, a, b, go) = a_dead_end();
+    // The document as the version before wrote it: an end state with a node and a reason, a
+    // scenario without an author, a finding without a subject.
+    let mut old = figcraft_format::to_json(s.doc().unwrap()).unwrap();
+    assert!(old.get("design").is_none());
+    old["design"] = json!({
+        "scenarios": [{"id": "S1", "name": "Go on", "start": a, "steps": [{"action": {"type": "gesture", "node": go, "gesture": "click"}, "expect": {"screen": b}}], "expect": {"endState": true}}],
+        "endStates": [{"node": b, "reason": "The order is placed"}],
+        "findings": [{"id": "F1", "kind": "check", "rule": "scenario.none", "severity": "note", "nodes": [a], "message": "the page has a flow but no stored scenario, so nothing checks that the flow works", "source": "check", "status": "open"}],
+        "counters": {"F": 1, "S": 1},
+    });
+    let (doc, issues) = figcraft_format::from_json(&old.to_string()).unwrap();
+    assert!(issues.is_empty(), "{issues:?}");
+    assert_eq!(figcraft_format::to_json(&doc).unwrap(), old, "and is written back as it was");
+    s = Session::with_document(doc);
+    // The end state counts (accepted, the user's), the scenario passes and is the user's.
+    let v = check(&mut s);
+    assert!(problems(&v, "flow.deadEnd").is_empty() && screen(&v, b)["endState"] == json!(true), "{v}");
+    assert_eq!(ex(&mut s, "proto.scenario.run", json!({}))["passed"], json!(true));
+    assert_eq!(ex(&mut s, "proto.endState.list", json!({}))["endStates"][0]["status"], "accepted");
+    assert!(agent_refused(&mut s, "proto.scenario.remove", json!({"id": "S1"})).contains("written by user"));
+    assert!(agent_refused(&mut s, "proto.endState.set", json!({"id": b, "on": false})).contains("declared by user"));
+    // The old finding is settled by the rule as any other.
+    assert_eq!(ex(&mut s, "design.finding.recheck", json!({"id": "F1"}))["results"][0]["status"], "verified");
 }

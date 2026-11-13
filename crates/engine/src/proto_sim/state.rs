@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 
+use figcraft_doc::design::EndStateStatus;
 use figcraft_doc::{Document, NodeId, NodeKind};
 use serde::Serialize;
 use serde_json::Value;
@@ -44,7 +45,7 @@ pub struct State {
     pub modes: BTreeMap<String, String>,
     /// The instances showing another variant than in the file.
     pub variants: Vec<VariantInfo>,
-    /// The screen is a declared end state.
+    /// The screen is an end state a person declared or accepted.
     pub end_state: bool,
 }
 
@@ -63,9 +64,10 @@ pub(super) fn of(sim: &Sim) -> State {
     }
 }
 
-/// Whether `screen` is declared as a frame where a flow may end.
+/// Whether `screen` is a frame where a flow may end: declared as one, and a person stands behind
+/// that (an AI agent's proposal doesn't count until it is accepted).
 pub(super) fn is_end_state(doc: &Document, screen: NodeId) -> bool {
-    doc.design.end_states.iter().any(|e| e.node == screen)
+    doc.design.end_states.iter().any(|e| e.node == screen && e.status == EndStateStatus::Accepted)
 }
 
 fn changed_variables(sim: &Sim) -> BTreeMap<String, Value> {

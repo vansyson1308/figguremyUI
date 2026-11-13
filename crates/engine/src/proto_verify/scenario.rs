@@ -13,6 +13,7 @@ use super::flow::{Graph, page_subject};
 use super::parse;
 use super::run::{Run, run, steps_json};
 use crate::check::Found;
+use crate::design::{actor, agent, author_name};
 use crate::params::{get, req_id, req_string};
 use crate::proto_sim::label;
 use crate::{Result, Session, bad};
@@ -51,13 +52,29 @@ fn find<'a>(cmd: &str, doc: &'a Document, id: &str) -> Result<&'a Scenario> {
     })
 }
 
+/// Refuse an AI agent a change to a scenario somebody else wrote: a scenario is what its author
+/// says the prototype must do, and editing or removing it would make its failure go away.
+fn own(cmd: &str, me: Option<&str>, sc: &Scenario, doing: &str) -> Result<()> {
+    match me {
+        Some(me) if sc.author != me => Err(bad(
+            cmd,
+            format!(
+                "`id`: {} was written by {}; an AI agent ({me}) {doing} only its own scenarios. Add your own scenario (proto.scenario.add) or ask them to change it",
+                sc.id,
+                author_name(&sc.author)
+            ),
+        )),
+        _ => Ok(()),
+    }
+}
+
 pub(super) fn add(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "proto.scenario.add";
     let mut scenario = Scenario {
         id: String::new(),
         name: name(cmd, p)?.ok_or_else(|| bad(cmd, "`name` is required"))?,
         purpose: text(cmd, p, "purpose")?.unwrap_or_default(),
-        author: String::new(),
+        author: actor(s),
         start: req_id(cmd, p, "start")?,
         steps: parse::steps(cmd, get(p, "steps").ok_or_else(|| bad(cmd, "`steps` is required (a list, which may be empty)"))?, "steps")?,
         expect: get(p, "expect").map(|v| parse::expect(cmd, v, "expect")).transpose()?.unwrap_or_default(),
@@ -78,6 +95,7 @@ pub(super) fn set(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "proto.scenario.set";
     let id = req_string(cmd, p, "id")?;
     let mut scenario = find(cmd, s.doc()?, &id)?.clone();
+    own(cmd, agent(s), &scenario, "changes")?;
     let before = scenario.clone();
     if let Some(n) = name(cmd, p)? {
         scenario.name = n;
@@ -107,7 +125,7 @@ pub(super) fn set(s: &mut Session, p: &Value) -> Result<Value> {
 pub(super) fn remove(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "proto.scenario.remove";
     let id = req_string(cmd, p, "id")?;
-    find(cmd, s.doc()?, &id)?;
+    own(cmd, agent(s), find(cmd, s.doc()?, &id)?, "removes")?;
     Arc::make_mut(&mut s.doc_mut()?.design).scenarios.retain(|x| x.id != id);
     Ok(json!({"removed": id}))
 }

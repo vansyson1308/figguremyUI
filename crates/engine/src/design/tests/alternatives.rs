@@ -453,7 +453,7 @@ fn choosing_records_a_decision_and_deletes_nothing() {
     ex(&mut s, "design.alternative.question", json!({"set": "V1", "question": "Which is faster one-handed?"}));
     let layers = s.doc().unwrap().node_count();
     let r = ex_undoable(&mut s, "design.alternative.choose", json!({"set": "V1", "node": a, "rationale": "Everything is within thumb reach"}));
-    assert_eq!(r, json!({"decision": "D1", "status": "accepted"}));
+    assert_eq!(r, json!({"decision": "D1", "status": "accepted", "chosen": a}));
     let ctx = s.doc().unwrap().design.clone();
     assert_eq!((ctx.alternatives[0].chosen, ctx.alternatives[0].decision.as_str()), (Some(a), "D1"));
     let d = &ctx.decisions[0];
@@ -461,13 +461,43 @@ fn choosing_records_a_decision_and_deletes_nothing() {
     assert_eq!((d.links.clone(), d.author.as_str(), d.status), (vec![a], "user", DecisionStatus::Accepted));
     assert_eq!(s.doc().unwrap().node_count(), layers, "nothing is deleted");
     assert_eq!(compared(&mut s)["chosen"], json!(a));
-    // An agent's choice is recorded as a proposal for a person to accept; the source can be chosen.
+    // An agent's choice is a proposal: what the person chose stays chosen, and the agent's pick is
+    // kept beside it with a proposed decision. The source can be proposed too.
+    let before = doc_json(&s);
     let r = as_agent(&mut s, "design.alternative.choose", json!({"set": "V1", "node": sc.home, "rationale": "Neither improves on the original"}));
-    assert_eq!(r, json!({"decision": "D2", "status": "proposed"}));
+    assert_eq!(r, json!({"decision": "D2", "status": "proposed", "chosen": a, "proposed": sc.home}));
+    one_undo_step(&mut s, &before);
     let ctx = s.doc().unwrap().design.clone();
-    assert_eq!((ctx.alternatives[0].chosen, ctx.alternatives[0].decision.as_str()), (Some(sc.home), "D2"));
+    assert_eq!((ctx.alternatives[0].chosen, ctx.alternatives[0].decision.as_str()), (Some(a), "D1"), "the person's choice survives");
+    assert_eq!(serde_json::to_value(&ctx.alternatives[0].proposal).unwrap(), json!({"node": sc.home, "decision": "D2"}));
     assert_eq!((ctx.decisions[1].title.as_str(), ctx.decisions[1].author.as_str()), ("Chose \"Home\": Which is faster one-handed?", AGENT_NAME));
-    assert_eq!(ctx.decisions.len(), 2, "the earlier decision stays on record");
+    assert_eq!((ctx.decisions[1].status, ctx.decisions.len()), (DecisionStatus::Proposed, 2));
+    let r = compared(&mut s);
+    assert_eq!((&r["chosen"], &r["decision"], &r["proposal"]), (&json!(a), &json!("D1"), &json!({"node": sc.home, "decision": "D2"})));
+    assert_eq!(super::reopened(&s).design.alternatives, ctx.alternatives, "the proposal is kept with the file");
+    // The same inside a batch the agent runs; a new proposal replaces its pending one.
+    let batch = json!({"commands": [{"command": "design.alternative.choose", "params": {"set": "V1", "node": b, "rationale": "Roomier"}}]});
+    s.execute_as(Some(super::AGENT), "command.batch", &batch).unwrap();
+    let ctx = s.doc().unwrap().design.clone();
+    assert_eq!(ctx.alternatives[0].chosen, Some(a));
+    assert_eq!(serde_json::to_value(&ctx.alternatives[0].proposal).unwrap(), json!({"node": b, "decision": "D3"}));
+    assert_eq!(ctx.decisions.iter().map(|d| d.id.as_str()).collect::<Vec<_>>(), ["D1", "D3"], "its earlier proposal went with it");
+    // A person accepting the proposal's decision makes the choice: one undo step.
+    let before = doc_json(&s);
+    let r = ex(&mut s, "design.decision.accept", json!({"id": "D3"}));
+    assert_eq!((&r["decision"]["status"], &r["chose"]), (&json!("accepted"), &json!([{"set": "V1", "node": b}])));
+    one_undo_step(&mut s, &before);
+    let ctx = s.doc().unwrap().design.clone();
+    assert_eq!((ctx.alternatives[0].chosen, ctx.alternatives[0].decision.as_str(), ctx.alternatives[0].proposal.clone()), (Some(b), "D3", None));
+    // A person choosing settles a pending proposal; removing a proposal's decision drops it.
+    as_agent(&mut s, "design.alternative.choose", json!({"set": "V1", "node": a, "rationale": "Back to compact"}));
+    ex(&mut s, "design.decision.remove", json!({"id": "D4"}));
+    assert_eq!(s.doc().unwrap().design.alternatives[0].proposal, None);
+    as_agent(&mut s, "design.alternative.choose", json!({"set": "V1", "node": a, "rationale": "Back to compact"}));
+    ex(&mut s, "design.alternative.choose", json!({"set": "V1", "node": sc.home, "rationale": "Staying with the original"}));
+    let ctx = s.doc().unwrap().design.clone();
+    assert_eq!((ctx.alternatives[0].chosen, ctx.alternatives[0].proposal.clone()), (Some(sc.home), None));
+    assert_eq!(ctx.decisions.len(), 4, "the earlier decisions stay on record: {:?}", ctx.decisions.iter().map(|d| &d.id).collect::<Vec<_>>());
     for (params, needle) in [
         (json!({"set": "V1", "node": a}), "`rationale` is required".to_string()),
         (
