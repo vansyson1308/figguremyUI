@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use figcraft_doc::NodeId;
-use figcraft_doc::design::{EndState, Expect, TextExpect};
+use figcraft_doc::design::{EndState, EndStateStatus, Expect, TextExpect};
 use serde_json::json;
 
 use super::{button, click, ex, frame, navigate, rect, sim, text};
@@ -17,7 +17,12 @@ fn screen_overlays_and_end_state_say_what_was_expected_and_what_is() {
     let go = button(&mut s, "Go", a, 20.0, navigate(b));
     let opener = button(&mut s, "Open", a, 80.0, json!({"type": "openOverlay", "dest": menu}));
     let mut doc = s.doc().unwrap().clone();
-    Arc::make_mut(&mut doc.design).end_states.push(EndState { node: b, reason: "the order is placed".into() });
+    Arc::make_mut(&mut doc.design).end_states.push(EndState {
+        node: b,
+        reason: "the order is placed".into(),
+        author: "user".into(),
+        status: EndStateStatus::Accepted,
+    });
     let mut p = Sim::new(&doc, a).unwrap();
     assert!(p.check(&Expect::default()).is_empty(), "nothing asked, nothing fails");
     let at = |screen, overlays: &[NodeId], end| Expect {

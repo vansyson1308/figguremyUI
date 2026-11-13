@@ -252,7 +252,9 @@ pub struct Document {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub vote_history: Vec<VoteRecord>,
     /// The brief, assumptions, decisions, scenarios, findings and alternatives (see [`design`]).
-    #[serde(default, skip_serializing_if = "design_is_empty")]
+    /// Read leniently: a context that can't be read doesn't stop the file from opening (see
+    /// [`design::read_stored`]; the loader reports what was left out).
+    #[serde(default, skip_serializing_if = "design_is_empty", deserialize_with = "design::read_stored")]
     pub design: Arc<design::DesignContext>,
 }
 

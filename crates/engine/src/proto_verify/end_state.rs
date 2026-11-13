@@ -40,7 +40,9 @@ pub(super) fn set(s: &mut Session, p: &Value) -> Result<Value> {
         (true, None) if states.len() >= MAX_ENTRIES => {
             return Err(bad(cmd, format!("the file holds {MAX_ENTRIES} end states already, the most it keeps")));
         }
-        (true, None) => states.push(EndState { node: id, reason: reason.clone().unwrap_or_default() }),
+        (true, None) => {
+            states.push(EndState { node: id, reason: reason.clone().unwrap_or_default(), author: String::new(), status: Default::default() })
+        }
     }
     let kept = states.iter().find(|e| e.node == id).map(|e| e.reason.clone());
     // Declaring what is declared already is no edit (and no undo step).

@@ -159,6 +159,7 @@ fn create(s: &mut Session, p: &Value) -> Result<Value> {
                 members: Vec::new(),
                 chosen: None,
                 decision: String::new(),
+                proposal: None,
             });
             ctx.alternatives.len() - 1
         }

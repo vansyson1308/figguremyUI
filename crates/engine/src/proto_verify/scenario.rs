@@ -57,6 +57,7 @@ pub(super) fn add(s: &mut Session, p: &Value) -> Result<Value> {
         id: String::new(),
         name: name(cmd, p)?.ok_or_else(|| bad(cmd, "`name` is required"))?,
         purpose: text(cmd, p, "purpose")?.unwrap_or_default(),
+        author: String::new(),
         start: req_id(cmd, p, "start")?,
         steps: parse::steps(cmd, get(p, "steps").ok_or_else(|| bad(cmd, "`steps` is required (a list, which may be empty)"))?, "steps")?,
         expect: get(p, "expect").map(|v| parse::expect(cmd, v, "expect")).transpose()?.unwrap_or_default(),

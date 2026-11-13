@@ -8,10 +8,17 @@
 //! as missing rather than dropped, so the reasoning isn't lost with the layer.
 //!
 //! Files without any of this serialize exactly as before (the field is skipped while empty).
+//!
+//! A stored context is read leniently ([`read_stored`]): what can't be read is left out and what
+//! passes the limits is cut, and both are reported ([`take_load_issues`]) instead of failing the
+//! file, whose layers don't depend on it.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::Value;
 
 use crate::NodeId;
 
@@ -51,6 +58,22 @@ pub struct DesignContext {
     /// a reference to a removed entry can't come to mean another one.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub counters: BTreeMap<String, u64>,
+    /// What reading the stored context left out or cut ([`read_stored`]), until whoever opened
+    /// the file reports it ([`take_load_issues`]). Never written, and not part of what the
+    /// context says.
+    #[serde(skip)]
+    pub load_issues: LoadIssues,
+}
+
+/// What was left out or cut when a stored context was read. Two contexts that say the same are
+/// equal whatever was reported about reading them.
+#[derive(Clone, Debug, Default)]
+pub struct LoadIssues(pub Vec<String>);
+
+impl PartialEq for LoadIssues {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
 }
 
 impl DesignContext {
@@ -227,6 +250,10 @@ pub struct Decision {
     /// Who recorded it: an agent's name, or `user`. Set when it is added and never edited.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub author: String,
+    /// Who changed it last, when that wasn't its author (an agent's name, or `user`). The text
+    /// is then no longer all the author's.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub edited_by: String,
     pub status: DecisionStatus,
     /// The brief's revision when the decision was added or last accepted.
     #[serde(skip_serializing_if = "is_zero")]
@@ -242,6 +269,24 @@ pub struct Decision {
     pub links: Vec<NodeId>,
 }
 
+/// Whether a person stands behind an end state.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EndStateStatus {
+    /// Declared by an AI agent: the frame is still a dead end until a person accepts it.
+    Proposed,
+    /// A person declared or accepted it. Also what a file from before end states had a status
+    /// holds.
+    #[default]
+    Accepted,
+}
+
+impl EndStateStatus {
+    pub fn is_accepted(&self) -> bool {
+        *self == EndStateStatus::Accepted
+    }
+}
+
 /// A frame where a flow may end on purpose.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -249,6 +294,13 @@ pub struct EndState {
     pub node: NodeId,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub reason: String,
+    /// Who declared it: an agent's name, or `user`. Empty in a file from before end states had
+    /// authors: the user's.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub author: String,
+    /// Only an accepted end state exempts its frame from being a dead end.
+    #[serde(default, skip_serializing_if = "EndStateStatus::is_accepted")]
+    pub status: EndStateStatus,
 }
 
 /// A walk through the prototype with what should be true along the way and at the end.
@@ -260,6 +312,10 @@ pub struct Scenario {
     /// What passing this scenario shows.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub purpose: String,
+    /// Who wrote it: an agent's name, or `user`. Empty in a file from before scenarios had
+    /// authors: the user's. An agent changes and removes only its own.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub author: String,
     /// The top-level frame it starts on.
     pub start: NodeId,
     #[serde(default)]
@@ -459,6 +515,12 @@ pub struct Finding {
     /// The layers, screens or flow starts affected.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub nodes: Vec<NodeId>,
+    /// What a check is about when that isn't the layers in `nodes`, stable from one run of the
+    /// rule to the next (`scenario:S1`, `overlay:12`, `page:1`): the same rule reporting the
+    /// same subject is the same problem, whatever layers it names this time. Empty: the layers
+    /// in `nodes` are the subject.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub subject: String,
     pub message: String,
     /// What was observed: the measured numbers, the step that failed, the words of the person.
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -468,6 +530,10 @@ pub struct Finding {
     /// Who or what raised it: `check`, an agent's name, a person's name.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub source: String,
+    /// Who ran the command that stored it, when that isn't `source`: the agent that passed on
+    /// what a person said, whoever ran the checks.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub recorded_by: String,
     pub status: FindingStatus,
     /// What was changed, or why it stays.
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -504,6 +570,18 @@ pub struct AlternativeSet {
     /// The decision id recording why.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub decision: String,
+    /// A choice an AI agent put forward, waiting for a person: `chosen` changes only when a
+    /// person chooses, or accepts the proposal's decision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal: Option<ChoiceProposal>,
+}
+
+/// A member (or the source) an AI agent proposes to choose, with the proposed decision saying why.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChoiceProposal {
+    pub node: NodeId,
+    pub decision: String,
 }
 
 /// One alternative: a copy of the source reworked under a stated constraint.
@@ -524,11 +602,351 @@ pub struct Alternative {
     pub tradeoffs: String,
 }
 
+/// The most problems one read of a stored context spells out; the rest are counted.
+const MAX_LOAD_ISSUES: usize = 20;
+/// The longest id-counter prefix (`A`, `D`, `S`, `F`, `V` are one letter) and the most counters.
+const MAX_COUNTER_KEY: usize = 16;
+const MAX_COUNTERS: usize = 64;
+
+/// Read a document's stored `design` value without failing the document over it (the field's
+/// `deserialize_with`). A value that reads whole is kept; of one that doesn't, the parts and
+/// entries that read are kept and the rest left out; anything past [`MAX_ENTRIES`] or
+/// [`MAX_TEXT`] is cut. What was left out or cut is in [`DesignContext::load_issues`] for the
+/// loader to report: it is never written back, so saving the file drops what couldn't be read.
+pub fn read_stored<'de, D: Deserializer<'de>>(d: D) -> Result<Arc<DesignContext>, D::Error> {
+    let raw = Value::deserialize(d)?;
+    Ok(Arc::new(DesignContext::from_stored(raw)))
+}
+
+/// What reading the stored context left out or cut, taken out of it so it is reported once.
+pub fn take_load_issues(design: &mut Arc<DesignContext>) -> Vec<String> {
+    if design.load_issues.0.is_empty() {
+        return Vec::new();
+    }
+    std::mem::take(&mut Arc::make_mut(design).load_issues.0)
+}
+
+/// Problems met while reading, the first [`MAX_LOAD_ISSUES`] spelt out.
+#[derive(Default)]
+struct Said {
+    said: Vec<String>,
+    more: usize,
+}
+
+impl Said {
+    fn say(&mut self, what: String) {
+        if self.said.len() < MAX_LOAD_ISSUES {
+            self.said.push(what);
+        } else {
+            self.more = self.more.saturating_add(1);
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.said.is_empty()
+    }
+
+    fn joined(&self) -> String {
+        let more = if self.more > 0 { format!("; and {} more", self.more) } else { String::new() };
+        format!("{}{more}", self.said.join("; "))
+    }
+}
+
+/// One part of a stored context into `slot`, or left as it is and reported.
+fn part<T: DeserializeOwned>(slot: &mut T, value: Value, name: &str, lost: &mut Said) {
+    match serde_json::from_value(value) {
+        Ok(v) => *slot = v,
+        Err(why) => lost.say(format!("`{name}`: {why}")),
+    }
+}
+
+/// The entries of a stored list that read, into `out`; the others are reported.
+fn entries<T: DeserializeOwned>(out: &mut Vec<T>, value: Value, name: &str, lost: &mut Said) {
+    let Value::Array(items) = value else {
+        lost.say(format!("`{name}` isn't a list"));
+        return;
+    };
+    for (i, item) in items.into_iter().enumerate() {
+        match serde_json::from_value(item) {
+            Ok(v) => out.push(v),
+            Err(why) => lost.say(format!("`{name}[{i}]`: {why}")),
+        }
+    }
+}
+
+/// What is cut from a context that passes the limits.
+#[derive(Default)]
+struct Cut {
+    texts: usize,
+    values: usize,
+    lists: Said,
+}
+
+impl Cut {
+    fn text(&mut self, s: &mut String) {
+        // A text of at most MAX_TEXT bytes has at most MAX_TEXT characters.
+        if s.len() > MAX_TEXT
+            && let Some((at, _)) = s.char_indices().nth(MAX_TEXT)
+        {
+            s.truncate(at);
+            self.texts = self.texts.saturating_add(1);
+        }
+    }
+
+    fn texts(&mut self, list: &mut Vec<String>, name: &str) {
+        self.list(list, name);
+        for t in list {
+            self.text(t);
+        }
+    }
+
+    fn list<T>(&mut self, list: &mut Vec<T>, name: &str) {
+        if list.len() > MAX_ENTRIES {
+            self.lists.say(format!("`{name}` from {} to {MAX_ENTRIES} entries", list.len()));
+            list.truncate(MAX_ENTRIES);
+        }
+    }
+
+    /// A variable's value: one whose JSON is longer than a text may be is dropped.
+    fn value(&mut self, v: &mut Value) {
+        if v.to_string().chars().count() > MAX_TEXT {
+            *v = Value::Null;
+            self.values = self.values.saturating_add(1);
+        }
+    }
+
+    fn expect(&mut self, e: &mut Expect) {
+        if let Some(overlays) = &mut e.overlays {
+            self.list(overlays, "expect.overlays");
+        }
+        self.list(&mut e.visible, "expect.visible");
+        self.list(&mut e.hidden, "expect.hidden");
+        self.list(&mut e.variants, "expect.variants");
+        self.list(&mut e.text, "expect.text");
+        for v in &mut e.variants {
+            self.text(&mut v.variant);
+        }
+        for t in &mut e.text {
+            for wanted in [&mut t.equals, &mut t.contains].into_iter().flatten() {
+                self.text(wanted);
+            }
+        }
+        let before = e.variables.len();
+        let mut kept = 0usize;
+        e.variables.retain(|name, _| {
+            kept += 1;
+            name.chars().count() <= MAX_TEXT && kept <= MAX_ENTRIES
+        });
+        if e.variables.len() < before {
+            self.lists.say(format!("`expect.variables` from {before} to {} entries", e.variables.len()));
+        }
+        for v in e.variables.values_mut() {
+            self.value(v);
+        }
+    }
+
+    fn said(self) -> Vec<String> {
+        let mut out = Vec::new();
+        if !self.lists.is_empty() {
+            out.push(self.lists.joined());
+        }
+        if self.texts > 0 {
+            out.push(format!("{} text(s) to {MAX_TEXT} characters", self.texts));
+        }
+        if self.values > 0 {
+            out.push(format!("{} variable value(s) longer than {MAX_TEXT} characters dropped", self.values));
+        }
+        out
+    }
+}
+
+impl DesignContext {
+    /// The context a stored `design` value holds, read leniently (see [`read_stored`]).
+    pub fn from_stored(raw: Value) -> DesignContext {
+        let mut issues = Vec::new();
+        let mut ctx = match DesignContext::deserialize(&raw) {
+            Ok(ctx) => ctx,
+            Err(why) => DesignContext::salvaged(raw, &why.to_string(), &mut issues),
+        };
+        let cut = ctx.clamp();
+        if !cut.is_empty() {
+            issues.push(format!("the design context was larger than a file may hold and was cut: {}", cut.join("; ")));
+        }
+        if ctx.raise_counters() {
+            issues.push("the design context's id counters were behind the ids in use and were raised, so no id is given out twice".into());
+        }
+        ctx.load_issues = LoadIssues(issues);
+        ctx
+    }
+
+    /// What of a stored value that doesn't read whole (`why`) can be read: each part by itself,
+    /// lists entry by entry.
+    fn salvaged(raw: Value, why: &str, issues: &mut Vec<String>) -> DesignContext {
+        let mut ctx = DesignContext::default();
+        let Value::Object(map) = raw else {
+            issues.push(format!("the design context couldn't be read and was left out: {why}"));
+            return ctx;
+        };
+        let mut lost = Said::default();
+        for (key, value) in map {
+            match key.as_str() {
+                "brief" => part(&mut ctx.brief, value, "brief", &mut lost),
+                "briefRevision" => part(&mut ctx.brief_revision, value, "briefRevision", &mut lost),
+                "stage" => part(&mut ctx.stage, value, "stage", &mut lost),
+                "assumptions" => entries(&mut ctx.assumptions, value, "assumptions", &mut lost),
+                "decisions" => entries(&mut ctx.decisions, value, "decisions", &mut lost),
+                "scenarios" => entries(&mut ctx.scenarios, value, "scenarios", &mut lost),
+                "endStates" => entries(&mut ctx.end_states, value, "endStates", &mut lost),
+                "findings" => entries(&mut ctx.findings, value, "findings", &mut lost),
+                "alternatives" => entries(&mut ctx.alternatives, value, "alternatives", &mut lost),
+                "counters" => part(&mut ctx.counters, value, "counters", &mut lost),
+                _ => {}
+            }
+        }
+        if lost.is_empty() {
+            // Nothing in particular failed, yet the whole didn't read: say what the reader said.
+            lost.say(why.to_string());
+        }
+        issues.push(format!("part of the design context couldn't be read and was left out ({}); the rest was kept", lost.joined()));
+        ctx
+    }
+
+    /// Cut the context to what the commands would have let it grow to: every list to
+    /// [`MAX_ENTRIES`] entries and every text to [`MAX_TEXT`] characters. Returns what was cut
+    /// (empty: nothing). For a context that comes from outside: a file, a collaborator.
+    pub fn clamp(&mut self) -> Vec<String> {
+        let mut c = Cut::default();
+        let b = &mut self.brief;
+        for t in [&mut b.audience, &mut b.sponsor, &mut b.job, &mut b.context, &mut b.content, &mut b.format, &mut b.tone] {
+            c.text(t);
+        }
+        c.texts(&mut b.constraints, "brief.constraints");
+        c.texts(&mut b.success, "brief.success");
+        c.list(&mut self.assumptions, "assumptions");
+        for a in &mut self.assumptions {
+            for t in [&mut a.id, &mut a.text, &mut a.evidence] {
+                c.text(t);
+            }
+            c.list(&mut a.links, "assumption links");
+        }
+        c.list(&mut self.decisions, "decisions");
+        for d in &mut self.decisions {
+            for t in [&mut d.id, &mut d.title, &mut d.rationale, &mut d.author, &mut d.edited_by, &mut d.rejected] {
+                c.text(t);
+            }
+            c.texts(&mut d.assumptions, "decision assumptions");
+            c.list(&mut d.links, "decision links");
+        }
+        c.list(&mut self.scenarios, "scenarios");
+        for s in &mut self.scenarios {
+            for t in [&mut s.id, &mut s.name, &mut s.purpose, &mut s.author] {
+                c.text(t);
+            }
+            c.list(&mut s.steps, "scenario steps");
+            for step in &mut s.steps {
+                match &mut step.action {
+                    StepAction::Key { key } => c.text(key),
+                    StepAction::SetVariable { variable, value } => {
+                        c.text(variable);
+                        c.value(value);
+                    }
+                    StepAction::Gesture { .. } | StepAction::Wait | StepAction::ClickOutside => {}
+                }
+                c.text(&mut step.note);
+                c.expect(&mut step.expect);
+            }
+            c.expect(&mut s.expect);
+        }
+        c.list(&mut self.end_states, "endStates");
+        for e in &mut self.end_states {
+            c.text(&mut e.reason);
+            c.text(&mut e.author);
+        }
+        c.list(&mut self.findings, "findings");
+        for f in &mut self.findings {
+            for t in [
+                &mut f.id,
+                &mut f.rule,
+                &mut f.subject,
+                &mut f.message,
+                &mut f.evidence,
+                &mut f.suggestion,
+                &mut f.source,
+                &mut f.recorded_by,
+                &mut f.resolution,
+                &mut f.verified_by,
+                &mut f.verification,
+            ] {
+                c.text(t);
+            }
+            if let Some(r) = &mut f.recheck {
+                c.text(&mut r.detail);
+            }
+            c.list(&mut f.nodes, "finding nodes");
+        }
+        c.list(&mut self.alternatives, "alternatives");
+        for v in &mut self.alternatives {
+            for t in [&mut v.id, &mut v.question, &mut v.decision] {
+                c.text(t);
+            }
+            if let Some(p) = &mut v.proposal {
+                c.text(&mut p.decision);
+            }
+            c.texts(&mut v.constraints, "alternative constraints");
+            c.list(&mut v.members, "alternative members");
+            for m in &mut v.members {
+                for t in [&mut m.name, &mut m.constraint, &mut m.intent, &mut m.tradeoffs] {
+                    c.text(t);
+                }
+            }
+        }
+        let before = self.counters.len();
+        let mut kept = 0usize;
+        self.counters.retain(|prefix, _| {
+            kept += 1;
+            prefix.len() <= MAX_COUNTER_KEY && kept <= MAX_COUNTERS
+        });
+        if self.counters.len() < before {
+            c.lists.say(format!("`counters` from {before} to {} entries", self.counters.len()));
+        }
+        c.said()
+    }
+
+    /// Raise the id counters to the ids in use, so [`next_id`](Self::next_id) never gives out one
+    /// an entry already has (a file can say anything). True when a counter moved.
+    fn raise_counters(&mut self) -> bool {
+        let mut highest: BTreeMap<&'static str, u64> = BTreeMap::new();
+        let mut see = |prefix: &'static str, id: &str| {
+            if let Some(n) = id.strip_prefix(prefix).and_then(|n| n.parse::<u64>().ok()) {
+                let top = highest.entry(prefix).or_insert(0);
+                *top = (*top).max(n);
+            }
+        };
+        self.assumptions.iter().for_each(|a| see("A", &a.id));
+        self.decisions.iter().for_each(|d| see("D", &d.id));
+        self.scenarios.iter().for_each(|s| see("S", &s.id));
+        self.findings.iter().for_each(|f| see("F", &f.id));
+        self.alternatives.iter().for_each(|v| see("V", &v.id));
+        let mut moved = false;
+        for (prefix, top) in highest {
+            let n = self.counters.entry(prefix.to_string()).or_insert(0);
+            if *n < top {
+                *n = top;
+                moved = true;
+            }
+        }
+        moved
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
-    use super::{Brief, Decision, DecisionStatus, DesignContext, Stage};
+    use super::{
+        Brief, Decision, DecisionStatus, DesignContext, EndState, EndStateStatus, Finding, MAX_ENTRIES, MAX_TEXT, Scenario, Stage, take_load_issues,
+    };
+    use crate::{Document, NodeId};
 
     #[test]
     fn what_is_at_its_default_is_left_out_of_the_file() {
@@ -564,6 +982,144 @@ mod tests {
         let mut expected = stored;
         expected["decisions"][0]["status"] = json!("proposed");
         assert_eq!(serde_json::to_value(&ctx).unwrap(), expected);
+    }
+
+    #[test]
+    fn end_states_scenarios_and_findings_from_before_they_had_authors_load_as_the_users() {
+        // The shape written before end states had an author and a status, scenarios an author and
+        // findings a subject: read as accepted and as the user's, and written back unchanged.
+        let stored = json!({
+            "scenarios": [{"id": "S1", "name": "Order", "start": 5, "steps": [{"action": {"type": "gesture", "node": 7, "gesture": "click"}}]}],
+            "endStates": [{"node": 9, "reason": "The order is placed"}, {"node": 11}],
+            "findings": [{"id": "F1", "kind": "check", "rule": "flow.noStart", "severity": "minor", "nodes": [5], "message": "m", "source": "check", "status": "open"}],
+            "counters": {"F": 1, "S": 1},
+        });
+        let ctx: DesignContext = serde_json::from_value(stored.clone()).unwrap();
+        assert_eq!(
+            ctx.end_states[0],
+            EndState { node: NodeId(9), reason: "The order is placed".into(), author: String::new(), status: EndStateStatus::Accepted }
+        );
+        assert_eq!((ctx.end_states[1].status, ctx.end_states[1].author.as_str()), (EndStateStatus::Accepted, ""));
+        assert_eq!(ctx.scenarios[0].author, "");
+        assert_eq!((ctx.findings[0].subject.as_str(), ctx.findings[0].recorded_by.as_str()), ("", ""));
+        assert_eq!(serde_json::to_value(&ctx).unwrap(), stored, "an old context is written back as it was");
+        // The new fields are written only when they say something.
+        let proposed = EndState { node: NodeId(9), reason: "r".into(), author: "Claude (agent)".into(), status: EndStateStatus::Proposed };
+        assert_eq!(serde_json::to_value(&proposed).unwrap(), json!({"node": 9, "reason": "r", "author": "Claude (agent)", "status": "proposed"}));
+        let back: EndState = serde_json::from_value(serde_json::to_value(&proposed).unwrap()).unwrap();
+        assert_eq!(back, proposed);
+        let finding = Finding {
+            id: "F2".into(),
+            rule: "scenario.fails".into(),
+            subject: "scenario:S1".into(),
+            recorded_by: "user".into(),
+            ..Finding::default()
+        };
+        let v = serde_json::to_value(&finding).unwrap();
+        assert_eq!((&v["subject"], &v["recordedBy"]), (&json!("scenario:S1"), &json!("user")));
+        let scenario: Scenario = serde_json::from_value(json!({"id": "S2", "name": "n", "start": 1, "author": "user"})).unwrap();
+        assert_eq!(serde_json::to_value(&scenario).unwrap()["author"], "user");
+    }
+
+    /// A document's JSON with `design` set to `design` (one page, one frame on it).
+    fn document_with(design: serde_json::Value) -> serde_json::Value {
+        let mut doc = Document::new("Lenient");
+        let page = doc.first_page().unwrap();
+        doc.create(page, crate::NodeKind::Frame, "Home", 0.0, 0.0, 100.0, 100.0).unwrap();
+        let mut v = serde_json::to_value(&doc).unwrap();
+        assert!(v.get("design").is_none(), "a file without a design context has no `design` key");
+        v["design"] = design;
+        v
+    }
+
+    #[test]
+    fn a_document_without_a_design_context_loads_and_writes_none() {
+        let mut v = document_with(json!(null));
+        v.as_object_mut().unwrap().remove("design");
+        let mut doc: Document = serde_json::from_value(v.clone()).unwrap();
+        assert!(doc.design.is_empty() && take_load_issues(&mut doc.design).is_empty());
+        assert_eq!(serde_json::to_value(&doc).unwrap(), v);
+    }
+
+    #[test]
+    fn a_design_context_that_cant_be_read_doesnt_stop_the_document_from_loading() {
+        // (the stored value, what the report names, what is kept all the same)
+        let cases = [
+            (
+                json!({"brief": {"audience": "Nurses"}, "scenarios": [{"id": "S1", "name": "x"}, {"id": "S2", "name": "ok", "start": 4}], "counters": {"S": 2}}),
+                "`scenarios[0]`",
+                1,
+            ),
+            (json!({"brief": {"audience": "Nurses"}, "stage": "shipping"}), "`stage`", 0),
+            (
+                json!({"brief": {"audience": "Nurses"}, "scenarios": [{"id": "S1", "name": "n", "start": 4, "steps": [{"action": {"type": "swipe"}}]}]}),
+                "`scenarios[0]`",
+                0,
+            ),
+        ];
+        for (design, names, scenarios) in cases {
+            let mut doc: Document = serde_json::from_value(document_with(design.clone())).unwrap_or_else(|e| panic!("{design}: {e}"));
+            assert_eq!(doc.nodes().filter(|n| n.name == "Home").count(), 1, "the layers are intact");
+            let issues = take_load_issues(&mut doc.design);
+            assert_eq!(issues.len(), 1, "{issues:?}");
+            assert!(
+                issues[0].starts_with("part of the design context couldn't be read and was left out (") && issues[0].contains(names),
+                "{issues:?}"
+            );
+            assert!(take_load_issues(&mut doc.design).is_empty(), "reported once");
+            // What reads is kept; what doesn't is gone, also from what is written back.
+            assert_eq!((doc.design.brief.audience.as_str(), doc.design.scenarios.len(), doc.design.stage), ("Nurses", scenarios, Stage::Exploring));
+            let written = serde_json::to_value(&doc).unwrap();
+            assert!(!written["design"].to_string().contains("swipe") && !written["design"].to_string().contains("shipping"), "{written}");
+        }
+        // Not an object at all: the whole context is left out, and so is the key when saved.
+        for design in [json!(7), json!("brief"), json!([1, 2]), json!(null)] {
+            let mut doc: Document = serde_json::from_value(document_with(design.clone())).unwrap();
+            let issues = take_load_issues(&mut doc.design);
+            assert!(issues.len() == 1 && issues[0].starts_with("the design context couldn't be read and was left out: "), "{design}: {issues:?}");
+            assert!(doc.design.is_empty() && serde_json::to_value(&doc).unwrap().get("design").is_none());
+        }
+    }
+
+    #[test]
+    fn a_stored_context_past_the_limits_is_cut_and_says_so() {
+        let long = "é".repeat(MAX_TEXT + 10);
+        let findings: Vec<serde_json::Value> = (1..=MAX_ENTRIES + 3)
+            .map(|k| json!({"id": format!("F{k}"), "kind": "judgement", "rule": "r", "message": long, "status": "open"}))
+            .collect();
+        let links: Vec<u64> = (0..100_000).collect();
+        let design = json!({
+            "brief": {"audience": long},
+            "assumptions": [{"id": "A1", "text": "t", "links": links}],
+            "findings": findings,
+            "counters": {"A": 1},
+        });
+        let mut doc: Document = serde_json::from_value(document_with(design)).unwrap();
+        let issues = take_load_issues(&mut doc.design);
+        assert_eq!(issues.len(), 2, "{issues:?}");
+        assert!(issues[0].starts_with("the design context was larger than a file may hold and was cut: "), "{issues:?}");
+        assert!(issues[0].contains(&format!("`findings` from {} to {MAX_ENTRIES} entries", MAX_ENTRIES + 3)), "{issues:?}");
+        assert!(issues[0].contains(&format!("`assumption links` from 100000 to {MAX_ENTRIES} entries")), "{issues:?}");
+        assert!(issues[0].contains(&format!("{} text(s) to {MAX_TEXT} characters", MAX_ENTRIES + 1)), "{issues:?}");
+        assert!(issues[1].contains("id counters were behind"), "the file's counters said nothing of F: {issues:?}");
+        let ctx = &doc.design;
+        assert_eq!((ctx.findings.len(), ctx.assumptions[0].links.len()), (MAX_ENTRIES, MAX_ENTRIES));
+        assert_eq!(ctx.brief.audience.chars().count(), MAX_TEXT, "cut between characters, not inside one");
+        assert!(ctx.findings.iter().all(|f| f.message.chars().count() == MAX_TEXT));
+        assert_eq!(DesignContext::clone(ctx).next_id("F"), format!("F{}", MAX_ENTRIES + 1), "ids go on after the ones kept");
+        // A context within the limits is left alone.
+        let mut small = DesignContext { brief: Brief { audience: "é".repeat(MAX_TEXT), ..Brief::default() }, ..DesignContext::default() };
+        assert!(small.clamp().is_empty());
+    }
+
+    #[test]
+    fn what_was_reported_about_reading_isnt_part_of_what_a_context_says() {
+        let mut odd = DesignContext::from_stored(json!({"stage": "shipping"}));
+        assert!(!odd.load_issues.0.is_empty());
+        assert!(odd.is_empty() && odd == DesignContext::default());
+        assert_eq!(serde_json::to_value(&odd).unwrap(), json!({}));
+        odd.load_issues.0.clear();
+        assert_eq!(odd, DesignContext::default());
     }
 
     #[test]
