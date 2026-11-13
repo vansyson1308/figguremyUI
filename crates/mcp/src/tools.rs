@@ -172,7 +172,8 @@ const DOCUMENT_TOOLS: &[&str] = &[
 const CANVAS_TOOLS: &[&str] = &["pointer", "key", "type_text"];
 
 /// The tools that change the document and take `ifRevision`.
-const CONDITIONAL_TOOLS: &[&str] = &["run_command", "batch", "create_node", "set_properties", "undo", "redo"];
+const CONDITIONAL_TOOLS: &[&str] =
+    &["run_command", "batch", "create_node", "set_properties", "check_design", "save_file", "undo", "redo", "pointer", "key", "type_text"];
 
 /// The reserved engine parameter a conditional change carries.
 const IF_REVISION: &str = "ifRevision";
@@ -203,7 +204,7 @@ fn tools() -> Vec<Value> {
     let empty = || obj(json!({}), &[]);
     let others = || {
         obj(
-            json!({"others": boolean("Also take a step somebody else made (the user, or another agent). Without it such a step is refused, naming it and its author, and nothing changes")}),
+            json!({"others": boolean("Only if the person asked you to take back their step: also take a step somebody else made (the user, or another agent). Without it such a step is refused (code `otherAuthor`), naming it and its author, and nothing changes. Never pass it to get past that refusal on your own")}),
             &[],
         )
     };
@@ -409,7 +410,9 @@ fn tools() -> Vec<Value> {
         tool(
             "simulate_prototype",
             "Simulate prototype",
-            "Play steps on the prototype without a window and report the state they lead to (engine `proto.simulate`). It works headless and attached, on a copy: the document never changes. `steps` are what a viewer does, in order: {\"click\": <layer id>} (also hover, press, drag, mouseEnter, mouseLeave, mouseDown, mouseUp), {\"key\": \"Enter\"}, {\"type\": \"wait\"} (the pending after-delay interactions fire), {\"type\": \"clickOutside\"} (outside the top overlay) and {\"type\": \"setVariable\", \"variable\": <name>, \"value\": <value>} (stands in for input a prototype cannot take, such as typing); each may carry `expect` and a `note`. `expect`, on a step or at the top for the end, is {screen?, overlays? [ids, bottom first], variables? {name: value}, variants? [{instance, variant}], visible? [ids], hidden? [ids], text? [{node, equals | contains}], endState?}. Returns {passed, simulated: true, notModelled, start, state: {screen, screenName, overlays, history, variables, modes, variants, endState}, steps: [{index, action, fired, effects, problem?, failures, state}], failures, failedStep?, stepsTaken}. A step fails when its layer is not on what shows (the top overlay if one is open, else the screen), when a gesture or key sets nothing off, when an action cannot run, or when its `expect` does not hold; the run stops there unless `stopOnFailure` is false. With `image: true` a PNG of the final state follows the JSON as image content (the screen with its open overlays; engine `proto.snapshot`), and the JSON gains `image` {width, height, scale}. What the simulator does not model, as every result lists under `notModelled`: animation and timing (transitions, easing, how long a delay is); scroll position (scroll-to changes nothing; a layer scrolled or clipped out of view still takes a gesture); drag direction; the device frame and responsive resizing (frames keep the size they have in the file); pointer hit-testing (a gesture names its layer; what overlaps it on screen isn't considered). So `passed` means that these state rules produced this state. It does not mean a person used it, could find the control, or saw it on a device. Keep a walk worth keeping with run_command proto.scenario.add {name, start, steps, expect, purpose}.",
+            &with_known_differences(
+                "Play steps on the prototype without a window and report the state they lead to (engine `proto.simulate`). It works headless and attached, on a copy: the document never changes. `steps` are what a viewer does, in order: {\"click\": <layer id>} (also hover, press, drag, mouseEnter, mouseLeave, mouseDown, mouseUp), {\"key\": \"Enter\"}, {\"type\": \"wait\"} (the pending after-delay interactions fire), {\"type\": \"clickOutside\"} (outside the top overlay) and {\"type\": \"setVariable\", \"variable\": <name>, \"value\": <value>} (stands in for input a prototype cannot take, such as typing); each may carry `expect` and a `note`. `expect`, on a step or at the top for the end, is {screen?, overlays? [ids, bottom first], variables? {name: value}, variants? [{instance, variant}], visible? [ids], hidden? [ids], text? [{node, equals | contains}], endState?}. Returns {passed, simulated: true, notModelled, knownDifferences, start, state: {screen, screenName, overlays, history, variables, modes, variants, endState}, steps: [{index, action, fired, effects, problem?, failures, state}], failures, failedStep?, stepsTaken}. A step fails when its layer is not on what shows (the top overlay if one is open, else the screen), when a gesture or key sets nothing off, when an action cannot run, or when its `expect` does not hold; the run stops there unless `stopOnFailure` is false. With `image: true` a PNG of the final state follows the JSON as image content (the screen with its open overlays; engine `proto.snapshot`), and the JSON gains `image` {width, height, scale}. What the simulator does not model, as every result lists under `notModelled`: {NOT_MODELLED}. Where the simulator and the app's player still differ, as every result lists under `knownDifferences`: {KNOWN} So `passed` means that these state rules produced this state. It does not mean a person used it, could find the control, or saw it on a device. Keep a walk worth keeping with run_command proto.scenario.add {name, start, steps, expect, purpose}.",
+            ),
             obj(
                 json!({
                     "start": id_schema("The top-level frame to start on (default: the selected frame, else the first flow, else the page's first frame)"),
@@ -426,7 +429,9 @@ fn tools() -> Vec<Value> {
         tool(
             "run_scenarios",
             "Run scenarios",
-            "Run the scenarios stored in the document (engine `proto.scenario.run`): each is a named walk through the prototype with what must hold along the way, played on a copy by the same simulator as simulate_prototype and stopping at its first failing step. `id` runs one (\"S1\"); without it all of them run. Returns {passed, simulated: true, notModelled, total, failed, results: [{id, name, passed, failedStep?, failures, steps, stepsTaken}]}. Report a failed scenario as failed, and when `total` is 0 say that nothing was run: an empty run is not a pass. Never rewrite a scenario so that it passes; fix the prototype, or leave it failing. Scenarios are stored with run_command proto.scenario.add {name, start, steps, expect, purpose}, changed with proto.scenario.set and listed with proto.scenario.list (or design_context); an agent changes and removes only the scenarios it wrote. The simulator's limits apply, and every result lists them (`notModelled`): no animation or timing, no scroll position, no drag direction, no device frame or responsive resizing, no pointer hit-testing.",
+            &with_known_differences(
+                "Run the scenarios stored in the document (engine `proto.scenario.run`): each is a named walk through the prototype with what must hold along the way, played on a copy by the same simulator as simulate_prototype and stopping at its first failing step. `id` runs one (\"S1\"); without it all of them run. Returns {passed, simulated: true, notModelled, knownDifferences, total, failed, results: [{id, name, passed, failedStep?, failures, steps, stepsTaken}]}. Report a failed scenario as failed, and when `total` is 0 say that nothing was run: an empty run is not a pass. Never rewrite a scenario so that it passes; fix the prototype, or leave it failing. Scenarios are stored with run_command proto.scenario.add {name, start, steps, expect, purpose}, changed with proto.scenario.set and listed with proto.scenario.list (or design_context); an agent changes and removes only the scenarios it wrote. The simulator's limits apply, and every result lists them (`notModelled`): no animation or timing, no scroll position, no drag direction, no device frame or responsive resizing, no pointer hit-testing, one trigger per gesture step, none of the player's own keys, no widgets. Where it and the app's player still differ (`knownDifferences`): {KNOWN}",
+            ),
             obj(json!({"id": string("One scenario's id, e.g. \"S1\" (default: every stored scenario)")}), &[]),
             true,
         ),
@@ -454,14 +459,14 @@ fn tools() -> Vec<Value> {
         tool(
             "undo",
             "Undo",
-            "Undo the last change (one command, batch or gesture). Returns {undone: bool}. Your undo stays in your own work: when the last step was made by the user or another agent it is refused (code `otherAuthor`), naming the step and its author; inspect_document's `history.steps` shows who made each step.",
+            "Undo the last change (one command, batch or gesture). Returns {undone: bool}. Your undo stays in your own work: when the last step was made by the user or another agent, or a change of theirs with no undo step came after yours, it is refused (code `otherAuthor`), naming the step and its author; inspect_document's `history.steps` shows who made each step. Leave it, or ask them; pass `others: true` only if the person asked you to take back their step.",
             others(),
             false,
         ),
         tool(
             "redo",
             "Redo",
-            "Redo the last undone change. Returns {redone: bool}. Like undo, it takes only your own steps unless `others` is true.",
+            "Redo the last undone change. Returns {redone: bool}. Like undo, it takes only your own steps; pass `others: true` only if the person asked you to redo their step.",
             others(),
             false,
         ),
@@ -530,6 +535,19 @@ fn tools() -> Vec<Value> {
     ]
 }
 
+/// The simulator's known differences from the app's player, as one sentence list for a tool
+/// description (the same text every simulated result lists under `knownDifferences`).
+pub fn known_differences_text() -> String {
+    let all: Vec<&str> = figcraft_engine::proto_verify::KNOWN_DIFFERENCES.iter().map(|(_, says)| *says).collect();
+    format!("{}.", all.join("; "))
+}
+
+/// `desc` with `{KNOWN}` replaced by [`known_differences_text`], and `{NOT_MODELLED}` by what
+/// the simulator leaves out, in the words its results use.
+fn with_known_differences(desc: &str) -> String {
+    desc.replace("{KNOWN}", &known_differences_text()).replace("{NOT_MODELLED}", &figcraft_engine::proto_verify::NOT_MODELLED.join("; "))
+}
+
 // ---------- helpers ----------
 
 /// A backend whose every call names `document` (a tool's `document` argument).
@@ -558,8 +576,35 @@ impl Backend for InDocument<'_> {
         self.inner.take_error_detail()
     }
 
+    fn take_revision(&mut self) -> Option<(u64, u64)> {
+        self.inner.take_revision()
+    }
+
     fn app_info(&mut self) -> Option<Value> {
         self.inner.app_info()
+    }
+}
+
+/// What a tool's run says about the documents besides its result.
+#[derive(Default)]
+struct Ctx {
+    /// The file the call leaves as the working document, when it is another one than its target
+    /// (a file it opened, made or reverted).
+    moved: Option<u64>,
+    /// The revision the call's change left its document at, read in the same request as the
+    /// change: `(document, revision)` ([`Backend::take_revision`]).
+    changed: Option<(u64, u64)>,
+    /// Another open file the call acted on than the working document (`file.close {index}`,
+    /// `doc.switch {index}`): the result names it, and the working document stays.
+    acted_on: Option<u64>,
+}
+
+impl Ctx {
+    /// The revision the backend read right after the call just made (the call's change).
+    fn note(&mut self, b: &mut dyn Backend) {
+        if let Some(r) = b.take_revision() {
+            self.changed = Some(r);
+        }
     }
 }
 
@@ -757,12 +802,27 @@ impl ToolState {
     pub fn document(&self) -> Option<Value> {
         self.working.as_ref().map(|w| json!(w.id))
     }
+
+    /// The working document, settled the first time it is needed (the tab in front then, or
+    /// when the working document was closed), as get_capabilities settles it: a resource read
+    /// before any tool call reads the file later calls will act on (review R2-11).
+    pub fn settle(&mut self, b: &mut dyn Backend) -> Option<Value> {
+        let docs = open_documents(b).ok()?;
+        if self.working.as_ref().is_none_or(|w| !docs.iter().any(|d| d.id == w.id))
+            && let Some(front) = docs.iter().find(|d| d.front)
+        {
+            self.working = Some(Working { id: front.id, name: front.name.clone() });
+        }
+        self.document()
+    }
 }
 
 /// One open document, as `doc.list` gives it.
 #[derive(Clone, Debug)]
 struct Open {
     id: u64,
+    /// Its tab's place among the open documents (`doc.list`'s `index`).
+    index: Option<u64>,
     name: String,
     /// `None` from an app that doesn't count revisions yet.
     revision: Option<u64>,
@@ -778,11 +838,31 @@ fn short_name(name: &str) -> String {
 impl Open {
     /// `{id, name, revision, front}`: what every result says about the document it is about.
     fn identity(&self) -> Value {
+        self.identity_at(self.revision)
+    }
+
+    /// [`Self::identity`] at `revision` (the one the result belongs to).
+    fn identity_at(&self, revision: Option<u64>) -> Value {
         let mut v = json!({"id": self.id, "name": short_name(&self.name), "front": self.front});
-        if let Some(r) = self.revision {
+        if let Some(r) = revision {
             v["revision"] = json!(r);
         }
         v
+    }
+}
+
+/// The revision a result about document `d` belongs to: the one its change left it at, read in
+/// the same request (`changed`), else the one it had before the call's first request (`before`):
+/// never one read afterwards, which could take in somebody else's change made in between and so
+/// let a later `ifRevision` through over it. `d.revision` (read after) only for a document the
+/// call itself made.
+fn revision_for(d: &Open, changed: Option<(u64, u64)>, before: Option<&[Open]>) -> Option<u64> {
+    if let Some((_, rev)) = changed.filter(|(id, _)| *id == d.id) {
+        return Some(rev);
+    }
+    match before.and_then(|b| b.iter().find(|x| x.id == d.id)) {
+        Some(was) => was.revision,
+        None => d.revision,
     }
 }
 
@@ -796,6 +876,7 @@ fn open_documents(b: &mut dyn Backend) -> Result<Vec<Open>, String> {
                 .filter_map(|d| {
                     Some(Open {
                         id: d.get("id")?.as_u64()?,
+                        index: d.get("index").and_then(Value::as_u64),
                         name: d.get("name").and_then(Value::as_str).unwrap_or_default().to_string(),
                         revision: d.get("revision").and_then(Value::as_u64),
                         front: d.get("active").and_then(Value::as_bool).unwrap_or(false),
@@ -884,42 +965,57 @@ pub fn call_tool_in(state: &mut ToolState, b: &mut dyn Backend, name: &str, args
         },
         false => None,
     };
-    // The file the call leaves as the working document, when it is another one than `target`.
-    let mut moved = None;
+    // The documents as they are before the call's first request: what a result that only reads
+    // reports its revision from (review R2-01).
+    let before = match on_document || name == "open_file" {
+        true => match open_documents(b) {
+            Ok(docs) => Some(docs),
+            Err(message) => {
+                // Another run of the app: nothing may be sent to it under this run's ids.
+                let detail = b.take_error_detail().unwrap_or_else(|| error_detail("failed", &message));
+                if detail.get("restarted").and_then(Value::as_bool) == Some(true) {
+                    return closed_or(state, b, message, detail, target, explicit.as_ref(), None, None);
+                }
+                None
+            }
+        },
+        false => None,
+    };
+    let mut ctx = Ctx::default();
     let outcome = match target {
-        Some(id) => run_tool(&mut InDocument { inner: b, document: json!(id) }, name, &a, &mut moved),
-        None => run_tool(b, name, &a, &mut moved),
+        Some(id) => run_tool(&mut InDocument { inner: b, document: json!(id) }, name, &a, &mut ctx, before.as_deref()),
+        None => run_tool(b, name, &a, &mut ctx, before.as_deref()),
     };
     if !(on_document || name == "open_file") {
         return outcome.unwrap_or_else(|f| refused(b, f));
     }
-    about_document(state, b, outcome, moved.or(target), explicit.as_ref())
+    about_document(state, b, outcome, target, explicit.as_ref(), before.as_deref(), &ctx)
 }
 
-fn run_tool(b: &mut dyn Backend, name: &str, a: &Map<String, Value>, moved: &mut Option<u64>) -> Outcome {
+fn run_tool(b: &mut dyn Backend, name: &str, a: &Map<String, Value>, ctx: &mut Ctx, before: Option<&[Open]>) -> Outcome {
     match name {
         "list_commands" => list_commands(b, a),
-        "run_command" => run_command(b, a, moved),
-        "batch" => batch(b, a),
-        "create_node" => create_node(b, a),
-        "set_properties" => set_properties(b, a),
+        "run_command" => run_command(b, a, ctx, before),
+        "batch" => batch(b, a, ctx),
+        "create_node" => create_node(b, a, ctx),
+        "set_properties" => set_properties(b, a, ctx),
         "inspect_document" => inspect_document(b, a),
         "get_node" => get_node(b, a),
-        "select" => select(b, a),
+        "select" => select(b, a, ctx),
         "export" => export(b, a),
         "screenshot" => screenshot(b, a),
         "design_context" => Ok(exec(b, "design.get", json!({})).map(|v| ToolResult::json(&v))?),
-        "check_design" => check_design(b, a),
+        "check_design" => check_design(b, a, ctx),
         "check_prototype" => Ok(exec(b, "proto.check", passed(a, &["page"])).map(|v| ToolResult::json(&v))?),
         "simulate_prototype" => simulate_prototype(b, a),
         "run_scenarios" => Ok(exec(b, "proto.scenario.run", passed(a, &["id"])).map(|v| ToolResult::json(&v))?),
-        "open_file" => open_file(b, a, moved),
-        "save_file" => save_file(b, a),
-        "undo" => travel(b, a, "edit.undo"),
-        "redo" => travel(b, a, "edit.redo"),
-        "pointer" => pointer(b, a),
-        "key" => key(b, a),
-        "type_text" => type_text(b, a),
+        "open_file" => open_file(b, a, ctx),
+        "save_file" => save_file(b, a, ctx),
+        "undo" => travel(b, a, "edit.undo", ctx),
+        "redo" => travel(b, a, "edit.redo", ctx),
+        "pointer" => pointer(b, a, ctx),
+        "key" => key(b, a, ctx),
+        "type_text" => type_text(b, a, ctx),
         "inspect_ui" => Ok(b.call("ui.inspect", json!({})).map(|v| ToolResult::json(&v))?),
         "wait_for_changes" => wait_for_changes(b, a),
         other => Err(Failure::coded("unknownTool", format!("unknown tool `{other}` (tools/list has: {})", TOOL_NAMES.join(", ")))),
@@ -943,7 +1039,7 @@ fn refused(b: &mut dyn Backend, f: Failure) -> ToolResult {
 /// nothing was done anywhere. `target`: the document the call was sent to, when it got that far.
 fn not_open(state: &mut ToolState, b: &mut dyn Backend, f: Failure, target: Option<u64>, explicit: Option<&Value>) -> ToolResult {
     let detail = detail_of(b, &f);
-    closed_or(state, b, f.message, detail, target, explicit, None)
+    closed_or(state, b, f.message, detail, target, explicit, None, None)
 }
 
 /// Finish a failed call about a document: when the document it was for is not open (any more),
@@ -956,6 +1052,7 @@ fn closed_or(
     target: Option<u64>,
     explicit: Option<&Value>,
     docs: Option<Vec<Open>>,
+    before: Option<&[Open]>,
 ) -> ToolResult {
     let restarted = detail.get("restarted").and_then(Value::as_bool) == Some(true);
     if restarted {
@@ -967,7 +1064,8 @@ fn closed_or(
     let Some(docs) = docs.or_else(|| open_documents(b).ok()) else { return ToolResult::failed(&message, detail) };
     let open = target.and_then(|t| docs.iter().find(|d| d.id == t));
     if let Some(d) = open {
-        detail["document"] = d.identity();
+        // A failed call changed nothing: it is about the document as the call found it.
+        detail["document"] = d.identity_at(revision_for(d, None, before));
         return ToolResult::failed(&message, detail);
     }
     if !no_document || docs.is_empty() && target.is_none() && explicit.is_none() {
@@ -996,8 +1094,17 @@ fn closed_or(
 }
 
 /// Finish a call that read or changed a document: remember which document it was (it is the
-/// working document from here on) and say so in the result, with the revision it is at now.
-fn about_document(state: &mut ToolState, b: &mut dyn Backend, outcome: Outcome, target: Option<u64>, explicit: Option<&Value>) -> ToolResult {
+/// working document from here on) and say so in the result, with the revision the result belongs
+/// to ([`revision_for`]). `target`: the document the call was sent to.
+fn about_document(
+    state: &mut ToolState,
+    b: &mut dyn Backend,
+    outcome: Outcome,
+    target: Option<u64>,
+    explicit: Option<&Value>,
+    before: Option<&[Open]>,
+    ctx: &Ctx,
+) -> ToolResult {
     // The backend's word on a failure, before the next call to it replaces it.
     let outcome = outcome.map_err(|f| {
         let detail = detail_of(b, &f);
@@ -1006,17 +1113,46 @@ fn about_document(state: &mut ToolState, b: &mut dyn Backend, outcome: Outcome, 
     if let Err((message, detail)) = &outcome
         && detail.get("restarted").and_then(Value::as_bool) == Some(true)
     {
-        return closed_or(state, b, message.clone(), detail.clone(), target, explicit, None);
+        return closed_or(state, b, message.clone(), detail.clone(), target, explicit, None, before);
     }
+    let reported = ctx.moved.or(target);
     let docs = open_documents(b).ok();
-    let open = target.and_then(|t| docs.as_ref()?.iter().find(|d| d.id == t).cloned());
+    let open = reported.and_then(|t| docs.as_ref()?.iter().find(|d| d.id == t).cloned());
     if let Some(d) = &open {
         state.working = Some(Working { id: d.id, name: d.name.clone() });
     }
+    let identity = |d: &Open| d.identity_at(revision_for(d, ctx.changed, before));
     match outcome {
         Ok(mut result) => {
-            match (&open, target, &docs) {
-                (Some(d), ..) => result.attach(json!({"document": d.identity()})),
+            // Another tab the command acted on (`file.close {index}`, `doc.switch {index}`): the
+            // result names that one; the working document stays what it was.
+            let acted = ctx.acted_on.filter(|a| Some(*a) != reported);
+            if let Some(a) = acted {
+                let other = docs.as_ref().and_then(|d| d.iter().find(|d| d.id == a));
+                let named = before.and_then(|b| b.iter().find(|d| d.id == a));
+                let document = match (other, named) {
+                    (Some(d), _) => identity(d),
+                    (None, Some(was)) => json!({"id": a, "name": short_name(&was.name), "closed": true}),
+                    (None, None) => json!({"id": a, "closed": true}),
+                };
+                let mut extra = json!({"document": document});
+                if let Some(d) = &open {
+                    extra["workingDocument"] = identity(d);
+                }
+                result.attach(extra);
+                return result;
+            }
+            match (&open, reported, &docs) {
+                (Some(d), ..) => {
+                    let mut extra = json!({"document": identity(d)});
+                    // The command opened, made or reverted a file: it is the working document now.
+                    if let (Some(to), Some(from)) = (ctx.moved, target)
+                        && to != from
+                    {
+                        extra["workingDocumentChanged"] = json!({"from": from, "to": to});
+                    }
+                    result.attach(extra);
+                }
                 // The call itself closed the document it ran on.
                 (None, Some(t), Some(_)) => {
                     let name = state.working.as_ref().filter(|w| w.id == t).map(|w| short_name(&w.name));
@@ -1026,7 +1162,7 @@ fn about_document(state: &mut ToolState, b: &mut dyn Backend, outcome: Outcome, 
             }
             result
         }
-        Err((message, detail)) => closed_or(state, b, message, detail, target, explicit, docs),
+        Err((message, detail)) => closed_or(state, b, message, detail, reported, explicit, docs, before),
     }
 }
 
@@ -1051,7 +1187,7 @@ fn use_document(state: &mut ToolState, b: &mut dyn Backend, a: &Map<String, Valu
     let Some(doc) = chosen else {
         let f = Failure::coded("noDocument", format!("no open document {asked}"));
         let detail = detail_of(b, &f);
-        return Ok(closed_or(state, b, f.message, detail, wanted, Some(asked), Some(docs)));
+        return Ok(closed_or(state, b, f.message, detail, wanted, Some(asked), Some(docs), None));
     };
     state.working = Some(Working { id: doc.id, name: doc.name.clone() });
     let mut result = ToolResult::json(&json!({"workingDocument": doc.identity(), "documents": docs.iter().map(Open::identity).collect::<Vec<_>>()}));
@@ -1092,13 +1228,16 @@ fn get_capabilities(state: &mut ToolState, b: &mut dyn Backend) -> Outcome {
     // as an unknown parameter: only an engine that documents it detects conflicts.
     let revisions = doc_of("doc.list").is_some_and(|d| d.contains("revision"));
     let roots = figcraft_engine::file_access::current().map(|r| r.to_json());
+    // A live prototype player needs a window: an app that says it has none (`app.info`'s
+    // `window`) has none, an app from before that question is taken to have its window.
+    let window = attached && app.as_ref().and_then(|i| i.get("window")).and_then(Value::as_bool).unwrap_or(true);
     let out = json!({
-        "product": "FigCraft",
+        "product": crate::PRODUCT_NAME,
         "version": env!("CARGO_PKG_VERSION"),
         "protocol": crate::server::PROTOCOL_VERSION,
         "backend": if attached { "attached" } else { "headless" },
-        "window": attached,
-        "player": attached,
+        "window": window,
+        "player": window && has("proto.present"),
         "app": app,
         "roots": roots,
         "workingDocument": working,
@@ -1124,10 +1263,11 @@ fn get_capabilities(state: &mut ToolState, b: &mut dyn Backend) -> Outcome {
             "maxScreenshotSide": 8192,
             "historySteps": 20,
         },
+        // The lists the engine's own open dispatcher, save and export commands work from.
         "formats": {
-            "open": ["figcraft", "json", "fig", "jam", "sketch", "penpot", "svg", "png", "jpg", "gif", "webp", "bmp", "tiff"],
-            "save": ["figcraft", "fig"],
-            "export": ["png", "jpg", "svg", "webp", "pdf", "xml", "fig"],
+            "open": figcraft_engine::cmd::file::OPEN_FORMATS,
+            "save": figcraft_engine::cmd::file::SAVE_FORMATS,
+            "export": figcraft_engine::cmd::file::export_formats(),
         },
     });
     let mut result = ToolResult::json(&out);
@@ -1138,12 +1278,14 @@ fn get_capabilities(state: &mut ToolState, b: &mut dyn Backend) -> Outcome {
 }
 
 /// `undo` / `redo`: one step back or forward, the caller's own unless it says `others`.
-fn travel(b: &mut dyn Backend, a: &Map<String, Value>, cmd: &str) -> Outcome {
+fn travel(b: &mut dyn Backend, a: &Map<String, Value>, cmd: &str, ctx: &mut Ctx) -> Outcome {
     let mut params = json!({});
     if let Some(others) = a.get("others").filter(|v| !v.is_null()) {
         params["others"] = others.clone();
     }
-    Ok(exec(b, cmd, conditional(a, params)).map(|v| ToolResult::json(&v))?)
+    let v = exec(b, cmd, conditional(a, params))?;
+    ctx.note(b);
+    Ok(ToolResult::json(&v))
 }
 
 fn list_commands(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
@@ -1189,7 +1331,11 @@ fn list_commands(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
     Ok(ToolResult::text(out))
 }
 
-fn run_command(b: &mut dyn Backend, a: &Map<String, Value>, moved: &mut Option<u64>) -> Outcome {
+/// The commands that open, make or read again a file and put it in front: the file they answer
+/// with (`id`) is the working document from here on, as with open_file (review R2-11).
+const OPENS: &[&str] = &["file.new", "file.newBoard", "file.open", "file.openRecent", "file.duplicate", "file.revert"];
+
+fn run_command(b: &mut dyn Backend, a: &Map<String, Value>, ctx: &mut Ctx, before: Option<&[Open]>) -> Outcome {
     let cmd = req_s(a, "command")?;
     let params = match a.get("params") {
         None | Some(Value::Null) => json!({}),
@@ -1198,10 +1344,22 @@ fn run_command(b: &mut dyn Backend, a: &Map<String, Value>, moved: &mut Option<u
     };
     let mut params = params;
     friendly_params(&mut params);
+    // A command on another tab, named by its place: the result names that document.
+    if matches!(cmd, "file.close" | "doc.switch")
+        && let Some(i) = params.get("index").and_then(Value::as_u64)
+    {
+        ctx.acted_on = before.and_then(|docs| docs.iter().find(|d| d.index == Some(i))).map(|d| d.id);
+    }
     let v = exec(b, cmd, conditional(a, params))?;
-    // The reverted file is the same document to the caller, under the id the engine gave it anew.
-    if cmd == "file.revert" {
-        *moved = v.get("id").and_then(Value::as_u64);
+    ctx.note(b);
+    // A file opened, made or read again is the working document from here on (a reverted file is
+    // the same document to the caller, under the id the engine gave it anew); the command's own
+    // answer says which, and at which revision.
+    if OPENS.contains(&cmd)
+        && let Some(id) = v.get("id").and_then(Value::as_u64)
+    {
+        ctx.moved = Some(id);
+        ctx.changed = v.get("revision").and_then(Value::as_u64).map(|r| (id, r)).or(ctx.changed.filter(|(d, _)| *d == id));
     }
     Ok(ToolResult::json(&v))
 }
@@ -1218,7 +1376,7 @@ fn bad_step(step: usize, command: Option<&str>, message: String) -> Failure {
     f
 }
 
-fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
+fn batch(b: &mut dyn Backend, a: &Map<String, Value>, ctx: &mut Ctx) -> Outcome {
     let Some(Value::Array(cmds)) = a.get("commands") else {
         return Err(Failure::param("commands", "`commands` must be an array of {command, params}"));
     };
@@ -1248,10 +1406,12 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
     if let Some(mode) = a.get("onError") {
         params["onError"] = mode.clone();
     }
-    Ok(exec(b, "command.batch", conditional(a, params)).map(|v| ToolResult::json(&v))?)
+    let v = exec(b, "command.batch", conditional(a, params))?;
+    ctx.note(b);
+    Ok(ToolResult::json(&v))
 }
 
-fn create_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
+fn create_node(b: &mut dyn Backend, a: &Map<String, Value>, ctx: &mut Ctx) -> Outcome {
     req_s(a, "type")?;
     for k in ["x", "y", "width", "height"] {
         n_arg(a, k)?;
@@ -1272,12 +1432,13 @@ fn create_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
         normalize_props(p);
     }
     let r = exec(b, "node.create", conditional(a, Value::Object(params)))?;
+    ctx.note(b);
     let id = r.get("id").cloned().ok_or_else(|| Failure::coded("internal", "node.create returned no id"))?;
     let node = b.call("node.get", json!({"id": id, "depth": 0}))?;
     Ok(ToolResult::json(&json!({"id": id, "node": node})))
 }
 
-fn set_properties(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
+fn set_properties(b: &mut dyn Backend, a: &Map<String, Value>, ctx: &mut Ctx) -> Outcome {
     let props = match a.get("props") {
         Some(Value::Object(p)) if !p.is_empty() => p.clone(),
         _ => return Err(Failure::param("props", "`props` must be a non-empty object")),
@@ -1293,6 +1454,7 @@ fn set_properties(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
         params["ids"] = json!(ids);
     }
     let warnings = exec(b, "node.set", conditional(a, params))?.get("warnings").cloned();
+    ctx.note(b);
     let ids = match ids {
         Some(i) => i,
         None => b
@@ -1610,13 +1772,14 @@ fn with_marker(mut value: Value, cut: Cut, max_bytes: usize, over: bool, childre
     value
 }
 
-fn select(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
+fn select(b: &mut dyn Backend, a: &Map<String, Value>, ctx: &mut Ctx) -> Outcome {
     let ids = ids_arg(a, "ids")?.ok_or("`ids` is required (an empty array deselects)")?;
     if ids.is_empty() {
         exec(b, "select.none", json!({}))?;
     } else {
         exec(b, "select.set", json!({"ids": ids}))?;
     }
+    ctx.note(b);
     let sel = b.call("document.inspect", json!({"depth": 0}))?.get("selection").cloned().unwrap_or(Value::Null);
     Ok(ToolResult::json(&json!({"selection": sel})))
 }
@@ -1753,13 +1916,20 @@ fn flag(a: &Map<String, Value>, k: &str) -> Result<bool, Failure> {
 /// `check_design`: the design measured by its rules (`design.check`, passed through). With
 /// `record` the findings are stored too, and the result says which (`recorded`) and gives them as
 /// stored (`stored`), each with the id the commands that settle a finding take.
-fn check_design(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
+fn check_design(b: &mut dyn Backend, a: &Map<String, Value>, ctx: &mut Ctx) -> Outcome {
     let params = passed(a, &["scope", "rules"]);
     if !flag(a, "record")? {
+        if a.get(IF_REVISION).is_some_and(|v| !v.is_null()) {
+            return Err(Failure::param(
+                IF_REVISION,
+                "`ifRevision` is for a check that records its findings (`record: true`): a check alone changes nothing",
+            ));
+        }
         return Ok(exec(b, "design.check", params).map(|v| ToolResult::json(&v))?);
     }
     // Stored first: when that is refused, nothing is reported as recorded.
-    let recorded = exec(b, "design.check.record", params.clone())?;
+    let recorded = exec(b, "design.check.record", conditional(a, params.clone()))?;
+    ctx.note(b);
     let mut out = exec(b, "design.check", params)?;
     let ids: Vec<Value> = ["added", "existing"].iter().filter_map(|k| recorded.get(*k).and_then(Value::as_array)).flatten().cloned().collect();
     let all = exec(b, "design.finding.list", json!({"kind": "check"}))?;
@@ -1825,7 +1995,7 @@ fn simulate_prototype(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
 }
 
 /// `open_file`: the file opens in front and is the working document from here on (`moved`).
-fn open_file(b: &mut dyn Backend, a: &Map<String, Value>, moved: &mut Option<u64>) -> Outcome {
+fn open_file(b: &mut dyn Backend, a: &Map<String, Value>, ctx: &mut Ctx) -> Outcome {
     let path = req_s(a, "path")?;
     let mut params = json!({"path": path});
     match a.get("variables") {
@@ -1837,18 +2007,28 @@ fn open_file(b: &mut dyn Backend, a: &Map<String, Value>, moved: &mut Option<u64
         params["reload"] = reload.clone();
     }
     let r = exec(b, "file.open", params)?;
-    // The opened file is in front now: read it there, and say which document it is.
-    let doc = b.call("document.inspect", json!({"depth": 1}))?;
-    *moved = r.get("id").or_else(|| doc.get("id")).and_then(Value::as_u64);
+    let opened = r.get("id").and_then(Value::as_u64);
+    // The opened file, read by its id: with an attached app the tab in front may be another one
+    // by now (review R2-11). An app whose answer has no id: the tab in front, as before.
+    let mut inspect = json!({"depth": 1});
+    if let Some(id) = opened {
+        inspect["document"] = json!(id);
+    }
+    let doc = b.call("document.inspect", inspect)?;
+    ctx.moved = opened.or_else(|| doc.get("id").and_then(Value::as_u64));
+    // Its revision as the command answered it (the read after could take in another change).
+    ctx.changed = opened.zip(r.get("revision").and_then(Value::as_u64));
     Ok(ToolResult::json(&json!({"opened": r, "document": doc})))
 }
 
-fn save_file(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
+fn save_file(b: &mut dyn Backend, a: &Map<String, Value>, ctx: &mut Ctx) -> Outcome {
     let params = match s_arg(a, "path")? {
         Some(p) => json!({"path": p}),
         None => json!({}),
     };
-    Ok(exec(b, "file.save", params).map(|v| ToolResult::json(&v))?)
+    let v = exec(b, "file.save", conditional(a, params))?;
+    ctx.note(b);
+    Ok(ToolResult::json(&v))
 }
 
 fn mods(a: &Map<String, Value>, out: &mut Map<String, Value>) -> Result<(), String> {
@@ -1864,7 +2044,17 @@ fn mods(a: &Map<String, Value>, out: &mut Map<String, Value>) -> Result<(), Stri
     Ok(())
 }
 
-fn pointer(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
+/// A gesture, key or typed text with `ifRevision`: checked in the request that acts (the backend
+/// refuses it there), and first by the engine on its own (an app from before this takes no
+/// `ifRevision` on the canvas methods, and would act without checking).
+fn canvas_conditional(b: &mut dyn Backend, a: &Map<String, Value>, p: &mut Map<String, Value>) -> Result<(), Failure> {
+    let Some(rev) = a.get(IF_REVISION).filter(|v| !v.is_null()) else { return Ok(()) };
+    exec(b, "doc.list", json!({IF_REVISION: rev})).map_err(Failure::from_backend)?;
+    p.insert(IF_REVISION.into(), rev.clone());
+    Ok(())
+}
+
+fn pointer(b: &mut dyn Backend, a: &Map<String, Value>, ctx: &mut Ctx) -> Outcome {
     let x = n_arg(a, "x")?.ok_or("`x` is required")?;
     let y = n_arg(a, "y")?.ok_or("`y` is required")?;
     let kind = s_arg(a, "kind")?.unwrap_or("click");
@@ -1889,23 +2079,30 @@ fn pointer(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
         }
     }
     mods(a, &mut p)?;
-    Ok(b.call("ui.pointer", Value::Object(p)).map(|v| ToolResult::json(&v))?)
+    canvas_conditional(b, a, &mut p)?;
+    let v = b.call("ui.pointer", Value::Object(p))?;
+    ctx.note(b);
+    Ok(ToolResult::json(&v))
 }
 
-fn key(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
+fn key(b: &mut dyn Backend, a: &Map<String, Value>, ctx: &mut Ctx) -> Outcome {
     let k = req_s(a, "key")?;
     let mut p = Map::new();
     p.insert("key".into(), json!(k));
     mods(a, &mut p)?;
-    Ok(b.call("ui.key", Value::Object(p)).map(|v| ToolResult::json(&v))?)
+    canvas_conditional(b, a, &mut p)?;
+    let v = b.call("ui.key", Value::Object(p))?;
+    ctx.note(b);
+    Ok(ToolResult::json(&v))
 }
 
-fn type_text(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
+fn type_text(b: &mut dyn Backend, a: &Map<String, Value>, ctx: &mut Ctx) -> Outcome {
     let text = req_s(a, "text")?;
     match a.get("id").filter(|v| !v.is_null()) {
         Some(id) => {
             let id = id_arg(id)?;
-            exec(b, "text.edit.begin", json!({"id": id}))?;
+            // Checked where the edit starts: from there on it is this agent's text edit.
+            exec(b, "text.edit.begin", conditional(a, json!({"id": id})))?;
             // What the backend says about a failure is kept now: the next call replaces it.
             let typed = b.call("ui.type", json!({"text": text})).map_err(|message| {
                 let detail = b.take_error_detail();
@@ -1913,11 +2110,19 @@ fn type_text(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
             });
             // Always leave edit mode, even when typing failed.
             let ended = exec(b, "text.edit.end", json!({}));
+            ctx.note(b);
             typed?;
             ended?;
             let node = b.call("node.get", json!({"id": id, "depth": 0}))?;
             Ok(ToolResult::json(&json!({"ok": true, "node": node})))
         }
-        None => Ok(b.call("ui.type", json!({"text": text})).map(|v| ToolResult::json(&v))?),
+        None => {
+            let mut p = Map::new();
+            p.insert("text".into(), json!(text));
+            canvas_conditional(b, a, &mut p)?;
+            let v = b.call("ui.type", Value::Object(p))?;
+            ctx.note(b);
+            Ok(ToolResult::json(&v))
+        }
     }
 }

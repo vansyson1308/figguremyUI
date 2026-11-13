@@ -245,10 +245,18 @@ fn fake_app_runs(runs: usize) -> u16 {
                     break;
                 }
                 let app = &mut apps[run];
-                let reply = match app.call(method, v["params"].clone()) {
+                let mut reply = match app.call(method, v["params"].clone()) {
                     Ok(r) => json!({"id": v["id"], "ok": true, "result": r}),
                     Err(e) => json!({"id": v["id"], "ok": false, "error": e, "errorDetail": app.take_error_detail()}),
                 };
+                // As the app does: it has a window, and a command's reply carries the revision of
+                // the document it acted on, read right after it, next to the result.
+                if method == "app.info" {
+                    reply["result"]["window"] = json!(true);
+                }
+                if let Some((_, revision)) = app.take_revision().filter(|_| method == "engine.execute") {
+                    reply["revision"] = json!(revision);
+                }
                 if writeln!(out, "{reply}").is_err() {
                     break;
                 }

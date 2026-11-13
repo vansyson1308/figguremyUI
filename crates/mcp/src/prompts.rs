@@ -103,7 +103,7 @@ The brief as given: {brief}
 3. Flow facts: check_prototype. Read `starts`, each screen's `reachable`, `deadEnd` and `endState`, and `problems` (rule, nodes, evidence). `ok` means only that these rules found no blocker and no major problem. A screen an agent declared as an end state is still a dead end until a person accepts it.
 4. Scenarios: run_scenarios. For each one: passed, or the step that failed and why. If none is stored, nothing was run: write the main walk and the places where time passes (first use, empty, loading, error, success, return) with proto.scenario.add {"name": ..., "purpose": ..., "start": <frame>, "steps": [...], "expect": {...}} and run them. Never change a scenario so that it passes: fix the prototype, or report it as failing. A scenario a person wrote is theirs to change.
 5. Look at states: simulate_prototype {"start": <frame>, "steps": [{"click": <layer>, "expect": {"screen": <frame>}}], "image": true} for the states that matter (an open overlay, an error, the last screen). Compare each picture with what the brief asks for.
-6. Report in this order: what failed (scenario, step, layer ids, evidence); what did not run and why; what passed; then the limits. This was a simulation of the prototype's state rules. It does not model animation and timing, scroll position, drag direction, the device frame and responsive resizing, or pointer hit-testing (what overlaps a layer on screen); each result lists these itself under `notModelled`. Nobody used it: do not call it user testing."##,
+6. Report in this order: what failed (scenario, step, layer ids, evidence); what did not run and why; what passed; then the limits. This was a simulation of the prototype's state rules. It does not model animation and timing, scroll position, drag direction, the device frame and responsive resizing, or pointer hit-testing (what overlaps a layer on screen), and a gesture step is one trigger (the player's own Mouse down and Mouse up on a clicked layer, its own keys and widgets are not played); each result lists these itself under `notModelled`. Where the simulator and the app's player still differ, as each result lists under `knownDifferences`, say so beside any result that depends on it: {knownDifferences} Nobody used it: do not call it user testing."##,
         defaults: &[("start", "the first flow of the page")],
     },
     PromptDef {
@@ -295,7 +295,8 @@ pub fn get(name: &str, args: &Value) -> Result<Value, String> {
     if !(args.is_object() || args.is_null()) {
         return Err("`arguments` must be an object of strings".into());
     }
-    let mut values: Vec<(&str, String)> = vec![("purpose", PURPOSE.to_string()), ("verify", VERIFY.to_string())];
+    let mut values: Vec<(&str, String)> =
+        vec![("purpose", PURPOSE.to_string()), ("verify", VERIFY.to_string()), ("knownDifferences", crate::tools::known_differences_text())];
     for a in p.args {
         let v = match args.get(a.name) {
             Some(Value::String(s)) if !s.trim().is_empty() => s.clone(),

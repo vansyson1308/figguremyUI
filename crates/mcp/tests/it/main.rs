@@ -32,6 +32,8 @@ mod inspect_response_limit;
 mod overlay_anchor;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod protocol;
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::disallowed_methods)]
+mod review_r2;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod screenshot_pixel_limit;
 #[allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]

@@ -23,10 +23,19 @@ fn fake_app() -> u16 {
             for line in BufReader::new(stream).lines() {
                 let Ok(line) = line else { break };
                 let v: Value = serde_json::from_str(&line).unwrap_or(Value::Null);
-                let reply = match app.call(v["method"].as_str().unwrap_or(""), v["params"].clone()) {
+                let method = v["method"].as_str().unwrap_or("");
+                let mut reply = match app.call(method, v["params"].clone()) {
                     Ok(r) => json!({"id": v["id"], "ok": true, "result": r}),
                     Err(e) => json!({"id": v["id"], "ok": false, "error": e}),
                 };
+                // As the app answers: it has a window, and a command's reply carries the revision
+                // of the document it acted on, read right after it.
+                if method == "app.info" {
+                    reply["result"]["window"] = json!(true);
+                }
+                if let Some((_, revision)) = app.take_revision().filter(|_| method == "engine.execute") {
+                    reply["revision"] = json!(revision);
+                }
                 if writeln!(out, "{reply}").is_err() {
                     break;
                 }
@@ -281,7 +290,10 @@ fn the_design_and_prototype_resources_read_the_working_document() {
     // They follow the working document, not the tab in front.
     let first = about(&c.call("inspect_document", json!({"depth": 0})))["id"].clone();
     let second = c.run("file.new", json!({"name": "Other"}))["id"].clone();
-    assert_eq!(read(&mut c, "figcraft://design")["brief"]["audience"], "Couriers", "a new tab in front changes nothing");
+    // A file the agent makes is its working document from then on, as one it opens is (R2-11).
+    assert_eq!(read(&mut c, "figcraft://design")["brief"], json!({}));
+    c.ok("use_document", json!({"document": first}));
+    assert_eq!(read(&mut c, "figcraft://design")["brief"]["audience"], "Couriers", "the tab in front changes nothing");
     c.ok("use_document", json!({"document": second}));
     assert_eq!(read(&mut c, "figcraft://design")["brief"], json!({}));
     assert_eq!(read(&mut c, "figcraft://prototype/scenarios")["scenarios"], json!([]));
@@ -297,7 +309,10 @@ fn the_verification_tools_name_their_document_and_check_their_arguments() {
     let mut c = Client::new();
     let b = build(&mut c);
     store_scenarios(&mut c, &b);
+    let working = about(&c.call("inspect_document", json!({"depth": 0})))["id"].clone();
     let second = c.run("file.new", json!({"name": "Empty"}))["id"].clone();
+    // The new file became the working document (R2-11); go back to the one built.
+    c.ok("use_document", json!({"document": working}));
     let first = about(&c.call("inspect_document", json!({"depth": 0})));
     assert_eq!(first["front"], false, "the new file is in front; the working document is the one behind it");
     let calls = [
@@ -325,10 +340,13 @@ fn the_verification_tools_name_their_document_and_check_their_arguments() {
         wrong["nope"] = json!(1);
         let e = error_of(&c.call(tool, wrong));
         assert!(e["message"].as_str().unwrap().contains("unknown argument `nope`"), "{tool}: {e}");
-        // None of them is a conditional change.
+        // None of them is a conditional change (check_design takes `ifRevision` only to record its
+        // findings, review R2-10).
         let mut conditional = args.clone();
         conditional["ifRevision"] = json!(1);
-        assert!(error_of(&c.call(tool, conditional))["message"].as_str().unwrap().contains("unknown argument `ifRevision`"), "{tool}");
+        let e = error_of(&c.call(tool, conditional));
+        let refused = if *tool == "check_design" { "`ifRevision` is for a check that records its findings" } else { "unknown argument `ifRevision`" };
+        assert!(e["message"].as_str().unwrap().contains(refused), "{tool}: {e}");
     }
     // The engine's own refusals come through with their code and the parameter they are about.
     let e = error_of(&c.call("check_design", json!({"rules": ["no.such.rule"]})));

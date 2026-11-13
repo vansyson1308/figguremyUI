@@ -15,6 +15,8 @@ pub struct Headless {
     last_error: Option<Value>,
     /// What `app.info` answers: made once, so a client can tell this session from another.
     instance: String,
+    /// The revision the last change left its document at ([`Backend::take_revision`]).
+    last_revision: Option<(u64, u64)>,
 }
 
 /// A failed call: its text, and what kind of failure it is (`{code, message, …}`).
@@ -98,18 +100,25 @@ impl Headless {
         let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let started = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
         let instance = format!("headless-{}-{started:x}-{n}", std::process::id());
-        Self { session, last_error: None, instance }
+        Self { session, last_error: None, instance, last_revision: None }
     }
 
+    /// A command for whoever acts now ([`Session::agent`]: the agent [`Self::as_agent`] put there
+    /// for a key or gesture, else the user): a shortcut a key stands for is that agent's step.
     fn execute(&mut self, cmd: &str, params: &Value) -> Result<Value, Fail> {
-        self.execute_as(None, cmd, params)
+        self.run(|s| s.execute(cmd, params))
     }
 
     /// A command for `agent` (an AI agent's name, `engine.execute {agent}`) or for the user.
     fn execute_as(&mut self, agent: Option<&str>, cmd: &str, params: &Value) -> Result<Value, Fail> {
+        self.run(|s| s.execute_as(agent, cmd, params))
+    }
+
+    /// Run a command (`f`) with what a live session sent since, and the UI it asked for dropped.
+    fn run(&mut self, f: impl FnOnce(&mut Session) -> figcraft_engine::Result<Value>) -> Result<Value, Fail> {
         // What happened in a live session since the last call (latest presence only).
         self.session.live_poll();
-        let r = self.session.execute_as(agent, cmd, params);
+        let r = f(&mut self.session);
         self.session.live_sync();
         // No UI: dialogs and panels requested by commands are dropped, and a result that would
         // otherwise read as if they had opened says so.
@@ -293,9 +302,26 @@ impl Headless {
         let Some(agent) = p.get("agent").and_then(Value::as_str) else { return f(self) };
         // The name as `engine.execute {agent}` forms it.
         let was = self.session.agent.replace(figcraft_engine::cmd::comment::agent_author(agent));
-        let r = f(self);
+        // Who acted before comes back also when `f` panics (the server catches it): the next
+        // request must not run as this agent.
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self)));
         self.session.agent = was;
-        r
+        match r {
+            Ok(v) => v,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    }
+
+    /// `ifRevision` on a gesture, key or typed text: refused, before anything happens, unless the
+    /// document is at that revision (checked as a command's is).
+    fn conditional(&mut self, method: &str, p: &Value) -> Result<(), Fail> {
+        match p.get("ifRevision") {
+            None | Some(Value::Null) => Ok(()),
+            Some(v) => {
+                let expected = v.as_u64().ok_or("`ifRevision` must be a revision number (a whole number, 0 or more)")?;
+                Ok(self.session.require_revision(method, expected)?)
+            }
+        }
     }
 
     /// PNG bytes of `ids` (their union), or of the current page's content when there are none.
@@ -380,9 +406,16 @@ impl Headless {
                 Ok(figcraft_engine::inspect::node_json_with_options(doc, id, depth, &options))
             }
             "ui.inspect" => Ok(self.inspect_ui()),
-            "ui.pointer" => self.as_agent(&p, |h| h.pointer(&p)),
-            "ui.key" => self.as_agent(&p, |h| h.key(&p)),
+            "ui.pointer" => {
+                self.conditional(method, &p)?;
+                self.as_agent(&p, |h| h.pointer(&p))
+            }
+            "ui.key" => {
+                self.conditional(method, &p)?;
+                self.as_agent(&p, |h| h.key(&p))
+            }
             "ui.type" => {
+                self.conditional(method, &p)?;
                 let text = p.get("text").and_then(Value::as_str).ok_or("`text` required")?;
                 if !self.session.ds().map(|d| d.text_edit.is_some()).unwrap_or(false) {
                     return Err(Fail::coded(
@@ -429,10 +462,21 @@ impl Headless {
     /// [`Backend::call`]: with `document` the request runs with that file in front, and the file
     /// that was in front is put back.
     fn call_in_document(&mut self, method: &str, p: Value) -> Result<Value, Fail> {
-        let Some(target) = p.get("document").filter(|d| !d.is_null()) else { return self.dispatch(method, p) };
+        self.last_revision = None;
+        let Some(target) = p.get("document").filter(|d| !d.is_null()) else { return self.dispatched(method, p) };
         let forward = self.session.bring_forward(target)?;
-        let r = self.dispatch(method, p);
+        let r = self.dispatched(method, p);
         self.session.put_back(forward);
+        r
+    }
+
+    /// [`Self::dispatch`], noting the revision of the document a change acted on right after it
+    /// ([`Backend::take_revision`]), before anything else can change it.
+    fn dispatched(&mut self, method: &str, p: Value) -> Result<Value, Fail> {
+        let r = self.dispatch(method, p);
+        if matches!(method, "engine.execute" | "ui.pointer" | "ui.key" | "ui.type") {
+            self.last_revision = self.session.ds().ok().map(|d| (d.uid, d.doc_revision()));
+        }
         r
     }
 }
@@ -455,6 +499,10 @@ impl Backend for Headless {
 
     fn take_error_detail(&mut self) -> Option<Value> {
         self.last_error.take()
+    }
+
+    fn take_revision(&mut self) -> Option<(u64, u64)> {
+        self.last_revision.take()
     }
 
     fn render_png(&mut self, ids: &[u64], scale: f64) -> Result<Vec<u8>, String> {

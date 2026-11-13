@@ -28,6 +28,15 @@ pub trait Backend {
         None
     }
 
+    /// The revision of the document the last call acted on, read right after it in the same
+    /// request, taken once: `(document id, revision)`. A command's reply carries it (the engine's
+    /// `engine.execute`; headless, also a gesture, key or typed text), so a result can name the
+    /// revision it belongs to without a second read that could include somebody else's change.
+    /// `None` when the backend didn't say (an app from before this).
+    fn take_revision(&mut self) -> Option<(u64, u64)> {
+        None
+    }
+
     /// What the app at the other end says about itself (`app.info`: `{instance, version, …}`),
     /// when there is one and it answers the question.
     fn app_info(&mut self) -> Option<Value> {
@@ -118,6 +127,8 @@ pub struct Attached {
     instance: Option<String>,
     /// The detail of the last failed call ([`Backend::take_error_detail`]).
     last_error: Option<Value>,
+    /// What the last reply said about the revision ([`Backend::take_revision`]).
+    last_revision: Option<(u64, u64)>,
 }
 
 impl Attached {
@@ -134,6 +145,7 @@ impl Attached {
             info: None,
             instance: None,
             last_error: None,
+            last_revision: None,
         };
         r.reconnect()?;
         Ok(r)
@@ -253,6 +265,8 @@ impl Attached {
 
     /// One request, its failure as text and as its detail.
     fn request(&mut self, method: &str, params: Value) -> Result<Value, (String, Value)> {
+        self.last_revision = None;
+        let params_document = params.get("document").and_then(Value::as_u64);
         let id = self.next_id;
         self.next_id += 1;
         let mut line = json!({"id": id, "method": method, "params": params});
@@ -281,6 +295,10 @@ impl Attached {
             ))
         })?;
         let v: Value = serde_json::from_str(reply.trim()).map_err(|e| transport(format!("bad reply from the app: {e}")))?;
+        // The app writes the revision of the document the command acted on next to the result:
+        // the document the request named (`revisionDocument` when the app says which one).
+        let said = v.get("revisionDocument").and_then(Value::as_u64).or(params_document);
+        self.last_revision = v.get("revision").and_then(Value::as_u64).zip(said).map(|(rev, doc)| (doc, rev));
         if v.get("ok").and_then(Value::as_bool) == Some(true) {
             return Ok(v.get("result").cloned().unwrap_or(Value::Null));
         }
@@ -305,6 +323,10 @@ impl Backend for Attached {
 
     fn take_error_detail(&mut self) -> Option<Value> {
         self.last_error.take()
+    }
+
+    fn take_revision(&mut self) -> Option<(u64, u64)> {
+        self.last_revision.take()
     }
 
     fn app_info(&mut self) -> Option<Value> {

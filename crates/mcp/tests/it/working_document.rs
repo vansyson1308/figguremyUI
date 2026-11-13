@@ -145,13 +145,16 @@ fn calls_do_not_follow_the_tab_in_front() {
     let mut c = Client::new();
     let first = about(&c.call("create_node", json!({"type": "rectangle", "name": "One"})));
     assert_eq!(first["front"], true);
-    // A new file comes to the front. The call that made it ran on the working document and says so.
+    // A new file comes to the front. A file the agent makes is its working document from then on,
+    // as one it opens is, and the result says so (review R2-11).
     let made = c.call("run_command", json!({"command": "file.new", "params": {"name": "Second"}}));
     let said = about(&made);
-    assert_eq!((said["id"].clone(), said["front"].clone()), (first["id"].clone(), json!(false)), "{said}");
     let second = first_json(&made)["id"].clone();
     assert!(second.is_u64() && second != first["id"], "file.new says which document it made: {made}");
-    // Still the first document, whatever is in front.
+    assert_eq!((said["id"].clone(), said["front"].clone()), (second.clone(), json!(true)), "{said}");
+    assert_eq!(made["structuredContent"]["workingDocumentChanged"], json!({"from": first["id"], "to": second}), "{made}");
+    // Back to the first, which stays the working document whatever is in front.
+    c.ok("use_document", json!({"document": first["id"]}));
     let r = c.call("create_node", json!({"type": "rectangle", "name": "Two"}));
     assert_eq!(about(&r)["id"], first["id"]);
     assert_eq!(layer_names(&mut c, &first["id"]), ["One", "Two"]);
@@ -339,7 +342,8 @@ fn undo_stays_in_the_agents_own_work() {
     // The agent's undo would take back the user's rename: refused, naming the step and whose it is.
     let e = error_of(&c.call("undo", json!({})));
     assert_eq!((e["code"].clone(), e["label"].clone(), e["author"].clone()), (json!("otherAuthor"), json!("Set properties"), json!("user")), "{e}");
-    assert!(e["message"].as_str().unwrap().contains("\"others\": true"), "{e}");
+    // `others` is for when the person asked (review R2-03).
+    assert!(e["message"].as_str().unwrap().contains("pass `others: true` only if the person asked you to undo their step"), "{e}");
     assert_eq!(c.node(&id)["name"], "The user's name");
     // Asked to, it does; and its own step it undoes without asking.
     assert_eq!(c.ok("undo", json!({"others": true})), json!({"undone": true}));
@@ -612,5 +616,8 @@ fn the_instructions_start_with_capabilities_the_working_document_and_revisions()
         .filter(|t| t["inputSchema"]["properties"].get("ifRevision").is_some())
         .map(|t| t["name"].as_str().unwrap())
         .collect();
-    assert_eq!(conditional, ["run_command", "batch", "create_node", "set_properties", "undo", "redo"]);
+    assert_eq!(
+        conditional,
+        ["run_command", "batch", "create_node", "set_properties", "check_design", "save_file", "undo", "redo", "pointer", "key", "type_text"]
+    );
 }

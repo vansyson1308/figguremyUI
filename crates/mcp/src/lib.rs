@@ -13,6 +13,10 @@
 //! Entry points: [`Server::serve`] (stdio loop) and [`Server::handle_line`] (one message).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+/// The product's name as this server gives it (`get_capabilities.product`, `serverInfo.title`):
+/// one constant, so a rename changes it in one place.
+pub const PRODUCT_NAME: &str = "FigCraft";
+
 mod backend;
 mod headless;
 mod prompts;
