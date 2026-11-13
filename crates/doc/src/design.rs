@@ -26,6 +26,13 @@ pub const MAX_ENTRIES: usize = 500;
 pub struct DesignContext {
     #[serde(skip_serializing_if = "Brief::is_empty")]
     pub brief: Brief,
+    /// How many times the brief has changed. Decisions remember the revision they were made
+    /// under, so one made under an earlier brief can be pointed out for re-reading.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub brief_revision: u64,
+    /// How far along the design is: which checks are worth running yet.
+    #[serde(skip_serializing_if = "Stage::is_exploring")]
+    pub stage: Stage,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub assumptions: Vec<Assumption>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -92,6 +99,42 @@ impl DesignContext {
     }
 }
 
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
+/// How far along the design is. Early on only what would break the file is worth checking;
+/// checks of the finish (contrast, clipping, target sizes) wait until the design is converging,
+/// and the checks of the reasoning itself until it is about to be handed over.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Stage {
+    /// Trying directions: rough on purpose.
+    #[default]
+    Exploring,
+    /// A direction is chosen and being worked out.
+    Converging,
+    /// About to be handed over or shown as the answer.
+    Ready,
+}
+
+impl Stage {
+    pub const ALL: [Stage; 3] = [Stage::Exploring, Stage::Converging, Stage::Ready];
+
+    pub fn is_exploring(&self) -> bool {
+        *self == Stage::Exploring
+    }
+
+    /// The name commands and files use.
+    pub fn id(self) -> &'static str {
+        match self {
+            Stage::Exploring => "exploring",
+            Stage::Converging => "converging",
+            Stage::Ready => "ready",
+        }
+    }
+}
+
 /// What the design is for. Every field is free text a person can read and edit; none is required.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -99,15 +142,24 @@ pub struct Brief {
     /// Who uses it.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub audience: String,
+    /// Who is asking for it and what they want from it. Not the audience: the two often want
+    /// different things, and the design has to answer both.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub sponsor: String,
     /// What they need to get done.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub job: String,
     /// The circumstances of use: where, on what, under what pressure, after and before what.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub context: String,
-    /// The content it has to carry (the message), in the words that matter.
+    /// What the design must say or offer: the promise it makes or the use it gives. Not the
+    /// final copy.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub content: String,
+    /// The form it takes and where people meet it (a phone app's first screen, a kiosk, an
+    /// email).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub format: String,
     /// The voice the content should have for this audience in this context.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub tone: String,
@@ -154,6 +206,17 @@ pub struct Assumption {
     pub links: Vec<NodeId>,
 }
 
+/// Whether a person stands behind a decision.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DecisionStatus {
+    /// Put forward by an AI agent, or changed by one since a person accepted it.
+    #[default]
+    Proposed,
+    /// A person made it or accepted it.
+    Accepted,
+}
+
 /// A choice that was made, and why.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -161,6 +224,13 @@ pub struct Decision {
     pub id: String,
     pub title: String,
     pub rationale: String,
+    /// Who recorded it: an agent's name, or `user`. Set when it is added and never edited.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub author: String,
+    pub status: DecisionStatus,
+    /// The brief's revision when the decision was added or last accepted.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub brief_revision: u64,
     /// What else was considered and why it lost.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub rejected: String,
@@ -405,6 +475,9 @@ pub struct Finding {
     /// Who confirmed it (feedback and judgements); empty for a check verified by its rule.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub verified_by: String,
+    /// What that person looked at to confirm it.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub verification: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recheck: Option<Recheck>,
 }
@@ -419,6 +492,10 @@ pub struct AlternativeSet {
     /// What the set is trying to find out.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub question: String,
+    /// The limits every member has to respect, stated before any is made (so they can't be
+    /// fitted to the result afterwards).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub constraints: Vec<String>,
     #[serde(default)]
     pub members: Vec<Alternative>,
     /// The member (or the source) picked, once one is.
@@ -445,4 +522,56 @@ pub struct Alternative {
     /// What it gives up.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub tradeoffs: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{Brief, Decision, DecisionStatus, DesignContext, Stage};
+
+    #[test]
+    fn what_is_at_its_default_is_left_out_of_the_file() {
+        let empty = DesignContext::default();
+        assert!(empty.is_empty());
+        assert_eq!(serde_json::to_value(&empty).unwrap(), json!({}));
+        // A stage or a revision alone is something recorded.
+        assert!(!DesignContext { stage: Stage::Ready, ..DesignContext::default() }.is_empty());
+        let touched = DesignContext { brief_revision: 2, stage: Stage::Converging, ..DesignContext::default() };
+        assert_eq!(serde_json::to_value(&touched).unwrap(), json!({"briefRevision": 2, "stage": "converging"}));
+        let decision = Decision { id: "D1".into(), title: "t".into(), rationale: "r".into(), ..Decision::default() };
+        assert_eq!(serde_json::to_value(&decision).unwrap(), json!({"id": "D1", "title": "t", "rationale": "r", "status": "proposed"}));
+        let brief = Brief { sponsor: "The ward manager".into(), format: "A phone app".into(), ..Brief::default() };
+        assert_eq!(serde_json::to_value(&brief).unwrap(), json!({"sponsor": "The ward manager", "format": "A phone app"}));
+    }
+
+    #[test]
+    fn a_context_without_the_newer_fields_loads_with_their_defaults() {
+        let stored = json!({
+            "brief": {"audience": "Nurses"},
+            "decisions": [{"id": "D1", "title": "t", "rationale": "r"}],
+            "findings": [{"id": "F1", "kind": "feedback", "rule": "wording", "severity": "minor", "message": "m", "status": "open"}],
+            "alternatives": [{"id": "V1", "source": 5, "members": [{"node": 9, "name": "B"}]}],
+            "counters": {"D": 1, "F": 1, "V": 1},
+        });
+        let ctx: DesignContext = serde_json::from_value(stored.clone()).unwrap();
+        assert_eq!((ctx.stage, ctx.brief_revision), (Stage::Exploring, 0));
+        assert_eq!((ctx.decisions[0].status, ctx.decisions[0].author.as_str(), ctx.decisions[0].brief_revision), (DecisionStatus::Proposed, "", 0));
+        assert!(ctx.findings[0].verification.is_empty() && ctx.alternatives[0].constraints.is_empty());
+        assert!(ctx.brief.sponsor.is_empty() && ctx.brief.format.is_empty());
+        assert_eq!(ctx.clone().next_id("D"), "D2", "ids go on from the stored counters");
+        // Writing it back adds only the decision's status.
+        let mut expected = stored;
+        expected["decisions"][0]["status"] = json!("proposed");
+        assert_eq!(serde_json::to_value(&ctx).unwrap(), expected);
+    }
+
+    #[test]
+    fn stages_come_in_order_and_read_as_their_ids() {
+        assert!(Stage::Exploring < Stage::Converging && Stage::Converging < Stage::Ready);
+        for stage in Stage::ALL {
+            assert_eq!(serde_json::to_value(stage).unwrap(), json!(stage.id()));
+        }
+        assert!(Stage::default().is_exploring());
+    }
 }
