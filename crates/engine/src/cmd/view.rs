@@ -370,6 +370,17 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("view.assets", "Assets panel", "{}", false, |s, _| ui(s, "panel.assets")),
         spec!("view.design", "Design panel", "{}", false, |s, _| ui(s, "panel.design")),
         spec!("view.prototype", "Prototype panel", "{}", false, |s, _| ui(s, "panel.prototype")),
+        spec!(
+            "view.designContext",
+            "Design context",
+            "{section?: brief|assumptions|decisions|flow|findings|alternatives, on? (false closes it)}  shows the file's design context in the app, for a person to read and edit: the brief, assumptions, decisions, scenarios and flow, findings, alternatives (design.get reads the same; a no-op headless)",
+            false,
+            |s, p| {
+                let section = p.get("section").and_then(Value::as_str).map(|x| x.chars().take(40).collect::<String>());
+                s.request_ui("panel.designContext", json!({"section": section, "on": boolean(p, "on")}));
+                ok()
+            }
+        ),
         spec!("view.designPrototype", "Switch between Design and Prototype", "{}", false, |s, _| ui(s, "panel.designPrototype")),
         spec!("view.devMode", "Developer Mode", "{}", false, |s, _| ui(s, "panel.devMode")),
         spec!("view.leftSidebar", "Show/Hide left sidebar", "{}", false, |s, _| ui(s, "panel.leftSidebar")),

@@ -617,8 +617,12 @@ pub fn multiline_field(ui: &mut Ui, id: Id, value: &str, hint: &str, rows: usize
     cancel_retargeted_field_save(ui, id);
     let t = Tokens::get(ui.ctx());
     let te = id.with("te");
-    let focused = ui.memory(|m| m.has_focus(te));
-    let mut text: String = if focused { ui.data(|d| d.get_temp(id)).unwrap_or_else(|| value.to_string()) } else { value.to_string() };
+    // A draft exists from the first frame the field has the keyboard until it is committed. It
+    // is what the field holds on the frame the keyboard leaves it too: Tab moves the focus on
+    // before the field is drawn, and what was typed is what is committed then.
+    let draft: Option<String> = ui.data(|d| d.get_temp(id));
+    let left = draft.is_some() && !ui.memory(|m| m.has_focus(te));
+    let mut text: String = draft.unwrap_or_else(|| value.to_string());
     let mut done = false;
     ui.horizontal(|ui| {
         ui.add_space(PAD);
@@ -635,7 +639,7 @@ pub fn multiline_field(ui: &mut Ui, id: Id, value: &str, hint: &str, rows: usize
             )
         });
         crate::shortcuts::release_field_for_save(&r.inner);
-        done = r.inner.lost_focus();
+        done = r.inner.lost_focus() || left;
     });
     if done {
         ui.data_mut(|d| d.remove::<String>(id));

@@ -280,6 +280,22 @@ whether a click where nothing reacts flashes them (`hotspotHints`) and they are 
 (`inspected`), whether its bars are hidden (`hideUi`), and the link an Open link notice waits to open (`linkNotice`, else `null`) (`null`
 when nothing plays). `presentOptions` holds the options the next presentation
 starts with (`scale`, `deviceFrame`, `comments`, `hotspotHints`, `inspect`, `hideUi`).
+`designContext` is the Design context panel as the person sees it (the left sidebar, opened from
+the rail, View ▸ Panels ▸ Design context or `view.designContext {section?, on?}`): whether it is
+`open`, its `rect` in window points, the `section` showing (`brief`, `assumptions`, `decisions`,
+`flow`, `findings` or `alternatives`), the file's `stage` and `briefRevision`, `counts`
+(`assumptions`, `decisions`, `proposedDecisions`, `scenarios`, `endStates`, `findings`,
+`openFindings`, `alternatives`), the `form` open in it (`assumption`, `decision`, `finding`,
+`findingAction`, `alternative`, `alternativeMember`, `alternativeSet`, `choose`, else `null`), what
+the engine last `refused` there (`{about, message}`: the entry or form and the engine's error as
+shown, else `null`), the entry a followed link points out (`highlight`), what refers to the
+selected layer (`selected`: `{node, refs}` with `design.forNode`'s answer), and the results it
+shows, each with `stale: true` once the file has changed since: `scenarioRun` (`{passed, total,
+failed, results: [{id, passed, failedStep, failures}]}`), `flowCheck` (`{problems: [{rule,
+severity, nodes, message}], screens}`), `checks` (`{findings: [{rule, severity, nodes, message}],
+summary, skipped: [rule ids], stage}`), `recorded` (what `design.check.record` last answered) and
+`compare` (`{set, members, warnings}`); each is `null` until it has been run in the panel. The
+panel reads the file every frame, so what a command changes shows on the next one.
 `textPreview` is true while a live text preview shows on the canvas (a hovered text style or named
 instance, a dragged axis slider; see `text.preview` in [mcp.md](mcp.md)).
 `focus` is keyboard navigation's state: the `region` with the keyboard (`toolbar`, `layers`,
@@ -321,6 +337,15 @@ tools, a press on a frame's or section's name label (as the canvas last drew it,
 frame's top edge) selects and drags that frame; a double-click there renames the frame in place in
 the desktop app (the name field opens over the label).
 
+`ui.pointer`, `ui.key` and `ui.type` act on the editor's canvas. While the presenter plays a
+prototype over it they are refused, with an error that says a prototype is playing and where the
+input goes instead, rather than selecting and editing layers of a canvas nobody sees: send the
+player's input with `ui.input` (window points; `ui.inspect` → `presenter.hotspots` gives each
+reacting layer's rect), or play the prototype without a window with the `proto.simulate` command.
+With the preview pane open the canvas still shows, so they work as usual; only a `ui.pointer` given
+in screen points (`sx`, `sy`) that lands on the pane is refused, since it would reach the canvas
+under the pane.
+
 ```json
 {"id":4,"method":"engine.execute","params":{"command":"tool.set","params":{"tool":"ellipse"}}}
 {"id":5,"method":"ui.pointer","params":{"kind":"drag","x":200,"y":200,"to":[300,260],"shift":true}}
@@ -337,15 +362,6 @@ runs on (`cmd` is Cmd on macOS and Ctrl elsewhere; on macOS `ctrl` is the separa
 Returns `{"command": id}` for shortcuts. Refused while the presenter plays (see `ui.pointer`).
 
 ### `ui.type {text}`
-`ui.pointer`, `ui.key` and `ui.type` act on the editor's canvas. While the presenter plays a
-prototype over it they are refused, with an error that says a prototype is playing and where the
-input goes instead, rather than selecting and editing layers of a canvas nobody sees: send the
-player's input with `ui.input` (window points; `ui.inspect` → `presenter.hotspots` gives each
-reacting layer's rect), or play the prototype without a window with the `proto.simulate` command.
-With the preview pane open the canvas still shows, so they work as usual; only a `ui.pointer` given
-in screen points (`sx`, `sy`) that lands on the pane is refused, since it would reach the canvas
-under the pane.
-
 
 Type into the text being edited (start editing with a double-click, `text.edit.begin {id}`, or the
 text tool). Refused while the presenter plays (see `ui.pointer`).
@@ -475,20 +491,24 @@ closing while others are open takes over one of them, and closing the last windo
 
 ### `app.info {}`
 
-**App side pending** (the headless MCP backend answers it; the desktop app does not yet, and a
-client treats its "unknown method" as "this app doesn't say"). Which run of the app this is:
+Which run of the app answers: `{"instance", "version", "pid"}`, plus `window` and `features` where
+the app says them. `instance` is 32 hex digits made once when the app starts; it stays the same for
+as long as that process runs and differs in every other run, so a client that reconnects (or finds
+the port answered by something else) can tell whether it reached the same app, with the same open
+files and undo history, or another one. `version` is the app's version and `pid` its process id
+(0 in the browser). It needs no open file.
 
 ```json
-{"id":1,"method":"app.info","params":{}}
-{"id":1,"ok":true,"result":{"instance":"8f3c2a1e9b7d4c60","version":"0.18.1","pid":4242,"window":true,"features":["errorDetail","revision"]}}
+{"id":1,"method":"app.info"}
+{"id":1,"result":{"instance":"5f0c2a9e41d7b3a86e1f0c2a9e41d7b3","pid":41327,"version":"0.18.1"}}
 ```
 
-`instance` is a random id made once when the app starts; `features` lists what this app's control
-channel does beyond the first protocol (`errorDetail`: failed replies carry it; `revision`:
-documents count revisions and commands take `ifRevision`). A client that reconnects asks again:
-when `instance` differs, the app was restarted, and every document id, node id and revision the
-client holds is stale. `figcraft-cli mcp --attach` asks on each new connection and fails the first
-tool call after a restart, once, with code `transport`.
+`features` lists what this app's control channel does beyond the first protocol (`errorDetail`:
+failed replies carry it; `revision`: documents count revisions and commands take `ifRevision`); an
+app that leaves it out does neither. A client that reconnects asks again: when `instance` differs,
+the app was restarted, and every document id, node id and revision the client holds is stale.
+`figcraft-cli mcp --attach` asks on each new connection and fails the first tool call after a
+restart, once, with code `transport`; an app that doesn't know `app.info` is used as before.
 
 ### `app.quit {}`
 
@@ -504,19 +524,6 @@ echo '{"id":1,"method":"engine.execute","params":{"command":"frame.create","para
 read -r reply <&3; echo "$reply"
 echo '{"id":2,"method":"ui.screenshot","params":{"path":"/tmp/figcraft.png"}}' >&3
 read -r reply <&3; echo "$reply"
-```
-
-### `app.info {}`
-
-Which run of the app answers: `{"instance", "version", "pid"}`. `instance` is 32 hex digits made
-once when the app starts; it stays the same for as long as that process runs and differs in every
-other run, so a client that reconnects (or finds the port answered by something else) can tell
-whether it reached the same app, with the same open files and undo history, or another one.
-`version` is the app's version and `pid` its process id (0 in the browser). It needs no open file.
-
-```json
-{"id":1,"method":"app.info"}
-{"id":1,"result":{"instance":"5f0c2a9e41d7b3a86e1f0c2a9e41d7b3","pid":41327,"version":"0.18.1"}}
 ```
 
 For agents, prefer the MCP server (`figcraft-cli mcp --attach 7979`, see `docs/mcp.md`): it wraps
