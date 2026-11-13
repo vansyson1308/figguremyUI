@@ -229,6 +229,11 @@ pub enum DocProp {
     Vote,
     /// Ended votes' results kept in the file, oldest first (whole).
     VoteHistory,
+    /// The design context: brief, assumptions, decisions, scenarios, end states, findings and
+    /// alternatives (whole; [`figcraft_doc::design::DesignContext`]). Added last, so peers from
+    /// before it read every earlier property as before; they refuse a change set that carries
+    /// this one.
+    Design,
 }
 
 /// A document-level entry, by id.
