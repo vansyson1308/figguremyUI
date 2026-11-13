@@ -94,3 +94,39 @@ fn change_to_something_that_is_not_a_component_is_a_problem() {
     assert!(!o.fired && problem(&o).contains("`Plain`") && problem(&o).contains("isn't a component"), "{o:?}");
     assert!(p.state().variants.is_empty());
 }
+
+/// The player runs a click that only the hovered variant holds; the simulator used to end the
+/// hover when the click step began and answer "nothing reacts".
+#[test]
+fn a_click_the_hovered_variant_holds_runs_and_outlives_the_hover() {
+    use figcraft_doc::design::{Gesture, StepAction};
+    let mut s = Session::new();
+    let mut variants = Vec::new();
+    for (k, state) in ["Idle", "Hovered", "Selected"].iter().enumerate() {
+        let f =
+            idv(&ex(&mut s, "frame.create", json!({"x": k as f64 * 150.0, "y": 600, "width": 100, "height": 40, "name": format!("State={state}")})));
+        variants.push(idv(&ex(&mut s, "component.create", json!({"ids": [f]}))));
+    }
+    let set = idv(&ex(&mut s, "component.combineVariants", json!({"ids": variants.clone()})));
+    let [idle, hovered, selected] = [variants[0], variants[1], variants[2]];
+    ex(&mut s, "proto.interaction.add", json!({"id": idle, "trigger": {"type": "onHover"}, "action": {"type": "changeTo", "dest": hovered}}));
+    ex(&mut s, "proto.interaction.add", json!({"id": hovered, "action": {"type": "changeTo", "dest": selected}}));
+    let screen = frame(&mut s, "Screen", 0.0);
+    let chip = idv(&ex(&mut s, "instance.create", json!({"component": set, "x": 20, "y": 20, "parent": screen})));
+    let mut p = sim(&s, screen);
+    assert!(super::gesture(&mut p, chip, Gesture::Hover).fired);
+    assert_eq!(shows(&p, chip), Some(hovered));
+    let o = click(&mut p, chip);
+    assert!(o.fired && problem(&o).is_empty(), "the hovered variant's click: {o:?}");
+    assert_eq!(shows(&p, chip), Some(selected));
+    assert!(o.effects.iter().any(|e| e.contains("the hover on") && e.contains("ended")), "the selected variant has no hover: {o:?}");
+    // The next step doesn't put the hover's "before" back over the click.
+    p.step(&StepAction::Wait);
+    assert_eq!(shows(&p, chip), Some(selected));
+    // A click on another layer is no click on the hovered one: the hover ends first, as before.
+    let mut p = sim(&s, screen);
+    super::gesture(&mut p, chip, Gesture::Hover);
+    let o = click(&mut p, screen);
+    assert!(!o.fired && o.effects.first().is_some_and(|e| e.contains("hover or press")), "{o:?}");
+    assert_eq!(shows(&p, chip), Some(idle));
+}

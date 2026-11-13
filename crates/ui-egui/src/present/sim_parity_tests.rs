@@ -7,7 +7,8 @@
 //! The player is driven as a person drives it: a pointer and keys through egui, headless, and
 //! its clock for delays. The simulator is driven with scenario steps. What a step means on each
 //! side is in [`Pair::step`]; the simulator's documented limits (`proto_sim`'s module docs: a
-//! gesture is one trigger, hover and press last until the next step, time isn't measured) decide
+//! gesture is one trigger, hover and press last until the next step unless it is a click on the
+//! hovered layer, time isn't measured) decide
 //! how a player gesture is written as steps, and nothing here hides a difference outside them.
 
 use std::collections::BTreeMap;
@@ -793,22 +794,20 @@ fn a_mouse_up_and_a_click_on_one_layer() {
 // and asserts both, so a change on either side shows up here.
 
 #[test]
-fn difference_a_hover_outlasts_a_click_in_the_player_and_ends_with_the_step_in_the_simulator() {
-    // The simulator's limit "hover and press last until the next step". In the player the
-    // pointer is still over the layer after the click, so the hover still shows; what the click
-    // did is the same on both sides, and they agree again once the pointer has left.
+fn a_hover_outlasts_a_click_on_the_same_screen() {
+    // Once a documented difference: the simulator ended the hover when the click step began. Now
+    // a click on the hovered layer keeps it there too: the pointer hasn't left, the hover shows
+    // over the click's result, and when the pointer leaves the click's count stays.
     let (s, a, hot) = hover_and_click(|_| add_one());
     let mut p = Pair::new("hover, then a click on the same screen", s, a);
-    p.run([Do::Hover(hot)]);
-    p.player_does(&Do::Click(hot));
-    p.sim_does(&Do::Click(hot));
-    let (player, sim) = (player_facts(p.player()), sim_facts(&p.sim));
-    assert_eq!((count_of(&player), count_of(&sim)), (Some(1.0), Some(1.0)), "the click counted on both");
-    assert_eq!(label_of(&player), Some("hovered"), "the player: the pointer hasn't left, the hover shows over the click's result");
-    assert_eq!(label_of(&sim), None, "the simulator: the hover ended when the click step began");
-    // The pointer leaves: the hover goes, the click's count stays (it used to go back with it).
+    p.run([Do::Hover(hot), Do::Click(hot)]);
+    let sim = sim_facts(&p.sim);
+    assert_eq!((count_of(&sim), label_of(&sim)), (Some(1.0), Some("hovered")), "the click counted; the hover still shows over it");
+    // A second click while the pointer stays counts again, under the same hover.
+    p.run([Do::Click(hot)]);
+    assert_eq!((p.count(), label_of(&sim_facts(&p.sim))), (Some(2.0), Some("hovered")));
     p.run([Do::Wait]);
-    assert_eq!((p.count(), label_of(&sim_facts(&p.sim))), (Some(1.0), None));
+    assert_eq!((p.count(), label_of(&sim_facts(&p.sim))), (Some(2.0), None), "the hover went with the pointer, the count stayed");
 }
 
 #[test]
@@ -830,10 +829,12 @@ fn difference_a_delay_fires_under_a_hover_in_the_player_and_after_it_in_the_simu
 }
 
 #[test]
-fn difference_a_click_on_a_hovered_variants_own_interaction_cant_be_simulated() {
-    // The instance shows its hovered variant while the pointer is over it, and that variant holds
-    // the click. The player runs it. The simulator ends the hover when the click step begins, so
-    // the instance is back on the variant without a click: nothing reacts.
+fn a_click_the_hovered_variant_holds_runs() {
+    // Once a documented difference ("can't be simulated"): the instance shows its hovered variant
+    // while the pointer is over it, and only that variant holds the click. The player runs it;
+    // the simulator ended the hover first and found nothing to react. Now both find the click on
+    // what shows and run it on the state under the hover: the instance is selected, and since the
+    // selected variant has no hover of its own, the hover is over.
     let mut s = Session::new();
     let (set, v) = variants(&mut s, &["Idle", "Hovered", "Selected"]);
     on(&mut s, v[0], t("onHover"), json!({"type": "changeTo", "dest": v[1]}));
@@ -842,14 +843,54 @@ fn difference_a_click_on_a_hovered_variants_own_interaction_cant_be_simulated() 
     let chip = instance(&mut s, set, a);
     let mut p = Pair::new("a click on the hovered variant", s, a);
     p.run([Do::Hover(chip)]);
-    p.player_does(&Do::Click(chip));
-    let outcome = p.sim_does(&Do::Click(chip)).remove(0);
-    assert_eq!(player_facts(p.player()).variants, [(chip, v[2])], "the player: the hovered variant's click ran, the instance is selected");
-    assert!(!outcome.fired && outcome.problem.as_deref().is_some_and(|why| why.contains("nothing reacts to click")), "the simulator: {outcome:?}");
-    assert!(sim_facts(&p.sim).variants.is_empty(), "and its instance is idle again");
-    // The pointer leaves: the player's instance stays selected (the click used to go with the hover).
-    p.player_does(&Do::Wait);
-    assert_eq!(player_facts(p.player()).variants, [(chip, v[2])]);
+    assert_eq!(sim_facts(&p.sim).variants, [(chip, v[1])], "hovered");
+    p.run([Do::Click(chip)]);
+    assert_eq!(sim_facts(&p.sim).variants, [(chip, v[2])], "the hovered variant's click ran: the instance is selected");
+    // The pointer leaves: the instance stays selected on both sides.
+    p.run([Do::Wait]);
+    assert_eq!(sim_facts(&p.sim).variants, [(chip, v[2])]);
+}
+
+#[test]
+fn a_click_under_a_hover_that_the_variant_keeps_lays_the_hover_back() {
+    // A toggle whose two variants hover the same way: clicking while hovered flips it, and since
+    // the variant it flipped to plays the same hover, the hover is laid back over the result.
+    let mut s = Session::new();
+    state_variables(&mut s);
+    let (set, v) = variants(&mut s, &["Off", "On"]);
+    for k in [0, 1] {
+        on(&mut s, v[k], t("onHover"), json!({"type": "setVariable", "variable": "label", "value": "hovered"}));
+    }
+    on(&mut s, v[0], t("onClick"), json!({"type": "changeTo", "dest": v[1]}));
+    on(&mut s, v[1], t("onClick"), json!({"type": "changeTo", "dest": v[0]}));
+    let a = frame(&mut s, "A", 0.0);
+    let toggle = instance(&mut s, set, a);
+    let mut p = Pair::new("a toggle clicked under its hover", s, a);
+    p.run([Do::Hover(toggle), Do::Click(toggle)]);
+    let f = sim_facts(&p.sim);
+    assert_eq!((f.variants.clone(), label_of(&f)), (vec![(toggle, v[1])], Some("hovered")), "on, and still hovered");
+    p.run([Do::Click(toggle), Do::Wait]);
+    let f = sim_facts(&p.sim);
+    assert_eq!((f.variants.is_empty(), label_of(&f)), (true, None), "off again, and the hover went with the pointer");
+}
+
+#[test]
+fn difference_a_mouse_down_that_does_something_takes_the_press_in_the_player() {
+    // The player fires "mouse down" first when the button goes down, and when that did something
+    // the "while pressing" of the same press isn't fired. A simulator step is one trigger: a
+    // press step fires "while pressing" only (and a `mouseDown` step "mouse down" only).
+    let mut s = Session::new();
+    let a = frame(&mut s, "A", 0.0);
+    state_variables(&mut s);
+    let hot = rect(&mut s, "Hot", a, 20.0, 20.0);
+    on(&mut s, hot, t("mouseDown"), add_one());
+    on(&mut s, hot, t("onPress"), json!({"type": "setVariable", "variable": "label", "value": "pressed"}));
+    let mut p = Pair::new("a mouse down and a press on one layer", s, a);
+    p.player_does(&Do::Press(hot));
+    p.sim_does(&Do::Press(hot));
+    let (player, sim) = (player_facts(p.player()), sim_facts(&p.sim));
+    assert_eq!((count_of(&player), label_of(&player)), (Some(1.0), None), "the player: the mouse down ran and took the press");
+    assert_eq!((count_of(&sim), label_of(&sim)), (None, Some("pressed")), "the simulator: the press step fired while pressing only");
 }
 
 #[test]

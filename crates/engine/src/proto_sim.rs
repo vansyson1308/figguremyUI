@@ -23,7 +23,12 @@
 //!   considered, and neither is whether the layer is scrolled or clipped out of view.
 //! - **Hover and press are temporary.** In the player a "while hovering" or "while pressing"
 //!   change reverts when the pointer leaves or lifts. Here it holds until the next step, which
-//!   first reverts to the state before it.
+//!   first reverts to the state before it, except a click, mouse down or mouse up on the hovered
+//!   layer (or one inside it), where the pointer still is. That one is played as the player plays
+//!   a click under a hover: the interaction is found on what shows (the hovered state, so the
+//!   hovered variant's own click counts), it runs on the state under the hover, and when the same
+//!   screen and overlays still show and the layer still plays that hover, the hover is laid back
+//!   over the result and stays until the next step; otherwise it is over.
 //! - **A gesture is one trigger.** A click fires "on click" only: the mouse down, "while
 //!   pressing" and mouse up the player would also see for the same press are separate gestures.
 //! - **A drag has no direction.** "On drag" fires whatever way the animation goes.
@@ -36,25 +41,31 @@
 //!   the prototype: a key no interaction uses does nothing here.
 //! - **Widgets** are not clicked.
 //!
-//! Where the two are known to give different answers for the same file:
+//! Where the two are known to give different answers for the same file (each pinned by the
+//! `ui-egui` parity test named after it, `present/sim_parity_tests.rs`):
 //!
-//! - **A mouse up that does something takes the click.** In the player, releasing the pointer
-//!   fires "mouse up" first, and when that did something the "on click" of the same press isn't
-//!   fired. Here a click step fires "on click" whatever a "mouse up" on the layer would do
-//!   (each gesture is one trigger).
+//! - **A mouse down that does something takes the press.** In the player, pressing fires "mouse
+//!   down" first, and when that did something the "while pressing" of the same press isn't
+//!   fired. Here a press step fires "while pressing" whatever a "mouse down" on the layer would
+//!   do (each gesture is one trigger). (Releasing is not like this: the player runs a "mouse up"
+//!   and then the "on click" of the same release, which here are two steps, `mouseUp` then
+//!   `click`, and agree.) `difference_a_mouse_down_that_does_something_takes_the_press_in_the_player`
 //! - **A scroll-to that can't scroll.** The player counts a "scroll to" as having done nothing
 //!   when no frame around its layer can scroll there, so a click whose only action is such a
 //!   scroll falls through to whatever is under it. Here a "scroll to" a layer that shows counts as
 //!   fired: scroll positions aren't known.
+//!   `difference_a_scroll_to_that_cant_scroll_is_nothing_to_the_player_and_fired_to_the_simulator`
 //! - **"Change to" something that isn't a component.** The player points the instance at the
 //!   layer all the same, leaving it without a main component. Here the action is refused and
-//!   reported as a problem.
+//!   reported as a problem. `difference_change_to_a_layer_that_is_not_a_component`
 //! - **A delay that fires while hovering.** In the player an "after delay" that fires while a
-//!   "while hovering" change is in effect runs on top of that change and keeps it. Here every
-//!   step, a wait included, first ends the hover or press of the step before.
+//!   "while hovering" change is in effect runs under that change and lays it back. Here a wait
+//!   is a step that takes the pointer away: it first ends the hover or press of the step before.
+//!   (A key pressed while the pointer rests on a hovered layer is the same: a key step ends the
+//!   hover first.) `difference_a_delay_fires_under_a_hover_in_the_player_and_after_it_in_the_simulator`
 //! - **Restart.** The player's restart forgets which frame each section showed last and starts
 //!   from the file as the editor has it. There is no step for it: a run that needs a fresh start
-//!   is a new [`Sim`].
+//!   is a new [`Sim`]. `difference_restart_forgets_the_sections_which_only_a_new_simulator_does`
 //!
 //! Layers that exist only after a "change to" (the layers of the variant an instance comes to
 //! show) get their ids when the simulator's copy is changed, so a stored scenario can't name
@@ -66,7 +77,7 @@
 use std::collections::{HashMap, HashSet};
 
 use figcraft_color::Color;
-use figcraft_doc::design::{Expect, StepAction};
+use figcraft_doc::design::{Expect, Gesture, StepAction};
 use figcraft_doc::proto::{OverlayAnchor, OverlayPosition, ScrollPosition};
 use figcraft_doc::{Document, NodeId, NodeKind};
 use figcraft_geom::Rect;
@@ -127,6 +138,19 @@ struct Snapshot {
     history: Vec<NodeId>,
 }
 
+/// A "while hovering / pressing" interaction in effect (the player's `Temp`).
+#[derive(Clone)]
+struct Temp {
+    /// What it reverts to.
+    snap: Snapshot,
+    /// The layer it is on, as it plays (an instance playing its variant's interaction).
+    node: NodeId,
+    /// A press (else a hover).
+    press: bool,
+    /// Its actions, to lay it back over what a lasting interaction under it did.
+    actions: Vec<figcraft_doc::proto::Action>,
+}
+
 /// A prototype being played headless.
 pub struct Sim {
     /// The file as it was given, to tell what the prototype changed.
@@ -143,8 +167,9 @@ pub struct Sim {
     /// The "after delay" interactions that fired since the screen arrived (an overlay's: since it
     /// opened).
     delays_fired: HashSet<(NodeId, usize)>,
-    /// A hover or press in effect: the next step reverts to this first.
-    temp: Option<Snapshot>,
+    /// A hover or press in effect: the next step reverts to it first, unless the step is a click
+    /// on the hovered layer (see the module docs).
+    temp: Option<Temp>,
 }
 
 impl Sim {
@@ -233,7 +258,7 @@ impl Sim {
     /// Undo a hover or press (the player's `revert`): the screen, the document, the overlays and
     /// the history go back; what was remembered about sections and fired delays stays.
     fn revert(&mut self) -> bool {
-        let Some(s) = self.temp.take() else { return false };
+        let Some(Temp { snap: s, .. }) = self.temp.take() else { return false };
         self.screen = s.screen;
         self.design = s.design;
         self.overlays = s.overlays;
@@ -241,6 +266,36 @@ impl Sim {
         self.relayout();
         true
     }
+
+    /// Whether the hover in effect stays for `action`: a click, a mouse down or a mouse up on the
+    /// layer the hover is on or on one inside it, where the pointer still is. A press ends as the
+    /// button comes up, and any other step takes the pointer away or lets time pass.
+    fn hover_stays_for(&self, action: &StepAction) -> bool {
+        let Some(t) = self.temp.as_ref().filter(|t| !t.press) else { return false };
+        let StepAction::Gesture { node, gesture } = action else { return false };
+        matches!(gesture, Gesture::Click | Gesture::MouseDown | Gesture::MouseUp) && (*node == t.node || self.shown.is_ancestor(t.node, *node))
+    }
+
+    /// Before a lasting interaction (a click, a mouse down or up) runs while a hover shows (the
+    /// player's `lift_temp`): take the hover off, so that the interaction acts on the state under
+    /// it and what it does outlives the hover. Only a hover that changed nothing but the document
+    /// (the same screen and overlays show) is lifted.
+    fn lift(&mut self) -> Option<Temp> {
+        let t = self.temp.as_ref()?;
+        if t.snap.screen != self.screen || !same_overlays(&t.snap.overlays, &self.overlays) {
+            return None;
+        }
+        let t = self.temp.take()?;
+        self.design = t.snap.design.clone();
+        self.history.clone_from(&t.snap.history);
+        self.relayout();
+        Some(t)
+    }
+}
+
+/// Whether two overlay stacks hold the same overlays in the same order.
+fn same_overlays(a: &[Overlay], b: &[Overlay]) -> bool {
+    a.iter().map(|o| o.id).eq(b.iter().map(|o| o.id))
 }
 
 /// `` `name` (id) `` for messages; `layer <id>` when it doesn't exist.

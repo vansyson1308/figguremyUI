@@ -119,6 +119,11 @@ impl Presenter {
         let shown = self.display().map(|d| (d, self.current, self.textures.get(&self.current).cloned()));
         let temp = self.temp.take()?;
         self.design = Some(temp.snap.doc.clone());
+        // What a revert puts back, besides the document: a hover that scrolled (a scroll-to
+        // while hovering) must not leave its scroll in the state the interaction builds on, or
+        // it would outlive the hover.
+        self.history.clone_from(&temp.snap.history);
+        self.scroll.clone_from(&temp.snap.scroll);
         self.relayout();
         Some(Lifted { temp, shown })
     }

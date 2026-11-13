@@ -1764,7 +1764,11 @@ lists the same five in the same words:
 - pointer hit-testing (a gesture names its layer; what overlaps it on screen isn't considered): a
   gesture reaches the first interaction with that trigger on the layer or on a layer around it.
 
-Hover and press hold until the next step.
+Hover and press hold until the next step. A click, mouse down or mouse up on the hovered layer (or
+one inside it) keeps the hover, as the player does while the pointer stays there: the interaction
+is the one the hovered state plays (a hovered variant's own click counts), it runs on the state
+under the hover, and the hover is laid back over the result while the same screen and overlays
+show.
 
 So `passed: true` means that these state rules produced this state. A picture from
 `simulate_prototype` or `proto.snapshot` is the screen's own box with the open overlays, not what
