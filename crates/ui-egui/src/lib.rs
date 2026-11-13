@@ -876,9 +876,9 @@ pub struct FigApp {
     /// What kind of failure the last control request that failed was (`errorDetail`:
     /// `{code, message, …}`), kept by [`control::handle`] for the reply it sends.
     pub(crate) control_error: Option<serde_json::Value>,
-    /// The revision of the file the last `engine.execute` acted on, read right after the command
-    /// ran (the reply's `revision`).
-    pub(crate) control_revision: Option<u64>,
+    /// The file the last `engine.execute` (or canvas method) acted on and its revision, read right
+    /// after it ran (the reply's `revisionDocument` and `revision`).
+    pub(crate) control_revision: Option<(u64, u64)>,
     /// Test-only count of the one IME observation each viewport pass makes.
     #[cfg(test)]
     pub(crate) ime_observations: u32,

@@ -292,3 +292,23 @@ fn a_read_during_a_version_preview_says_it_shows_the_version() {
     assert_eq!(read["previewing"]["name"], "One rectangle", "{read}");
     assert_eq!(read["revision"], json!(rev(&s)));
 }
+
+/// The same for one layer read on its own (`node.get`, the command and the inspection behind the
+/// control method): the version's layer, and words saying so.
+#[test]
+fn a_layer_read_during_a_version_preview_says_it_shows_the_version() {
+    let mut s = Session::new();
+    let a = rect(&mut s, 0.0);
+    ex(&mut s, "file.saveVersion", json!({"name": "One rectangle"}));
+    let options = crate::inspect::InspectOptions::default();
+    assert!(ex(&mut s, "node.get", json!({"id": a})).get("previewing").is_none());
+    assert!(crate::inspect::node_in_session(&s, a, 1, &options).unwrap().get("previewing").is_none());
+    ex(&mut s, "version.preview", json!({"index": 0}));
+    let said = crate::inspect::document(&s, 0, false)["previewing"].clone();
+    assert_eq!(said["name"], "One rectangle");
+    for read in [ex(&mut s, "node.get", json!({"id": a})), crate::inspect::node_in_session(&s, a, 1, &options).unwrap()] {
+        assert_eq!((read["id"].clone(), read["previewing"].clone()), (json!(a), said.clone()), "{read}");
+    }
+    // A layer that isn't there reads as nothing, with nothing added.
+    assert_eq!(crate::inspect::node_in_session(&s, NodeId(999_999), 1, &options).unwrap(), Value::Null);
+}

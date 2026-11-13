@@ -71,7 +71,7 @@ fn a_reply_without_a_detail_of_its_own_is_a_plain_failure() {
     let r = ControlReply::new(json!(1), Err("no window 7".into()));
     assert_eq!(r.error_detail(), Some(json!({"code": "failed", "message": "no window 7"})));
     // A detail without a code isn't one.
-    let r = ControlReply { id: json!(1), result: Err("x".into()), detail: Some(json!({"node": 3})), revision: None };
+    let r = ControlReply { detail: Some(json!({"node": 3})), ..ControlReply::new(json!(1), Err("x".into())) };
     assert_eq!(r.error_detail().unwrap()["code"], json!("failed"));
 }
 
@@ -80,7 +80,7 @@ fn app_info_says_it_has_a_window_and_what_its_channel_does() {
     let (mut u, _) = screen();
     let info = handle(&mut u, "app.info", json!({})).unwrap();
     assert_eq!(info["window"], json!(true));
-    assert_eq!(info["features"], json!(["errorDetail", "revision"]));
+    assert_eq!(info["features"], json!(["errorDetail", "revision", "canvasIfRevision"]));
 }
 
 /// The undo steps of the document, the next to undo first: `(label, author)`.
@@ -200,4 +200,85 @@ fn an_executed_commands_reply_carries_the_revision_it_left() {
     assert_eq!(r.revision, Some(before + 1));
     // Other methods carry none.
     assert_eq!(queued(&mut u, "app.info", json!({})).revision, None);
+}
+
+/// While a person previews an earlier version, `node.get` reads the version's layer and says so,
+/// as `document.inspect` does.
+#[test]
+fn a_layer_read_during_a_version_preview_says_it_is_the_versions() {
+    let (mut u, rect) = screen();
+    handle(&mut u, "engine.execute", json!({"command": "file.saveVersion", "params": {"name": "One rectangle"}})).unwrap();
+    assert!(handle(&mut u, "node.get", json!({"id": rect})).unwrap().get("previewing").is_none());
+    handle(&mut u, "engine.execute", json!({"command": "version.preview", "params": {"index": 0}})).unwrap();
+    let read = handle(&mut u, "node.get", json!({"id": rect})).unwrap();
+    assert_eq!((read["id"].clone(), read["previewing"]["name"].clone()), (json!(rect), json!("One rectangle")), "{read}");
+    let inspected = handle(&mut u, "document.inspect", json!({"depth": 0})).unwrap();
+    assert_eq!(read["previewing"], inspected["previewing"], "the same words");
+}
+
+/// The revision a reply carries says which document it is of (`revisionDocument`): the tab in
+/// front, the file named by `document`, the file a command opened.
+#[test]
+fn a_replys_revision_names_the_document_it_belongs_to() {
+    let (mut u, rect) = screen();
+    let first = u.app.session.ds().unwrap().uid;
+    let r = queued(&mut u, "engine.execute", json!({"command": "node.set", "params": {"ids": [rect], "props": {"x": 80}}}));
+    assert_eq!(r.revision_document, Some(first));
+    // A new file comes to the front: the revision is the new file's.
+    let r = queued(&mut u, "engine.execute", json!({"command": "file.new"}));
+    let second = u.app.session.ds().unwrap().uid;
+    assert_ne!(second, first);
+    assert_eq!((r.revision_document, r.revision), (Some(second), Some(u.app.session.ds().unwrap().doc_revision())));
+    // A command run on the file behind: that file's revision, with its id.
+    let r = queued(&mut u, "engine.execute", json!({"command": "node.set", "params": {"ids": [rect], "props": {"x": 90}}, "document": first}));
+    assert!(r.result.is_ok(), "{:?}", r.result);
+    let behind = u.app.session.docs.iter().find(|d| d.uid == first).unwrap().doc_revision();
+    assert_eq!((r.revision_document, r.revision), (Some(first), Some(behind)));
+    assert_eq!(u.app.session.ds().unwrap().uid, second, "the tab in front stays");
+    // Canvas gestures name theirs too.
+    let r = queued(&mut u, "ui.key", json!({"key": "Escape"}));
+    assert_eq!(r.revision_document, Some(second));
+    assert_eq!(queued(&mut u, "app.info", json!({})).revision_document, None);
+}
+
+/// `ifRevision` on `ui.pointer`, `ui.key` and `ui.type` is checked in the request that acts: a
+/// stale one is refused before the gesture, key or text does anything (code `conflict`), the
+/// current one lets it act; `app.info` says so (`canvasIfRevision`).
+#[test]
+fn canvas_methods_check_if_revision_before_they_act() {
+    let (mut u, rect) = screen();
+    let x = |u: &Harness| u.app.session.doc().unwrap().node(rect).unwrap().transform.translation().x;
+    let rev = |u: &Harness| u.app.session.ds().unwrap().doc_revision();
+    let seen = rev(&u);
+    // Somebody else changes the file.
+    handle(&mut u, "engine.execute", json!({"command": "node.set", "params": {"ids": [rect], "props": {"y": 52}}})).unwrap();
+    let now = rev(&u);
+    // A drag with the revision from before: nothing moves, nothing is selected, no step.
+    let e = handle(&mut u, "ui.pointer", json!({"kind": "drag", "x": 100, "y": 80, "to": [140, 120], "ifRevision": seen, "agent": "Claude"}))
+        .unwrap_err();
+    let d = u.app.control_error.clone().unwrap();
+    assert_eq!((d["code"].clone(), d["expected"].clone(), d["actual"].clone()), (json!("conflict"), json!(seen), json!(now)), "{e}: {d}");
+    assert!(e.contains("ui.pointer"), "{e}");
+    assert_eq!((x(&u), rev(&u)), (50.0, now), "the drag didn't happen");
+    assert!(u.app.session.selection().is_empty() && u.app.session.agent.is_none());
+    // A key and typed text the same way.
+    handle(&mut u, "engine.execute", json!({"command": "select.set", "params": {"ids": [rect]}})).unwrap();
+    let e = handle(&mut u, "ui.key", json!({"key": "ArrowRight", "ifRevision": seen})).unwrap_err();
+    assert!(e.contains("ui.key") && u.app.control_error.as_ref().is_some_and(|d| d["code"] == "conflict"), "{e}");
+    assert_eq!(x(&u), 50.0);
+    let t = id(&handle(&mut u, "engine.execute", json!({"command": "text.create", "params": {"text": "Hi", "x": 10, "y": 300}})).unwrap());
+    handle(&mut u, "engine.execute", json!({"command": "text.edit.begin", "params": {"id": t}})).unwrap();
+    let e = handle(&mut u, "ui.type", json!({"text": "!", "ifRevision": seen})).unwrap_err();
+    assert!(e.contains("ui.type") && u.app.control_error.as_ref().is_some_and(|d| d["code"] == "conflict"), "{e}");
+    let typed = u.app.session.doc().unwrap().node(t).and_then(|n| n.kind.text()).map(|d| d.characters.clone());
+    assert_eq!(typed.as_deref(), Some("Hi"), "nothing was typed");
+    handle(&mut u, "engine.execute", json!({"command": "text.edit.end"})).unwrap();
+    // The current revision lets the gesture act; something that isn't a revision is refused.
+    handle(&mut u, "engine.execute", json!({"command": "select.set", "params": {"ids": [rect]}})).unwrap();
+    let now = rev(&u);
+    handle(&mut u, "ui.key", json!({"key": "ArrowRight", "ifRevision": now})).unwrap();
+    assert_eq!(x(&u), 51.0, "moved");
+    let r = queued(&mut u, "ui.pointer", json!({"kind": "click", "x": 100, "y": 80, "ifRevision": "soon"}));
+    let d = r.error_detail().unwrap();
+    assert_eq!((d["code"].clone(), d["param"].clone()), (json!("badParams"), json!("ifRevision")), "{d}");
 }

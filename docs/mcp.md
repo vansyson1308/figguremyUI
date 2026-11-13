@@ -1405,7 +1405,8 @@ design it replaces is first kept as an autosave unless a version of it was just 
 `version.preview {id | index}` shows a version in place of the document, read-only: edits, undo and
 gestures are refused until `version.restore` keeps it or `version.exitPreview` goes back. Saving,
 closing or saving a version ends the preview first, and `version.list` marks the shown version
-`previewing`. Indexes are validated
+`previewing`. While a version is shown, `inspect_document` and `get_node` read its layers and say
+so with `previewing: {version, name, note}` (the `revision` stays the document's). Indexes are validated
 (a negative or out-of-range index is an error). A file keeps at most 100 versions.
 `version.autosave` saves an automatic checkpoint (`auto: true`, named "Autosave") when the document
 has unsaved changes since its last version; the app runs it every 30 minutes for each open document,
@@ -1556,7 +1557,8 @@ file's name (one change). It counts changes in this run of the app and is not sa
 
 The revision a result names is the one the result belongs to, never one read afterwards: for a
 change, the revision the engine's reply gives right after it, in the same request (an attached app
-writes it next to the result as `revision`); for a read, the revision before the tool's first
+writes it next to the result as `revision`, and which document it is of as `revisionDocument`;
+gestures, keys and typed text too); for a read, the revision before the tool's first
 request. When a person changes the file while a call runs, the result names the earlier revision,
 so an `ifRevision` copied from it is refused instead of going through over their change. An app from
 before this gives no revision with its replies: then every result names the revision from before
@@ -1565,8 +1567,10 @@ its first request.
 **Conditional changes.** Every tool that changes the document takes `ifRevision`, the revision you
 last saw: `run_command`, `batch`, `create_node`, `set_properties`, `check_design` (with `record:
 true`), `save_file`, `undo`, `redo`, `pointer`, `key` and `type_text` (a gesture, key or typed
-text is checked in the request that acts; with an attached app also by the engine just before it,
-since an app from before this ignores `ifRevision` on its canvas methods). When the document is at another revision the call
+text is checked in the request that acts, headless and with an attached app whose `app.info`
+says `canvasIfRevision`; an app from before that ignores `ifRevision` on its canvas methods, so for
+it the engine checks first, in a request of its own just before, which a change in between can
+slip past). When the document is at another revision the call
 changes nothing and fails with code `conflict`: `expected`, `actual`, and `since`, the changes made
 in between with who made each (the last 200 are remembered):
 

@@ -67,6 +67,14 @@
 //!   from the file as the editor has it. There is no step for it: a run that needs a fresh start
 //!   is a new [`Sim`]. `difference_restart_forgets_the_sections_which_only_a_new_simulator_does`
 //!
+//! A "change to" settles as the player's does: variable bindings are applied again, so an instance
+//! whose variant property is bound to a string variable (`componentProperties/<prop>`) is put
+//! back to the variant the variable names, read in the instance's modes (a value that names no
+//! option of the property changes nothing). The step's effect says so ("`State` is bound to
+//! variable `state`, which keeps it at State=Default"), and the state shows the variant the
+//! instance really shows (review X-02; `ui-egui`'s parity case
+//! `change_to_on_an_instance_whose_variant_a_variable_keeps`).
+//!
 //! Layers that exist only after a "change to" (the layers of the variant an instance comes to
 //! show) get their ids when the simulator's copy is changed, so a stored scenario can't name
 //! them: name the instance, and say what it must show with `expect.variants`.
@@ -178,7 +186,7 @@ impl Sim {
     pub fn new(doc: &Document, start: NodeId) -> Result<Sim, String> {
         let Some(n) = doc.node(start) else { return Err(format!("no layer {start}")) };
         if doc.top_level_frame(start) != Some(start) {
-            return Err(format!("`{}` ({start}) isn't a top-level frame", n.name));
+            return Err(format!("`{}` ({start}) isn't a top-level frame", crate::error::prose(&n.name)));
         }
         let mut sim = Sim {
             original: doc.clone(),
@@ -298,10 +306,12 @@ fn same_overlays(a: &[Overlay], b: &[Overlay]) -> bool {
     a.iter().map(|o| o.id).eq(b.iter().map(|o| o.id))
 }
 
-/// `` `name` (id) `` for messages; `layer <id>` when it doesn't exist.
+/// `` `name` (id) `` for messages; `layer <id>` when it doesn't exist. The name is shown as the
+/// engine's other messages show document text ([`crate::error::prose`]): one line, clipped, with
+/// no backtick of its own, so a layer's name can't break the sentence or pass for part of it.
 pub(crate) fn label(doc: &Document, id: NodeId) -> String {
     match doc.node(id) {
-        Some(n) => format!("`{}` ({id})", n.name),
+        Some(n) => format!("`{}` ({id})", crate::error::prose(&n.name)),
         None => format!("layer {id}"),
     }
 }

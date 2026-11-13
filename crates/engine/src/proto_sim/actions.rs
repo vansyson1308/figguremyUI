@@ -6,8 +6,9 @@ use figcraft_doc::{NodeId, NodeKind};
 use figcraft_geom::Rect;
 use serde_json::Value;
 
-use super::vars::{full_name, value_on, value_text};
+use super::vars::{prose_name, value_on, value_text};
 use super::{Overlay, Sim, Temp, label};
+use crate::error::prose;
 use crate::proto_run;
 
 /// What the actions of one step did, in words.
@@ -226,20 +227,20 @@ fn set_mode(sim: &mut Sim, collection: &str, mode: &str, log: &mut Log) -> bool 
     let before = sim.design.clone();
     if !proto_run::set_mode_by_id(&mut sim.design, sim.screen, collection, mode) {
         return log.failed(match sim.design.variables.collection_by_id(collection) {
-            Some(c) => format!("set variable mode: collection `{}` has no mode `{mode}`", c.name),
-            None => format!("set variable mode: there is no collection `{collection}`"),
+            Some(c) => format!("set variable mode: collection `{}` has no mode `{}`", prose(&c.name), prose(mode)),
+            None => format!("set variable mode: there is no collection `{}`", prose(collection)),
         });
     }
     sim.settle(&before);
     let names = sim.design.variables.collection_by_id(collection).map(|c| (c.name.as_str(), c.mode_by_id(mode).map_or(mode, |m| m.name.as_str())));
     let (c, m) = names.unwrap_or((collection, mode));
-    log.did(format!("set mode of `{c}` to `{m}`"))
+    log.did(format!("set mode of `{}` to `{}`", prose(c), prose(m)))
 }
 
 fn navigate(sim: &mut Sim, dest: NodeId, log: &mut Log) -> bool {
     let Some(top) = proto_run::navigate_target(&sim.shown, dest, &sim.sections).filter(|t| sim.shown.contains(*t)) else {
         return log.failed(match sim.shown.node(dest) {
-            Some(n) => format!("navigate: section `{}` ({dest}) has no frame to show", n.name),
+            Some(n) => format!("navigate: section `{}` ({dest}) has no frame to show", prose(&n.name)),
             None => format!("navigate: layer {dest} doesn't exist"),
         });
     };
@@ -305,8 +306,42 @@ fn change_to(sim: &mut Sim, node: NodeId, dest: NodeId, log: &mut Log) -> bool {
         *component = dest;
     }
     crate::components::sync_instance(&mut sim.design, inst);
+    // As the player's settle: bindings are applied again, a bound variant property among them.
     sim.settle(&before);
-    log.did(format!("change {} to {}", label(&sim.shown, inst), label(&sim.shown, dest)))
+    let what = format!("change {} to {}", label(&sim.shown, inst), label(&sim.shown, dest));
+    match kept_back(sim, inst, dest) {
+        // The action ran (the player counts it as run), and what the instance shows is the
+        // variable's: the step says so, and the state shows the variant it really is.
+        Some(why) => log.did(format!("{what}: {why}")),
+        None => log.did(what),
+    }
+}
+
+/// When "change to" `dest` didn't last on instance `inst`: why, when a variant property of it
+/// bound to a string variable (`componentProperties/<prop>`) put it back as the change settled
+/// (review X-02). The variable is read in the instance's modes, as the binding reads it.
+fn kept_back(sim: &Sim, inst: NodeId, dest: NodeId) -> Option<String> {
+    let doc = &sim.design;
+    let n = doc.node(inst)?;
+    let NodeKind::Instance { component, .. } = &n.kind else { return None };
+    if *component == dest {
+        return None;
+    }
+    let wanted = crate::components::variant_props(&doc.node(dest)?.name);
+    let shows = crate::components::variant_props(&doc.node(*component)?.name);
+    let modes = doc.modes_for(inst);
+    n.bound.iter().find_map(|(key, var)| {
+        let prop = key.strip_prefix(crate::components::PROP_BINDING)?;
+        let held = match doc.variables.resolve(var, &modes)? {
+            figcraft_doc::VariableValue::String(held) => held,
+            _ => return None,
+        };
+        (wanted.get(prop) != Some(&held) && shows.get(prop) == Some(&held)).then(|| {
+            let name = doc.variables.get_by_id(var).map_or(var.as_str(), |v| v.name.as_str());
+            let (prop, held) = (prose(prop), prose(&held));
+            format!("`{prop}` is bound to variable `{}`, which keeps it at {prop}={held}", prose(name))
+        })
+    })
 }
 
 /// "set `Collection/name` to value", after the variable was set.
@@ -315,17 +350,17 @@ pub(super) fn set_text(sim: &Sim, variable: &str, node: NodeId) -> String {
     match doc.variables.get_by_id(variable) {
         Some(v) => {
             let value = value_on(doc, v, node).map_or_else(|| "nothing".to_string(), |x| value_text(&x));
-            format!("set `{}` to {value}", full_name(doc, v))
+            format!("set `{}` to {value}", prose_name(doc, v))
         }
-        None => format!("set `{variable}`"),
+        None => format!("set `{}`", prose(variable)),
     }
 }
 
 /// Why [`proto_run::set_variable`] set nothing.
 pub(super) fn unset_reason(sim: &Sim, variable: &str, value: &Value, by_expression: bool) -> String {
     let doc = &sim.design;
-    let Some(v) = doc.variables.get_by_id(variable) else { return format!("set variable: there is no variable `{variable}`") };
-    let (name, kind) = (full_name(doc, v), v.kind.id());
+    let Some(v) = doc.variables.get_by_id(variable) else { return format!("set variable: there is no variable `{}`", prose(variable)) };
+    let (name, kind) = (prose_name(doc, v), v.kind.id());
     if by_expression {
         format!("set variable `{name}`: its expression gives no {kind} value")
     } else {

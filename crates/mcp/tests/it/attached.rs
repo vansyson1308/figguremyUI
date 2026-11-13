@@ -3,6 +3,7 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
+use std::sync::{Arc, Mutex};
 
 use figcraft_mcp::{Attached, Backend, Headless, Server};
 use serde_json::{Value, json};
@@ -315,4 +316,77 @@ fn a_restarted_app_fails_one_call_and_nothing_lands_in_the_new_run() {
     assert_eq!(doc["structuredContent"]["document"]["revision"], 1);
     let second_run = text(&call(&mut s, "get_capabilities", json!({})))["app"]["instance"].clone();
     assert!(second_run.is_string() && second_run != first_run, "{first_run} {second_run}");
+}
+
+/// A fake app answering with a headless session (which checks `ifRevision` on the canvas
+/// methods), saying `features` in `app.info`, and keeping every request it got.
+fn recording_app(features: Value) -> (u16, Arc<Mutex<Vec<Value>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let kept = seen.clone();
+    std::thread::spawn(move || {
+        let mut app = Headless::new();
+        for stream in listener.incoming().flatten() {
+            let mut out = stream.try_clone().unwrap();
+            for line in BufReader::new(stream).lines() {
+                let Ok(line) = line else { break };
+                let v: Value = serde_json::from_str(&line).unwrap_or(Value::Null);
+                let method = v["method"].as_str().unwrap_or("");
+                kept.lock().unwrap().push(v.clone());
+                let mut reply = match app.call(method, v["params"].clone()) {
+                    Ok(r) => json!({"id": v["id"], "ok": true, "result": r}),
+                    Err(e) => json!({"id": v["id"], "ok": false, "error": e, "errorDetail": app.take_error_detail()}),
+                };
+                if method == "app.info" {
+                    reply["result"]["window"] = json!(true);
+                    reply["result"]["features"] = features.clone();
+                }
+                if let Some((document, revision)) = app.take_revision() {
+                    reply["revision"] = json!(revision);
+                    reply["revisionDocument"] = json!(document);
+                }
+                if writeln!(out, "{reply}").is_err() {
+                    break;
+                }
+            }
+        }
+    });
+    (port, seen)
+}
+
+/// Review R2 follow-up: an app that says its canvas methods check `ifRevision`
+/// (`canvasIfRevision`) gets it in the request that acts, with no separate check before it (which
+/// a person's change could slip past); an app that doesn't say so is checked first, as before.
+#[test]
+fn a_stale_if_revision_on_pointer_is_checked_where_the_app_says_it_checks_it() {
+    for (features, checked_before) in [(json!(["errorDetail", "revision", "canvasIfRevision"]), false), (json!(["errorDetail", "revision"]), true)] {
+        let (port, seen) = recording_app(features.clone());
+        let mut s = Server::new(Box::new(Attached::port(port).unwrap()));
+        let text = |r: &Value| -> Value { serde_json::from_str(r["content"][0]["text"].as_str().unwrap()).unwrap() };
+        let made = call(&mut s, "create_node", json!({"type": "rectangle", "name": "Card", "x": 0, "y": 0, "width": 100, "height": 100}));
+        let id = text(&made)["id"].clone();
+        let stale = made["structuredContent"]["document"]["revision"].as_u64().unwrap();
+        // Somebody's change since.
+        call(&mut s, "set_properties", json!({"ids": [id], "props": {"y": 5}}));
+        seen.lock().unwrap().clear();
+        let r = call(&mut s, "pointer", json!({"kind": "drag", "x": 50, "y": 50, "to": [150, 150], "ifRevision": stale}));
+        let e = r["structuredContent"]["error"].clone();
+        assert_eq!((e["code"].clone(), e["expected"].clone()), (json!("conflict"), json!(stale)), "{features}: {r}");
+        let sent = seen.lock().unwrap().clone();
+        let prechecked = sent
+            .iter()
+            .any(|v| v["method"] == "engine.execute" && v["params"]["command"] == "doc.list" && v["params"]["params"]["ifRevision"] == json!(stale));
+        let pointer: Vec<&Value> = sent.iter().filter(|v| v["method"] == "ui.pointer").collect();
+        assert_eq!(prechecked, checked_before, "{features}: {sent:?}");
+        if checked_before {
+            assert!(pointer.is_empty(), "refused before the gesture was sent: {sent:?}");
+        } else {
+            assert_eq!(pointer.len(), 1, "{sent:?}");
+            assert_eq!(pointer[0]["params"]["ifRevision"], json!(stale), "passed through");
+        }
+        // Nothing moved either way.
+        let node = text(&call(&mut s, "get_node", json!({"id": id})));
+        assert_eq!((node["x"].clone(), node["y"].clone()), (json!(0.0), json!(5.0)), "{node}");
+    }
 }

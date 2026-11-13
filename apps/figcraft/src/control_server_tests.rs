@@ -96,10 +96,16 @@ fn a_failed_reply_line_carries_its_error_detail_and_the_revision() {
     client.write_all(b"{\"id\":1,\"method\":\"engine.execute\",\"params\":{\"command\":\"node.set\"}}\n").unwrap();
     let r = next(&pending);
     let detail = json!({"code": "noSuchNode", "message": "stale", "node": 41});
-    r.reply.send(ControlReply { id: r.id, result: Err("no such node 41".into()), detail: Some(detail), revision: Some(7) }).unwrap();
+    let failed = ControlReply {
+        detail: Some(detail),
+        revision: Some(7),
+        revision_document: Some(2),
+        ..ControlReply::new(r.id, Err("no such node 41".into()))
+    };
+    r.reply.send(failed).unwrap();
     assert_eq!(
         reply(&mut reader),
-        json!({"id": 1, "ok": false, "error": "no such node 41", "errorDetail": {"code": "noSuchNode", "message": "no such node 41", "node": 41}, "revision": 7})
+        json!({"id": 1, "ok": false, "error": "no such node 41", "errorDetail": {"code": "noSuchNode", "message": "no such node 41", "node": 41}, "revision": 7, "revisionDocument": 2})
     );
     // A failure the UI gave no kind: `failed`. A success carries the revision too.
     client.write_all(b"{\"id\":2,\"method\":\"window.focus\",\"params\":{}}\n").unwrap();

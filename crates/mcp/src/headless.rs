@@ -398,12 +398,12 @@ impl Headless {
             "node.get" => {
                 let id = p.get("id").and_then(figcraft_engine::params::id_of).ok_or("`id` required (a node id)")?;
                 let depth = p.get("depth").and_then(Value::as_u64).unwrap_or(1).min(64) as usize;
-                let doc = self.session.doc()?;
-                if !doc.contains(id) {
+                if !self.session.doc()?.contains(id) {
                     return Err(figcraft_engine::EngineError::NoNode(id).into());
                 }
                 let options = figcraft_engine::inspect::InspectOptions::parse(&p)?;
-                Ok(figcraft_engine::inspect::node_json_with_options(doc, id, depth, &options))
+                // While a person previews a version, the layer read is the version's: it says so.
+                Ok(figcraft_engine::inspect::node_in_session(&self.session, id, depth, &options)?)
             }
             "ui.inspect" => Ok(self.inspect_ui()),
             "ui.pointer" => {
@@ -452,7 +452,8 @@ impl Headless {
                 "version": env!("CARGO_PKG_VERSION"),
                 "pid": std::process::id(),
                 "window": false,
-                "features": ["errorDetail", "revision"],
+                // As the app's: the canvas methods check `ifRevision` in the request that acts.
+                "features": ["errorDetail", "revision", "canvasIfRevision"],
             })),
             "app.quit" => Ok(json!({"ok": true})),
             other => Err(Fail::coded("unknownMethod", format!("unknown method `{other}`"))),

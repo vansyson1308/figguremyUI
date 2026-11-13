@@ -3,6 +3,8 @@
 use figcraft_doc::{Document, NodeId, Variable, VariableValue};
 use serde_json::{Value, json};
 
+use crate::error::prose;
+
 /// The variable a scenario names: its id, `Collection/name`, or its name when only one variable
 /// has it. The error says which of these failed.
 pub fn find_variable<'a>(doc: &'a Document, key: &str) -> Result<&'a Variable, String> {
@@ -16,8 +18,8 @@ pub fn find_variable<'a>(doc: &'a Document, key: &str) -> Result<&'a Variable, S
     let mut named = vars.variables.iter().filter(|v| v.name == key);
     match (named.next(), named.count()) {
         (Some(v), 0) => Ok(v),
-        (Some(_), more) => Err(format!("{} variables are named `{key}`: say which as `Collection/name`", more + 1)),
-        (None, _) => Err(format!("there is no variable `{key}`")),
+        (Some(_), more) => Err(format!("{} variables are named `{}`: say which as `Collection/name`", more + 1, prose(key))),
+        (None, _) => Err(format!("there is no variable `{}`", prose(key))),
     }
 }
 
@@ -27,6 +29,11 @@ pub(super) fn full_name(doc: &Document, v: &Variable) -> String {
         Some(c) => format!("{}/{}", c.name, v.name),
         None => v.name.clone(),
     }
+}
+
+/// [`full_name`] as a sentence shows it ([`prose`]: one line, clipped, no backtick of its own).
+pub(super) fn prose_name(doc: &Document, v: &Variable) -> String {
+    prose(&full_name(doc, v))
 }
 
 /// The value variable `v` has for the layers of `screen` (its collection's mode there).
