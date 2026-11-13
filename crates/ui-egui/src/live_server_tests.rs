@@ -54,6 +54,9 @@ pub(crate) fn joined(h: &mut Harness, access: Access) {
 #[test]
 fn the_publish_dialog() {
     let (mut h, _) = Harness::new();
+    // A server is set in Preferences, so the popover offers Online and Local network (this fork
+    // ships none: see `the_server_preference_resets_and_turns_online_sharing_off`).
+    h.app.session.prefs.publish_server = "wss://share.example/".into();
     crate::menus::invoke(&mut h.app, "collab.publish");
     h.frames(2);
     assert_eq!(h.app.ui.live.publish.as_ref().map(|f| f.name.as_str()), Some("Untitled"), "the file's name to start with");

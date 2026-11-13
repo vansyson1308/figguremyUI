@@ -12,7 +12,8 @@ fn main() {
         }
         res.set("ProductName", "FigCraft");
         res.set("FileDescription", "FigCraft");
-        res.set("CompanyName", "ArtCraft");
+        // A fork of FigCraft: not presented as made by the upstream team.
+        res.set("CompanyName", "FigCraft fork contributors (github.com/vansyson1308/figguremyUI)");
         if let Err(e) = res.compile() {
             println!("cargo::warning=winresource: {e}");
         }

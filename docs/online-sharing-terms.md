@@ -1,9 +1,14 @@
 # Online sharing through the default server: terms and privacy
 
 > **Last updated:** 2026-10-13 · Applies to the public FigCraft collaboration server at
-> `collab.craftapps.dev`, which the app uses for **Share ▸ Online** unless you set another server
-> in Preferences. It does not apply to servers other people run, or to sharing on your local
-> network, which involves no server.
+> `collab.craftapps.dev`, which upstream FigCraft builds use for **Share ▸ Online** unless you set
+> another server in Preferences. It does not apply to servers other people run, or to sharing on
+> your local network, which involves no server.
+>
+> **This fork (2026-11-13):** builds of this repository have **no** default server: online sharing
+> stays off until you enter a server in Preferences. The public server above is run by the
+> upstream FigCraft team for their builds; these terms are kept here for reference only and are
+> theirs, not this fork's.
 
 FigCraft works without this service. You only use it when you choose Share ▸ Online, join a file
 someone shared that way, or open Home ▸ Online. By doing so you agree to what follows. If you

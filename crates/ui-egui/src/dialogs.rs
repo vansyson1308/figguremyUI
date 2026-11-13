@@ -152,14 +152,17 @@ fn about_body(ui: &mut egui::Ui, t: &Tokens) {
     });
     ui.add_space(12.0);
     ui.label(tr(
-        "Interface design and prototyping. A free, open-source, clean-room design tool written from scratch in Rust, part of the ArtCraft Crafting Apps.",
+        "Interface design and prototyping. A free, open-source, clean-room design tool written from scratch in Rust. This build is a fork, based on FigCraft by the ArtCraft team and community, and is not made or endorsed by them.",
     ));
     ui.add_space(8.0);
-    ui.hyperlink_to("getartcraft.com/apps/figcraft", "https://getartcraft.com/apps/figcraft");
-    ui.hyperlink_to(tr("Join us on Discord"), "https://discord.gg/artcraft");
+    ui.hyperlink_to(tr("Source code and issues"), crate::FORK_URL);
     ui.add_space(8.0);
     ui.label(
-        RichText::new(tr("Dual-licensed MIT OR Apache-2.0. Made by the ArtCraft team and community.")).color(t.text_secondary).font(regular(11.0)),
+        RichText::new(tr(
+            "Dual-licensed MIT OR Apache-2.0. FigCraft is made by the ArtCraft team and community; this fork is maintained separately.",
+        ))
+        .color(t.text_secondary)
+        .font(regular(11.0)),
     );
 }
 
