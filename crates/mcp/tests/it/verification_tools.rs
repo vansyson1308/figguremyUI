@@ -347,22 +347,40 @@ fn the_verification_tools_name_their_document_and_check_their_arguments() {
     let e = error_of(&c.call("check_design", json!({"record": "yes"})));
     assert_eq!(e["param"], "record", "{e}");
     assert_eq!(error_of(&c.call("check_prototype", json!({"page": 424_242})))["command"], "proto.check");
-    // `tools/list` describes each for a model that has never seen this product.
+}
+
+/// `tools/list` describes each tool for a model that has never seen this product: what it
+/// establishes, and what it does not.
+#[test]
+fn the_descriptions_say_what_each_tool_does_not_establish() {
+    let mut c = Client::new();
+    let b = build(&mut c);
     let tools = c.rpc("tools/list", json!({}));
     let described = |name: &str| -> String {
         let t = tools["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == name).unwrap();
         assert!(t["inputSchema"]["properties"].get("document").is_some(), "{name} takes `document`");
         t["description"].as_str().unwrap().to_string()
     };
+    // What the simulator leaves out, in the words the engine's results use for it (`notModelled`).
     for must in [
-        "animation and timing",
-        "scroll position",
+        "animation and timing (transitions, easing, how long a delay is)",
+        "scroll position (scroll-to changes nothing; a layer scrolled or clipped out of view still takes a gesture)",
         "drag direction",
-        "device frame and responsive resizing",
-        "hit-testing",
+        "the device frame and responsive resizing (frames keep the size they have in the file)",
+        "pointer hit-testing (a gesture names its layer; what overlaps it on screen isn't considered)",
+        "`notModelled`",
         "does not mean a person used it",
     ] {
         assert!(described("simulate_prototype").contains(must), "simulate_prototype doesn't say `{must}`");
+    }
+    // Where the engine lists them in a result, the description says the same, word for word.
+    let run = c.ok("simulate_prototype", json!({"start": b.home, "steps": []}));
+    for left_out in run["notModelled"].as_array().into_iter().flatten() {
+        let item = left_out.as_str().unwrap();
+        assert!(described("simulate_prototype").contains(item), "simulate_prototype doesn't say what the engine does: `{item}`");
+    }
+    for must in ["`notModelled`", "animation or timing", "scroll position", "drag direction", "responsive resizing", "hit-testing"] {
+        assert!(described("run_scenarios").contains(must), "run_scenarios doesn't say `{must}`");
     }
     for must in ["deterministic", "standard", "stage", "`skipped`", "not a quality score"] {
         assert!(described("check_design").contains(must), "check_design doesn't say `{must}`");

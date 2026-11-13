@@ -398,8 +398,8 @@ a later step can use `{"$step": 0, "field": "ids/0"}` to target the first match.
 | `screenshot {ids?, scale?, maxSize?, window?}` | PNG of the page (with background) or of layers, scaled to fit `maxSize` (default 1600). `window: true` captures the app window in front when attached, a window id (see Windows below) that window. |
 | `design_context {}` | Why the file is the way it is (`design.get`): the brief, the stage, assumptions, decisions, scenarios, end states, findings, alternatives and links to layers that are gone. Read it before designing and before reporting (see Design context and verification below). |
 | `check_design {scope?, rules?, record?}` | The design measured by deterministic rules (`design.check`): `findings`, `summary`, the `rules` that ran with the standard each cites, the rules `skipped` at the file's stage, and the `stage`. `record: true` also stores the findings (`design.check.record`) and adds `recorded` and `stored` (the stored findings with their ids). Not a quality score. |
-| `check_prototype {page?}` | The page's prototype as facts (`proto.check`): `starts`, `screens` (reachable, end state, dead end, outgoing interactions), `problems` and `ok`. Nothing is played or changed. |
-| `simulate_prototype {start?, steps, expect?, stopOnFailure?, image?, scale?}` | Steps played without a window on a copy of the file (`proto.simulate`): the state they lead to and what each step set off. `image: true` adds a PNG of the final state as image content (`proto.snapshot`) and `image: {format, width, height, scale}` to the JSON. A pass says the state rules produced that state, not that a person used it. |
+| `check_prototype {page?}` | The page's prototype as facts (`proto.check`): `prototyped`, `starts`, `screens` (reachable, end state, dead end, outgoing interactions), `problems` and `ok`. Nothing is played or changed. |
+| `simulate_prototype {start?, steps, expect?, stopOnFailure?, image?, scale?}` | Steps played without a window on a copy of the file (`proto.simulate`): the state they lead to and what each step set off. `image: true` adds a PNG of the final state as image content (`proto.snapshot`) and `image: {format, width, height, scale}` to the JSON. Each result says `simulated: true` and lists what the simulator leaves out (`notModelled`): a pass says the state rules produced that state, not that a person used it. |
 | `run_scenarios {id?}` | The stored scenarios run on the simulator (`proto.scenario.run`): `passed`, `total`, `failed` and each result with its failed step. `total: 0` is nothing run, not a pass. |
 | `open_file {path, variables?, reload?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.fig` or FigJam `.jam` (best effort, see below), `.sketch` (Sketch 48 and newer, best effort), `.svg` (see Importing SVG below) or an image; save as `.figcraft`. `open_file` returns `opened` (for a file opened anew, a `summary` of `name`, `pages`, `layers` and `images`, and `warnings` or `repairs`; a file that was already open gives its `index`, with `stale: true` when the file changed on disk since that tab read or saved it; `reload: true` reads it again into the tab, refused while the tab has unsaved changes) and the document's `document` outline. |
 | `undo {others?}` / `redo {others?}` | Step through history: the agent's own steps. A step the user or another agent made is refused (code `otherAuthor`, naming the step and its author) unless `others: true`. |
@@ -1660,10 +1660,18 @@ each step proves, and the prompts spell it out for particular jobs:
 | `simulate_prototype` | `proto.simulate`, and `proto.snapshot` for the image | These steps produce this state; with `image: true`, what that state looks like | Anything the simulator does not model (below), or that a person used it |
 | `check_design` | `design.check`, with `record` also `design.check.record` | What the named rules measure, each with its threshold and the standard it comes from; the same file gives the same findings | Quality, or fitness for the purpose. Rules under `skipped` did not run; no findings is not "good" |
 
-`check_design {record: true}` returns the measurement and, beside it, `recorded` (`{added,
-existing, total, skipped}` as `design.check.record` gives it) and `stored`: the findings as they are
-stored, each with the `id` that `design.finding.address {id, resolution}` and
-`design.finding.recheck {id}` take.
+`check_design {record: true}` returns the measurement and, beside it, `recorded` (what
+`design.check.record` answered: `added`, `existing`, `total`, `skipped`, and `truncated`, the number
+of results left out because the file already holds 500 findings) and `stored`: the findings as
+they are stored, each with the `id` that `design.finding.address {id, resolution}` and
+`design.finding.recheck {id}` take. A finding's `subject` says what it is about when that is not
+its layers (`scenario:S1`, `action:…`, `page:…`): the same rule on the same subject is the same
+problem, however the layers it names shift.
+
+`check_prototype` answers `prototyped` (whether the page is a prototype at all), `starts` (each
+with `source`: `flow`, `otherPage` for a frame that an interaction on another page navigates to,
+or `firstFrame`), `screens` (each with `reachable`, `endState`, `deadEnd`, `component`, `out`, and
+`endStateProposedBy` for a frame an agent declared as an end state), `problems` and `ok`.
 
 `simulate_prototype` with `image: true` plays the run again for the picture (`proto.snapshot`, with
 the start the run used and the steps it took, so a run that stopped at a failing step is drawn
@@ -1692,7 +1700,7 @@ still returned, with `image: {error}`.
 - Alternatives: `design.alternative.create` (copies the source beside itself), `update`,
   `question`, `compare` (facts, never a ranking), `choose`, `remove`.
 - The prototype: `proto.check`, `proto.simulate`, `proto.snapshot`, `proto.scenario.add` / `set` /
-  `remove` / `list` / `run`, `proto.endState.set` / `list`.
+  `remove` / `list` / `run`, `proto.endState.set` / `list` / `accept`.
 
 `proto.snapshot {start?, steps?, scale?, path?}` is the picture on its own: it plays the steps
 `proto.simulate` takes (a step's `expect` is not looked at, and every step runs) on a copy of the
@@ -1707,10 +1715,10 @@ work until the file is opened, and the only eyes are `screenshot` and `simulate_
 true}`. Attached, a person sees each change as it is made and may be editing the same file: read
 before writing and pass `ifRevision` (see Working document, revisions and conflicts). The simulator
 runs on a copy inside the engine and shows nothing in the app's player. No MCP tool drives a
-playing prototype: `pointer` and `key` act on the editor canvas, also while the presenter is open
-in front of it, and a prototype that is playing is driven by the person watching it (or, for a
-test harness, by the control channel's `ui.input`). An agent checks behaviour with
-`simulate_prototype` and `run_scenarios` in either backend.
+playing prototype: `pointer` and `key` act on the editor canvas, and while the presenter plays in
+the attached app they are refused, because it covers the canvas. A prototype that is playing is
+driven by the person watching it (or, for a test harness, by the control channel's `ui.input`).
+An agent checks behaviour with `simulate_prototype` and `run_scenarios` in either backend.
 
 **Who settles what.** An agent proposes and records; a person settles. The engine holds every
 command run with an agent's name (every MCP call) to that, and each command's doc says what it
@@ -1718,11 +1726,13 @@ refuses:
 
 | Record | An agent may | Only a person |
 |---|---|---|
-| Assumption | add one (it is `untested`), write down what it saw | mark it `supported` or `refuted` |
+| Assumption | add one (it is `untested`), write down what it saw, edit or remove one that is still untested | mark it `supported` or `refuted`; change or remove one a person marked so |
 | Decision | add one (it is `proposed`), edit it, remove its own proposal | accept it |
-| Finding of kind `check` | record it, claim a fix (`address`), re-run the rule (`recheck`) | accept it as it is, or remove it |
-| Finding of kind `judgement` or `feedback` | add its own judgement, relay a person's feedback with their words, claim a fix | confirm it is met (`verify`), accept it as it is, remove feedback |
-| Alternatives | create, describe, compare; its `choose` records a `proposed` decision | accept that decision |
+| Finding of kind `check` | record it, claim a fix (`address`), re-run the rule (`recheck`) | accept it as it is, or remove it; take up again one a person accepted |
+| Finding of kind `judgement` or `feedback` | add its own judgement (its `source` is always the agent), relay a person's feedback with their words (the person stays the `source`, the agent is `recordedBy`), claim a fix | confirm it is met (`verify`), accept it as it is, remove feedback; address or reopen one a person accepted or verified |
+| Scenario | add one, change or remove the ones it wrote (`author`) | change or remove a person's |
+| End state | declare one with its `reason` (`proto.endState.set`): a proposal, `status: proposed`, which leaves the frame a dead end for `flow.deadEnd`; change or take back its own proposal | declare one that counts at once; accept an agent's (`proto.endState.accept`) |
+| Alternatives | create, describe, compare; its `choose` records a proposal (a `proposed` decision), and `chosen` stays as it was | choose, or accept that decision |
 | Undo history | undo and redo its own steps | take anybody's step (an agent needs `others: true`) |
 
 These rules are an agreement between parties working on the same file, not a security boundary: a
@@ -1732,16 +1742,20 @@ alternatives by one.
 
 **What the simulator does not model.** It follows the player's rules for which state comes next
 (navigation and history, overlays, change-to, variables and modes, conditionals, after-delay
-bookkeeping) and nothing else:
+bookkeeping) and nothing else. Every result of `proto.simulate` and `proto.scenario.run` says so
+itself, with `simulated: true` and `notModelled`, and the description of `simulate_prototype`
+lists the same five in the same words:
 
-- no animation and no timing: a `wait` step fires every pending after-delay interaction at once;
-- no scroll position: a scroll-to action is reported and changes nothing;
-- no drag direction: an on-drag interaction fires whichever way the animation goes;
-- no device frame and no responsive resizing: frames keep the size they have in the file;
-- no pointer hit-testing: a gesture names a layer and reaches the first interaction with that
-  trigger on it or on a layer around it; a layer drawn over it, or scrolled out of view, is not
-  noticed;
-- hover and press hold until the next step.
+- animation and timing (transitions, easing, how long a delay is): a `wait` step fires every
+  pending after-delay interaction at once;
+- scroll position (scroll-to changes nothing; a layer scrolled or clipped out of view still takes
+  a gesture);
+- drag direction: an on-drag interaction fires whichever way the animation goes;
+- the device frame and responsive resizing (frames keep the size they have in the file);
+- pointer hit-testing (a gesture names its layer; what overlaps it on screen isn't considered): a
+  gesture reaches the first interaction with that trigger on the layer or on a layer around it.
+
+Hover and press hold until the next step.
 
 So `passed: true` means that these state rules produced this state. A picture from
 `simulate_prototype` or `proto.snapshot` is the screen's own box with the open overlays, not what
