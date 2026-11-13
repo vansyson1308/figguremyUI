@@ -17,6 +17,11 @@ The server lives in `crates/mcp` (`figcraft-mcp`) and is started by the CLI:
 | `figcraft-cli mcp` | **Headless**: an in-process engine session with one untitled document. No window; renders with the CPU renderer. |
 | `figcraft-cli mcp --attach <port>` | **Attached**: drives a running FigCraft app through its control channel (`figcraft --control <port>`). The user sees every change live. |
 
+An agent's first call should be `get_capabilities`: it says which of the two backends this is,
+whether there is a window and a prototype player, which features and checks the build really has,
+and which document calls will act on (see Capabilities and Working document, revisions and
+conflicts below).
+
 `--attach` also takes `host:port`. The control channel only listens on 127.0.0.1. The app takes up
 to 60 s over each request; `--timeout SECONDS` (1–600) raises that for a client that sends big
 batches: `figcraft-cli mcp --attach 7979 --timeout 300`. Headless has no such limit.
@@ -379,18 +384,20 @@ a later step can use `{"$step": 0, "field": "ids/0"}` to target the first match.
 
 | Tool | What it does |
 |---|---|
+| `get_capabilities {}` | What this server and the app behind it can do: `backend` (`headless` \| `attached`), `window`, `player` (whether a live prototype player can exist), the automation `roots`, the `workingDocument` and the open `documents`, the number of `commands`, `features`, `limits` and file `formats`. Call it first (see Capabilities below). |
+| `use_document {document}` | Choose the working document: a file's `id`, its path, or `"front"`. Returns `{workingDocument, documents}` (see Working document, revisions and conflicts below). |
 | `list_commands {filter?}` | Every command: id, label, menu, shortcut, undoable, params doc. |
 | `run_command {command, params}` | Run any command (e.g. `align.left`, `layout.add`, `component.create`, `instance.place` (drop an instance at a page point into the frame or auto layout slot under it), `component.exposeInstance` / `instance.exposed` (nested instance properties on instances), `component.makeSlot` / `instance.slotInsert` / `instance.resetSlot` (slots, below), `inspect.code` (CSS, HTML + CSS for a whole frame, React, Leptos, Vue, SwiftUI, Jetpack Compose, ArkUI or Flutter for a layer; components take their properties as parameters and instances are calls, see Developer Mode below), `inspect.properties` (layout, auto layout, typography, fills, strokes and effects with their style and variable names; `colorFormat`: hex, rgb, css, hsl or hsb), `inspect.assets` (layers under the selection with export settings, icons and images, each with its `kind`), `inspect.code` takes `unit: rem` and `rootFontSize` for CSS, HTML, React, Leptos and Vue, `style.create`, `variable.bind`, `variable.update` (rename, describe, scope), `variable.set` with `{alias}` or a colour calculation (`{alpha}`, `{mix}`), `variable.renameMode` / `variable.removeMode`, `variable.deleteCollection`, `proto.interaction.add`, `codeConnect.set` (components linked to real code, see Developer Mode below)). |
-| `batch {commands: [{command, params}], label?}` | Several commands as one undo step (`command.batch`), which keeps one copy of the document however many steps there are (an `edit.undo` step undoes the batch's edits so far together); all-or-nothing for open documents and their document state. Failed inner commands are removed from the journal; preferences, clipboard, tool state and UI requests are not rolled back. A step can use what an earlier step returned: name it with `"as": "card"` and `{"$ref": "card"}` anywhere in a later step's params becomes the `id` in its result (`{"$step": n}` does the same by zero-based position); `"field"` takes another key or a slash path such as `ids/0` (see Step references below). |
+| `batch {commands: [{command, params}], label?}` | Several commands as one undo step (`command.batch`), which keeps one copy of the document however many steps there are (an `edit.undo` step undoes the batch's edits so far together); all-or-nothing for open documents and their document state. An abort names the failing step and the command it runs, in the message and as `step` and `command` in the error (see Errors below). Failed inner commands are removed from the journal; preferences, clipboard, tool state and UI requests are not rolled back. A step can use what an earlier step returned: name it with `"as": "card"` and `{"$ref": "card"}` anywhere in a later step's params becomes the `id` in its result (`{"$step": n}` does the same by zero-based position); `"field"` takes another key or a slash path such as `ids/0` (see Step references below). |
 | `create_node {type, x, y, width, height, parent, index, name, text, path, props}` | Create a frame, rectangle, ellipse, polygon, star, line, arrow, text, vector, section, component or slice; returns `{id, node}`. |
 | `set_properties {ids, props}` | `node.set` on layers (geometry, fills, strokes, effects, corner radius, auto layout, sizing, constraints, masks (`isMask`, `maskType: alpha\|vector\|luminance`), handoff status (`devStatus: none\|readyForDev\|completed`; marking again clears "Changed"), a section's `sectionContentsHidden`, text…); returns the updated layers. |
-| `inspect_document {depth, allPages, fields?, outline?}` | The document as JSON (its `id`, layer tree, styles, selection, history); `fields` selects layer properties, `outline: true` gives a compact tree (below). The tools that act on a document also take `document` (see Naming the document below). |
+| `inspect_document {depth, allPages, fields?, outline?}` | The document as JSON (its `id` and `revision`, layer tree, styles, selection, history with who made each step: `history.steps`); `fields` selects layer properties, `outline: true` gives a compact tree (below). The tools that act on a document also take `document` (see Naming the document below). |
 | `get_node {id, depth, fields?, outline?}` | One layer as JSON; takes the same `fields` and `outline` options; `pluginData` (`{key: value}`, values as strings) when the layer or page has layer data written with `set_properties {props: {pluginData}}`. |
 | `select {ids}` | Replace the selection (`[]` deselects). |
 | `export {ids, format, scale \| size, path?, bleed?, cropMarks?, bleedMarks?, cmyk?, contentsOnly?, includeBoundingBox?, svgOutlineText?, svgIdAttribute?, svgSimplifyStroke?, vdCompat?, colorProfile?, quality?}` | png, jpg, svg, webp, pdf, xml (an Android Vector Drawable: `svgIdAttribute` writes `android:name`, `vdCompat` is `bestEffort` (default: approximated with a warning), `exact` (left out with a warning) or `ignore` (no warnings: overlapping layer opacity dropped, even-odd fills kept as `fillType="evenOdd"`, diamond gradients left out), and the result lists `warnings` for what was changed or left out), or `fig`: the whole file as `.fig`, experimental (see Exporting `.fig` files below); `size` is `2x`, `512w` or `512h`; `quality` is the JPG quality, 1 to 100 (default 90). The image covers what the layers paint (shadows towards their offset, strokes, unclipped children, a mask group's mask; hidden layers take no room; a slice is its area with everything under it, or only the frame or group it sits in while `contentsOnly` is on); `contentsOnly: false` also draws every other layer showing in that area, `includeBoundingBox` exports the layers' own boxes; SVG: `svgOutlineText: false` keeps `<text>`, `svgIdAttribute` writes unique ids from layer names, `svgSimplifyStroke: false` writes every stroke as an outline; png, jpg and webp: `colorProfile` is `sameAsFile` (default: the document's profile), `srgb` or `displayP3`, the pixels converted (out-of-gamut colors clip) and the file tagged for it (PNG: `sRGB` chunk, or ICC and `cICP` for Display P3; JPG: ICC profile; WebP: ICC profile for Display P3, none for sRGB) (SVG, XML and RGB PDF output are always sRGB; PDF with `cmyk` is DeviceCMYK). The same options go in export settings (`export.add` / `export.update`). PDF: frames one page each (sized in points), anything else together on one page; print options: `bleed` (points or a length like `"3mm"`, `"0.125in"`), crop and bleed marks, CMYK colour (see Exports below), also taken by `file.export`, `file.exportLayers`, `file.exportFramesPdf` and stored per export setting by `export.add` / `export.update`; `run_command` `file.exportFramesPdf {page?, path?}` writes every top-level frame of a page. Without `path`, images come back as MCP image content, SVG as text, XML as text followed by `{format, bytes, warnings}`. Layers' own export settings: `run_command` with `export.add` / `export.update {index, size?, suffix?, format?}` / `export.remove` and `file.exportLayers {ids?, dir?, assets?}` (every layer once per setting, named `<layer><suffix>.<format>`, a slash in a layer name making a folder; `assets: true` exports the Inspect tab's assets instead: icons as SVG, images as PNG). |
 | `screenshot {ids?, scale?, maxSize?, window?}` | PNG of the page (with background) or of layers, scaled to fit `maxSize` (default 1600). `window: true` captures the app window in front when attached, a window id (see Windows below) that window. |
 | `open_file {path, variables?, reload?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.fig` or FigJam `.jam` (best effort, see below), `.sketch` (Sketch 48 and newer, best effort), `.svg` (see Importing SVG below) or an image; save as `.figcraft`. `open_file` returns `opened` (for a file opened anew, a `summary` of `name`, `pages`, `layers` and `images`, and `warnings` or `repairs`; a file that was already open gives its `index`, with `stale: true` when the file changed on disk since that tab read or saved it; `reload: true` reads it again into the tab, refused while the tab has unsaved changes) and the document's `document` outline. |
-| `undo` / `redo` | Step through history. |
+| `undo {others?}` / `redo {others?}` | Step through history: the agent's own steps. A step the user or another agent made is refused (code `otherAuthor`, naming the step and its author) unless `others: true`. |
 | `pointer {kind, x, y, to?, steps?, tool?, shift, alt, cmd, pressure?, pressureTo?}` | Mouse gestures in page coordinates with the current tool: `click`, `double`, `drag`, `down`, `move`, `up`, `hover`. A dragged layer drops into the frame or auto layout slot under the pointer, except one inside a group, a boolean group or an instance (outside its slots), which only moves. `pressure` (0–1) is pen pressure; a drag goes from `pressure` to `pressureTo` (see Brushes and pen pressure). |
 | `key {key, shift, alt, cmd}` | A shortcut or key as if typed on the canvas (every default shortcut, tool keys, Escape, Delete, arrows, number keys for opacity, arrows that pan the view when nothing is selected; while editing text, the text shortcuts and then text editing keys). Keys are names like `A`, `0`, `Enter`, `ArrowLeft`, `=`, `/`, or egui's (`Plus`, `Questionmark`); `cmd` is Cmd on macOS and Ctrl elsewhere. |
 | `type_text {text, id?}` | Type into the text being edited, or replace the contents of text layer `id`. |
@@ -920,6 +927,21 @@ The presenter's Options menu offers Responsive next to the size options (without
 Responsive / Fixed size (on one), the same `proto.settings {responsive}`; its flow picker lists each
 flow with its description.
 
+**Headless and attached.** The player is a window of the app, so it exists only attached
+(`get_capabilities`: `player`). Headless, `proto.present`, `proto.preview`, `proto.closePreview`
+and `proto.presentOptions` fail with code `unsupportedHere` instead of answering as if a player had
+opened; the message points to the commands that run a prototype without a window
+(`proto.simulate`, `proto.scenario.run`; `features.prototypeSimulator` and `features.scenarios`
+say whether this build has them). Any other command whose result depends on UI nobody will see
+(a panel, the home screen) still succeeds headless and says so: its result gains
+`"ui": "dropped (<request>): no window in this backend"`. `proto.present {}` and `proto.preview
+{}` start from the selected frame, else the first flow whose starting frame still exists, else the
+page's first frame; with no frame to show they fail, naming the flows whose starting frame was
+deleted. `proto.interaction.add` and `proto.interaction.set` check the actions they are given
+exactly as `proto.action.add` does: a `setVariable` must name a variable that exists, and an
+`expression` must give a value it can hold; a condition must give true or false; a destination
+must exist.
+
 ### Local libraries
 
 A `.figcraft` file can be published as a library and used from other files (library files here;
@@ -1446,19 +1468,155 @@ opens one (a new file, the file at `path`, or open file `index` moved out of its
 focus a window before working on its files, and pass its id to `screenshot {window}` to see it.
 Headless (one session, no windows) and in the browser the two commands do nothing.
 
+### Capabilities
+
+`get_capabilities {}` answers what an agent otherwise finds out by failing:
+
+```json
+{"product": "FigCraft", "version": "0.18.1", "protocol": "2025-06-18",
+ "backend": "headless", "window": false, "player": false, "app": null,
+ "roots": null,
+ "workingDocument": {"id": 1, "name": "Untitled", "revision": 1, "front": true},
+ "documents": [{"id": 1, "name": "Untitled", "revision": 1, "front": true}],
+ "commands": 676,
+ "features": {"prototypeSimulator": false, "scenarios": false, "flowCheck": false,
+              "designContext": true, "checks": ["contrast.text", "contrast.unmeasured", "text.clipped", "…"],
+              "workingDocument": true, "conflictDetection": true, "historyAuthors": true,
+              "structuredErrors": true, "engineErrorCodes": true, "appIdentity": true},
+ "limits": {"maxLineBytes": 33554432, "maxResponseBytes": 8388608, "maxScreenshotSide": 8192, "historySteps": 20},
+ "formats": {"open": ["figcraft", "json", "fig", "jam", "sketch", "penpot", "svg", "png", "jpg", "gif", "webp", "bmp", "tiff"],
+             "save": ["figcraft", "fig"], "export": ["png", "jpg", "svg", "webp", "pdf", "xml", "fig"]}}
+```
+
+(The numbers and the `false` features are this build's: a build with the prototype simulator
+answers `prototypeSimulator: true`.)
+
+- `backend` is `headless` (an engine in the server's process: no window, so no prototype player)
+  or `attached` (the running app). `window` and `player` say the same as booleans; `app` is what an
+  attached app says about itself (`{instance, version, …}`, `null` from an app that doesn't say).
+- `roots` are the folders files may be read from and written to (`{read, write}`), `null` when
+  file access is not confined.
+- `features` is read from what is there, never assumed: `prototypeSimulator`, `scenarios`,
+  `flowCheck` and `designContext` are true exactly when the commands `proto.simulate`,
+  `proto.scenario.run`, `proto.check` and `design.get` are in the backend's command list, and
+  `checks` are the rule ids `design.check.rules` returns. Attached to an app built before
+  revisions, `conflictDetection` and `historyAuthors` are false, and `engineErrorCodes` is false
+  when the app sends only the text of an error (its code is then `error`).
+- Call it again after an error with code `transport`: an attached app may have been restarted.
+
+### Working document, revisions and conflicts
+
+**The working document.** A server acts on one open file, the working document, and it does not
+change because another tab comes to the front. It is chosen by `open_file` (the file it opens), by
+`use_document {document}` (an `id`, a path, or `"front"`), and by any call that names `document`;
+before any of those it is the tab in front at the first call that needs a document (or at
+`get_capabilities`). Every later call without `document` goes to it. `run_command file.new` and
+`doc.switch` change the tab in front, not the working document: say `use_document {document:
+"front"}` (or the new file's `id`, which `file.new` returns) to work there. A reverted file
+(`file.revert`, `open_file {reload}`) stays the working document under the new `id` it gets.
+
+When the working document is closed, the next call fails (code `noDocument`), names it, lists the
+open documents and applies nothing anywhere; choose another with `use_document`.
+
+**Every result says which document.** A tool that reads or changes a document ends its result with
+one more text block, `{"document": {"id", "name", "revision", "front"}}`, and carries the same
+object in `structuredContent.document`. The blocks before it are as they always were (the result's
+JSON first), so check this one whenever you act by id: the same layer id means different layers in
+different files. `front` says whether it is the tab the user sees in front; a document the call
+itself closed reads `{"id", "name", "closed": true}`. The name is cut to 48 characters.
+
+**Revisions.** `revision` starts at 1 when a document is opened and goes up by one with every
+committed change: an edit (a batch is one), a finished pointer gesture, an undo or redo, a reload
+from disk, a change that arrives from a live session. Reading, selecting, moving the view and saving
+don't change it. It counts changes in this run of the app and is not saved in the file.
+`inspect_document`, `run_command doc.list` (per file) and what `file.open`, `file.new` and
+`file.revert` return carry it too.
+
+**Conditional changes.** `run_command`, `batch`, `create_node`, `set_properties`, `undo` and `redo`
+take `ifRevision`: the revision you last saw. When the document is at another revision the call
+changes nothing and fails with code `conflict`: `expected`, `actual`, and `since`, the changes made
+in between with who made each (the last 200 are remembered):
+
+```json
+{"error": {"code": "conflict", "command": "node.set", "expected": 7, "actual": 9,
+           "since": [{"revision": 8, "label": "Move", "author": "user"},
+                     {"revision": 9, "label": "Undo Rename", "author": "Cursor (agent)"}],
+           "document": {"id": 3, "name": "Checkout", "revision": 9, "front": true},
+           "message": "conflict: `node.set` expected revision 7 of \"Checkout\", but it is at revision 9: nothing was changed. Changed since: Move (user), Undo Rename (Cursor (agent)). Inspect the document again, then retry with ifRevision 9."}}
+```
+
+Look at the document again, then repeat the call with `ifRevision: actual`. `ifRevision` is a
+parameter of every engine command (`run_command {command, params: {…, ifRevision}}` works as well,
+also over the control channel and in `figcraft-cli run`); the steps of a batch are checked against
+the revision the batch started from, so the same number goes on all of them.
+
+**Whose step.** Each undo step remembers who made it: the agent (as its comments are signed,
+"Claude (agent)") or `user`. `inspect_document` lists them in `history.steps` (`[{label, author}]`,
+the next to undo first; `history.undo` keeps the labels alone). An agent's `undo` and `redo` take
+only its own steps: when the next step is the user's or another agent's, the call is refused with
+code `otherAuthor`, naming the step and its author, unless it passes `others: true`. The user's own
+undo in the app takes any step, as before. What an agent does with `pointer`, `key` and `type_text`
+is its step too (headless; an attached app records those as the user's until it reads `agent` on
+those control methods).
+
+### Errors
+
+A failed tool call has `isError: true` and three views of the same failure: the first text block is
+the message for people; the last text block is `{"error": {…}}` as JSON for the model; and
+`structuredContent.error` is that object for a program.
+
+```json
+{"code": "noSuchNode", "message": "step 2 (node.set): no such node 41",
+ "command": "node.set", "node": 41, "step": 2,
+ "document": {"id": 3, "name": "Checkout", "revision": 9, "front": true}}
+```
+
+`code` is stable; the other fields are there when the error knows them: `command`, `param` (the
+parameter the message is about), `node`, `step` (the failing step of a batch, with `command` then
+the command that step runs), `expected` / `actual` / `since` (a conflict), `label` / `author` (an
+undo refused), `document`, `documents` (the open ones, when the document asked for is not open),
+`tool`.
+
+| Code | Meaning |
+|---|---|
+| `unknownTool` | No such tool. A JSON-RPC error (`-32602`) with this object as its `data`. |
+| `unknownCommand` | No such command id. |
+| `badParams` | A parameter or argument is missing, of the wrong type or not one the command takes. |
+| `noSuchNode` | A layer id that doesn't exist in this document. |
+| `noDocument` | No document is open, or the one named (or the working document) is not open. |
+| `conflict` | `ifRevision` didn't match: somebody changed the document since. |
+| `otherAuthor` | An undo or redo would take somebody else's step. |
+| `notAvailable` | The command can't run now (nothing selected, a read-only file, a version shown…). |
+| `pathRejected` | A path outside the automation roots. |
+| `unsupportedHere` | Not possible in this backend (the prototype player without a window). |
+| `transport` | The attached app didn't answer, or was restarted (`restarted: true`). |
+| `internal` | A bug; the document was left as it was. |
+| `failed` | Any other failure the engine reports with only a message. |
+| `error` | An attached app from before error codes gave only the message. |
+
+Every abort of a `batch` names the failing step and the command it runs, in the message and as
+`step` and `command`, whatever the failure ("no such node" and "unknown command" included).
+
+Attached to an app that was restarted, the first call after the reconnect fails once with
+`transport` and says so: document ids, node ids and revisions from before belong to the other run.
+The working document is forgotten then; the next call takes the tab in front again.
+
 ### Naming the document
 
-Tools act on the file in front, so with an attached app a tab the user clicks mid-task would
-change where the next edit lands. `run_command`, `batch`, `create_node`, `set_properties`,
-`inspect_document`, `get_node`, `select`, `export`, `screenshot`, `save_file`, `undo` and `redo`
-take an optional `document`: the file's `id` (in `run_command {command: "doc.list"}`, and the `id`
-of the `document` outline `open_file` and `inspect_document` return) or the path of an open file.
-The call acts on that file and the tab in front stays in front, unless the command itself opens or
-switches to another file (`file.open`, `file.new`, `doc.switch`), as it would without `document`. A
-file that isn't open is an error. `doc.list` gives an agent each open file's `id`, name and state, not`nwhere it is on disk (#1117). `screenshot {window}` captures what the window shows, so it
-needs the file in front. Over the control channel, `engine.execute`, `document.inspect`,
-`node.get` and `ui.render` take the same `document`; other methods refuse one naming a file behind
-the tab in front. Headless sessions take it too.
+`run_command`, `batch`, `create_node`, `set_properties`, `inspect_document`, `get_node`, `select`,
+`export`, `screenshot`, `save_file`, `undo` and `redo` take an optional `document`: the file's `id`
+(from `use_document`, `get_capabilities`, `run_command {command: "doc.list"}`, or the `document`
+every result names) or the path of an open file. The call acts on that file, which becomes the
+working document, and the tab in front stays in front, unless the command itself opens or switches
+to another file (`file.open`, `file.new`, `doc.switch`), as it would without `document`. A file
+that isn't open is an error. `doc.list` gives an agent each open file's `id`, name, revision and
+state, not where it is on disk (#1117), and marks the tab the user sees in front `active` whichever
+file it is asked for. `screenshot {window}` captures what the window shows, so it needs the file in
+front; `pointer`, `key` and `type_text` drive the canvas of the working document, which an attached
+app has only for the tab in front (it refuses them for a file behind it instead of acting on the
+wrong one). Over the control channel, `engine.execute`, `document.inspect`, `node.get` and
+`ui.render` take the same `document`; other methods refuse one naming a file behind the tab in
+front. Headless sessions take it on every method.
 
 ### Live sessions
 
@@ -2112,10 +2270,10 @@ A name a tool or command doesn't take (`run_command {args}` for `params`, a step
 
 | URI | Content |
 |---|---|
-| `figcraft://document` | The active document (like `inspect_document` at depth 8). |
+| `figcraft://document` | The working document (like `inspect_document` at depth 8). |
 | `figcraft://commands` | The command catalog. |
-| `figcraft://comments` | Every open comment thread on every page, as JSON. |
-| `figcraft://node/{id}` (template) | One layer with children to depth 2. |
+| `figcraft://comments` | Every open comment thread on every page of the working document, as JSON. |
+| `figcraft://node/{id}` (template) | One layer of the working document with children to depth 2. |
 | `figcraft://command/{id}` (template) | One command's docs, e.g. `figcraft://command/layout.add`. |
 
 ## Prompts
