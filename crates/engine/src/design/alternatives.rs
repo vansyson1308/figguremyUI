@@ -100,8 +100,10 @@ fn check_source(cmd: &str, doc: &Document, id: NodeId) -> Result<()> {
 }
 
 /// Copy `source` under its parent, after and to the right of `beside` (the source and the
-/// alternatives already made of it), level with the source. The copy is a deep copy: unlike
-/// Duplicate, a component's is a component of its own, since an instance couldn't be reworked.
+/// alternatives already made of it), level with the source, at the first place on that row where
+/// it covers none of the other layers beside it (the other screens of the page, for a screen),
+/// [`GAP`] from the one it would have covered. The copy is a deep copy: unlike Duplicate, a
+/// component's is a component of its own, since an instance couldn't be reworked.
 fn copy_beside(doc: &mut Document, source: NodeId, beside: &[NodeId]) -> Result<NodeId> {
     let parent = doc.get(source)?.parent.ok_or(crate::EngineError::NoNode(source))?;
     let row: Vec<NodeId> = beside.iter().copied().filter(|i| doc.node(*i).is_some_and(|n| n.parent == Some(parent))).collect();
@@ -111,10 +113,30 @@ fn copy_beside(doc: &mut Document, source: NodeId, beside: &[NodeId]) -> Result<
     if let (Some(from), Some(level)) = (doc.world_bounds(copy), doc.world_bounds(source))
         && right.is_finite()
     {
-        crate::cmd::arrange::move_world(doc, copy, right + GAP - from.x0, level.y0 - from.y0)?;
+        let others: Vec<figcraft_geom::Rect> =
+            doc.get(parent)?.children.iter().filter(|i| **i != copy).filter_map(|i| doc.world_bounds(*i)).filter(|b| b.is_finite()).collect();
+        let x = free_x(&others, right + GAP, level.y0, from.width(), from.height());
+        crate::cmd::arrange::move_world(doc, copy, x - from.x0, level.y0 - from.y0)?;
     }
     crate::library::count_inserted(doc, &[copy]);
     Ok(copy)
+}
+
+/// The first x from `x` on where a `w`×`h` box at height `y` overlaps none of `others`: past each
+/// one it would cover, [`GAP`] from it. Each layer moves the box at most once to the right of it,
+/// so this ends after as many steps as there are layers.
+fn free_x(others: &[figcraft_geom::Rect], mut x: f64, y: f64, w: f64, h: f64) -> f64 {
+    for _ in 0..=others.len() {
+        let at = figcraft_geom::Rect::new(x, y, x + w, y + h);
+        // Touching edges don't overlap; a box with no area covers nothing.
+        let hit =
+            others.iter().filter(|b| b.x0 < at.x1 && at.x0 < b.x1 && b.y0 < at.y1 && at.y0 < b.y1).map(|b| b.x1).fold(f64::NEG_INFINITY, f64::max);
+        if !hit.is_finite() {
+            return x;
+        }
+        x = hit + GAP;
+    }
+    x
 }
 
 /// `given` for a set that exists already: it may repeat what the set says, not change it here.

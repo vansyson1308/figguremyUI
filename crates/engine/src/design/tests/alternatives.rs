@@ -56,6 +56,40 @@ fn compared(s: &mut Session) -> Value {
     ex(s, "design.alternative.compare", json!({"set": "V1"}))
 }
 
+/// The lead's screenshot showed a copy on top of the next screen: the copy went 100 px right of
+/// the source whatever stood there.
+#[test]
+fn an_alternative_is_placed_where_no_other_screen_stands() {
+    let mut s = Session::new();
+    // Home, then two screens 100 px apart on its row, and a tall one further on; a screen below
+    // the row is out of the way.
+    let home = frame(&mut s, "Home", 0.0, 300.0, 400.0);
+    let next = frame(&mut s, "Next", 400.0, 300.0, 400.0);
+    let after = frame(&mut s, "After", 800.0, 300.0, 400.0);
+    let tall = frame(&mut s, "Tall", 1250.0, 100.0, 900.0);
+    let below = frame(&mut s, "Below", 0.0, 2000.0, 300.0);
+    ex(&mut s, "node.set", json!({"id": below, "props": {"y": 500}}));
+    let copy = alternative(&mut s, home, "Compact");
+    let doc = s.doc().unwrap();
+    let cb = doc.world_bounds(copy).unwrap();
+    let tb = doc.world_bounds(tall).unwrap();
+    assert_eq!((cb.x0, cb.y0, cb.width(), cb.height()), (tb.x1 + 100.0, 0.0, 300.0, 400.0), "past every screen on its row, 100 px from the last");
+    for other in [home, next, after, tall, below] {
+        let b = doc.world_bounds(other).unwrap();
+        assert!(cb.intersect(b).area() == 0.0, "the copy covers {other}: {cb:?} {b:?}");
+    }
+    // The next alternative goes to the right of the first, where nothing stands.
+    let second = alternative(&mut s, home, "Spacious");
+    let doc = s.doc().unwrap();
+    assert_eq!(doc.world_bounds(second).unwrap().x0, cb.x1 + 100.0);
+    // A free gap wide enough on the row is used: a screen far to the right doesn't push it.
+    let mut s = Session::new();
+    let home = frame(&mut s, "Home", 0.0, 300.0, 400.0);
+    frame(&mut s, "Far", 2000.0, 300.0, 400.0);
+    let copy = alternative(&mut s, home, "Compact");
+    assert_eq!(s.doc().unwrap().world_bounds(copy).unwrap().x0, 400.0);
+}
+
 #[test]
 fn creating_an_alternative_copies_the_source_beside_it_and_leaves_it_untouched() {
     let mut s = Session::new();
