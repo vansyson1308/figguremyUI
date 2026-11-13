@@ -10,6 +10,8 @@ mod attached;
 mod automation_roots;
 #[allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod common;
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::disallowed_methods)]
+mod examples;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod export_hidden_roots;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
