@@ -1,0 +1,303 @@
+diff --git a/crates/ui-egui/src/panels/design_context.rs b/crates/ui-egui/src/panels/design_context.rs
+index 1253dcf7..ad58ba4b 100644
+--- a/crates/ui-egui/src/panels/design_context.rs
++++ b/crates/ui-egui/src/panels/design_context.rs
+@@ -10,7 +10,7 @@
+ //! what was asked. Nothing here grades the file: no score, no percentage, no mark for a brief
+ //! with empty answers.
+ 
+-use std::collections::BTreeSet;
++use std::collections::{BTreeMap, BTreeSet};
+ use std::sync::Arc;
+ 
+ use egui::{Align2, Color32, CornerRadius, Id, Rect, Response, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+@@ -107,6 +107,34 @@ impl Ran {
+     }
+ }
+ 
++/// What the read-only commands last answered about one open file. Kept by file: another file's
++/// results are never shown (a tab switch, a file opened), and coming back to a file shows its own.
++#[derive(Default)]
++pub(crate) struct Results {
++    /// The last `proto.scenario.run`, `proto.check` and `design.check` shown.
++    pub scenario_run: Option<Ran>,
++    pub flow: Option<Ran>,
++    pub checks: Option<Ran>,
++    /// What the last `design.check.record` stored.
++    pub recorded: Option<Ran>,
++    /// The last `design.alternative.compare` shown, and its set.
++    pub compare: Option<(String, Ran)>,
++}
++
++impl Results {
++    /// The panel's own edit of the file (storing what the checks found) changed nothing the
++    /// results are about: those that were up to date before it are about `now` too, so they
++    /// aren't shown as being about an earlier state.
++    fn carry_over(&mut self, before: &Arc<Document>, now: &Arc<Document>) {
++        let rans = [self.scenario_run.as_mut(), self.flow.as_mut(), self.checks.as_mut(), self.compare.as_mut().map(|(_, r)| r)];
++        for ran in rans.into_iter().flatten() {
++            if !ran.stale(before) {
++                ran.doc = now.clone();
++            }
++        }
++    }
++}
++
+ /// What an inline form is for. The texts it holds are in [`Form::text`], by the slots named in
+ /// each variant.
+ #[derive(Clone, Debug, PartialEq)]
+@@ -182,14 +210,8 @@ pub struct ContextUi {
+     pub(crate) form: Option<Form>,
+     /// What the engine refused outside a form, and the entry it was about (`A1`, `brief`…).
+     pub(crate) error: Option<(String, String)>,
+-    /// The last `proto.scenario.run`, `proto.check` and `design.check` shown.
+-    pub(crate) scenario_run: Option<Ran>,
+-    pub(crate) flow: Option<Ran>,
+-    pub(crate) checks: Option<Ran>,
+-    /// What the last `design.check.record` stored.
+-    pub(crate) recorded: Option<Ran>,
+-    /// The last `design.alternative.compare` shown, and its set.
+-    pub(crate) compare: Option<(String, Ran)>,
++    /// What the read-only commands answered, by the file (its uid) they were run on.
++    results: BTreeMap<u64, Results>,
+     /// Scenarios whose steps are unfolded.
+     pub(crate) unfolded: BTreeSet<String>,
+     /// The entry to point out (a link to it was followed), and whether to scroll to it still.
+@@ -202,6 +224,42 @@ pub struct ContextUi {
+     pub(crate) body: Option<Rect>,
+ }
+ 
++impl ContextUi {
++    /// The results shown for the file with this uid.
++    pub(crate) fn results(&self, uid: u64) -> Option<&Results> {
++        self.results.get(&uid)
++    }
++
++    pub(crate) fn results_mut(&mut self, uid: u64) -> &mut Results {
++        self.results.entry(uid).or_default()
++    }
++}
++
++/// The uid of the file in front, whose results the panel shows.
++pub(crate) fn front(app: &FigApp) -> Option<u64> {
++    app.session.ds().ok().map(|d| d.uid)
++}
++
++/// Keep what a read-only command answered about the file in front, in the slot `put` names.
++pub(crate) fn keep(app: &mut FigApp, result: Value, put: impl FnOnce(&mut Results, Ran)) {
++    let (Some(uid), Some(ran)) = (front(app), Ran::new(app, result)) else { return };
++    put(app.ui.context.results_mut(uid), ran);
++}
++
++/// Run a command of the panel's own that edits the file without changing what its results are
++/// about (storing what the checks found): the results up to date before stay up to date.
++pub(crate) fn act_keeping(app: &mut FigApp, target: &str, cmd: &str, params: Value) -> Option<Value> {
++    let before = app.session.ds().ok().map(|d| (d.uid, d.doc.clone()));
++    let out = act(app, target, cmd, params)?;
++    if let (Some((uid, before)), Some(now)) = (before, app.session.ds().ok().map(|d| d.doc.clone()))
++        && front(app) == Some(uid)
++        && let Some(r) = app.ui.context.results.get_mut(&uid)
++    {
++        r.carry_over(&before, &now);
++    }
++    Some(out)
++}
++
+ /// What a frame of the panel reads: the document as it is now (not borrowed from the app, so
+ /// commands can run while it is being drawn).
+ pub(crate) struct Cx {
+@@ -609,6 +667,9 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
+         return;
+     };
+     let cx = Cx { doc: ds.doc.clone(), design: ds.doc.design.clone(), uid: ds.uid, selection: ds.selection.clone() };
++    // A closed file's results go with it.
++    let open_files: BTreeSet<u64> = app.session.docs.iter().map(|d| d.uid).collect();
++    app.ui.context.results.retain(|uid, _| open_files.contains(uid));
+ 
+     // The sections.
+     ui.add_space(10.0);
+@@ -731,6 +792,8 @@ pub fn inspect(app: &FigApp) -> Value {
+     let ui = &app.ui.context;
+     let ds = app.session.ds().ok();
+     let design = ds.map(|d| d.doc.design.clone());
++    // Only the file in front's own results.
++    let shown = ds.and_then(|d| ui.results(d.uid));
+     let stale = |ran: &Ran| ds.is_none_or(|d| ran.stale(&d.doc));
+     let counts = design.as_ref().map(|c| {
+         let (decisions, ends) = waiting(c);
+@@ -750,7 +813,7 @@ pub fn inspect(app: &FigApp) -> Value {
+             "waitingForAPerson": decisions + ends,
+         })
+     });
+-    let scenario_run = ui.scenario_run.as_ref().map(|ran| {
++    let scenario_run = shown.and_then(|r| r.scenario_run.as_ref()).map(|ran| {
+         let results: Vec<Value> = ran.result["results"]
+             .as_array()
+             .into_iter()
+@@ -766,17 +829,17 @@ pub fn inspect(app: &FigApp) -> Value {
+             .map(|f| json!({"rule": f["rule"], "severity": f["severity"], "nodes": f["nodes"], "message": f["message"]}))
+             .collect()
+     };
+-    let flow = ui.flow.as_ref().map(|ran| {
++    let flow = shown.and_then(|r| r.flow.as_ref()).map(|ran| {
+         let screens = ran.result["screens"].as_array().map_or(&[][..], Vec::as_slice);
+         // The frames an AI agent proposed as ends of the flow, waiting for a person.
+         let proposed: Vec<&Value> = screens.iter().filter(|s| s["endStateProposedBy"].is_string()).map(|s| &s["id"]).collect();
+         json!({"problems": problems(&ran.result["problems"]), "screens": screens.len(), "prototyped": ran.result["prototyped"], "proposedEndStates": proposed, "stale": stale(ran)})
+     });
+-    let checks = ui.checks.as_ref().map(|ran| {
++    let checks = shown.and_then(|r| r.checks.as_ref()).map(|ran| {
+         let skipped: Vec<&Value> = ran.result["skipped"].as_array().into_iter().flatten().map(|s| &s["id"]).collect();
+         json!({"findings": problems(&ran.result["findings"]), "summary": ran.result["summary"], "skipped": skipped, "stage": ran.result["stage"], "stale": stale(ran)})
+     });
+-    let compare = ui.compare.as_ref().map(|(set, ran)| {
++    let compare = shown.and_then(|r| r.compare.as_ref()).map(|(set, ran)| {
+         json!({"set": set, "members": ran.result["members"].as_array().map_or(0, Vec::len), "warnings": ran.result["warnings"], "stale": stale(ran)})
+     });
+     json!({
+@@ -793,7 +856,7 @@ pub fn inspect(app: &FigApp) -> Value {
+         "scenarioRun": scenario_run,
+         "flowCheck": flow,
+         "checks": checks,
+-        "recorded": ui.recorded.as_ref().map(|ran| &ran.result),
++        "recorded": shown.and_then(|r| r.recorded.as_ref()).map(|ran| &ran.result),
+         "compare": compare,
+     })
+ }
+diff --git a/crates/ui-egui/src/panels/design_context/alternatives.rs b/crates/ui-egui/src/panels/design_context/alternatives.rs
+index 3dd566b9..c252cf30 100644
+--- a/crates/ui-egui/src/panels/design_context/alternatives.rs
++++ b/crates/ui-egui/src/panels/design_context/alternatives.rs
+@@ -9,8 +9,8 @@ use figcraft_doc::{NodeId, NodeKind};
+ use serde_json::{Value, json};
+ 
+ use super::records::submit;
+-use super::{
+-    Cx, Form, FormEnd, FormKind, Ran, act, author_name, body, button, chip, draft, entry, flow_row, form_end, go_to, go_to_entry, heading, link, pad,
++use super::{keep, 
++    Cx, Form, FormEnd, FormKind, act, author_name, body, button, chip, draft, entry, flow_row, form_end, go_to, go_to_entry, heading, link, pad,
+     part, primary, quiet, refusal_for, strong,
+ };
+ use crate::FigApp;
+@@ -182,7 +182,7 @@ fn alternative_set(app: &mut FigApp, ui: &mut Ui, cx: &Cx, set: &AlternativeSet,
+         if primary(ui, tr("Compare"))
+             && let Some(result) = act(app, &set.id, "design.alternative.compare", json!({"set": set.id}))
+         {
+-            app.ui.context.compare = Ran::new(app, result).map(|ran| (set.id.clone(), ran));
++            keep(app, result, |r, ran| r.compare = Some((set.id.clone(), ran)));
+         }
+         if set.chosen != Some(set.source) && button(ui, tr("Keep the original")) {
+             *form = Some(Form::new(FormKind::Choose(set.id.clone(), set.source)));
+@@ -203,7 +203,7 @@ fn alternative_set(app: &mut FigApp, ui: &mut Ui, cx: &Cx, set: &AlternativeSet,
+         });
+     }
+     refusal_for(app, ui, &set.id);
+-    let shown = app.ui.context.compare.as_ref().filter(|(id, _)| *id == set.id).map(|(_, ran)| (ran.result.clone(), ran.stale(&cx.doc)));
++    let shown = app.ui.context.results(cx.uid).and_then(|r| r.compare.as_ref()).filter(|(id, _)| *id == set.id).map(|(_, ran)| (ran.result.clone(), ran.stale(&cx.doc)));
+     if let Some((result, stale)) = shown {
+         ui.add_space(6.0);
+         comparison(ui, cx, &result, stale);
+diff --git a/crates/ui-egui/src/panels/design_context/findings.rs b/crates/ui-egui/src/panels/design_context/findings.rs
+index 4be88fe0..ff2345d3 100644
+--- a/crates/ui-egui/src/panels/design_context/findings.rs
++++ b/crates/ui-egui/src/panels/design_context/findings.rs
+@@ -9,8 +9,8 @@ use figcraft_doc::design::{Finding, FindingKind, FindingStatus, Severity};
+ use serde_json::{Value, json};
+ 
+ use super::records::submit;
+-use super::{
+-    Cx, Form, FormEnd, FormKind, Ran, SEVERITIES, act, author_name, body, button, chip, choice, draft, entry, flow_row, form_end, go_to_entry,
++use super::{keep, 
++    Cx, Form, FormEnd, FormKind, SEVERITIES, act, act_keeping, author_name, body, button, chip, choice, draft, entry, flow_row, form_end, go_to_entry,
+     heading, layer_links, link, pad, part, primary, quiet, refusal_for, severity_label, stage, strong,
+ };
+ use crate::FigApp;
+@@ -155,19 +155,19 @@ fn checks(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
+             if primary(ui, tr("Run the checks"))
+                 && let Some(result) = act(app, "checks", "design.check", json!({}))
+             {
+-                app.ui.context.checks = Ran::new(app, result);
++                keep(app, result, |r, ran| r.checks = Some(ran));
+             }
+             if button(ui, tr("Store what they find"))
+-                && let Some(result) = act(app, "checks", "design.check.record", json!({}))
++                && let Some(result) = act_keeping(app, "checks", "design.check.record", json!({}))
+             {
+-                app.ui.context.recorded = Ran::new(app, result);
++                keep(app, result, |r, ran| r.recorded = Some(ran));
+             }
+             if cx.design.findings.iter().any(|f| f.kind == FindingKind::Check) && button(ui, tr("Re-check the stored checks")) {
+                 act(app, "checks", "design.finding.recheck", json!({}));
+             }
+         });
+         refusal_for(app, ui, "checks");
+-        if let Some(ran) = app.ui.context.recorded.as_ref().filter(|ran| !ran.stale(&cx.doc)) {
++        if let Some(ran) = app.ui.context.results(cx.uid).and_then(|r| r.recorded.as_ref()).filter(|ran| !ran.stale(&cx.doc)) {
+             let n = |key: &str| ran.result[key].as_array().map_or(0, Vec::len);
+             quiet(ui, &trf("Stored {added} new; {existing} were stored already.", &[("added", &n("added")), ("existing", &n("existing"))]));
+             // The file holds as many findings as it may: what wasn't stored is said, in the
+@@ -178,7 +178,7 @@ fn checks(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
+             }
+         }
+     });
+-    let Some((result, stale)) = app.ui.context.checks.as_ref().map(|ran| (ran.result.clone(), ran.stale(&cx.doc))) else { return };
++    let Some((result, stale)) = app.ui.context.results(cx.uid).and_then(|r| r.checks.as_ref()).map(|ran| (ran.result.clone(), ran.stale(&cx.doc))) else { return };
+     let list = result["findings"].as_array().map_or(&[][..], Vec::as_slice);
+     ui.add_space(6.0);
+     pad(ui, |ui| {
+diff --git a/crates/ui-egui/src/panels/design_context/flow.rs b/crates/ui-egui/src/panels/design_context/flow.rs
+index c1b1cbd6..6baeeb2c 100644
+--- a/crates/ui-egui/src/panels/design_context/flow.rs
++++ b/crates/ui-egui/src/panels/design_context/flow.rs
+@@ -11,8 +11,8 @@ use figcraft_doc::design::{Gesture, Scenario, StepAction};
+ use serde_json::{Value, json};
+ 
+ use super::findings::found;
+-use super::{
+-    Cx, Ran, act, author_name, body, button, chip, entry, flow_row, go_to, heading, link, pad, part, primary, quiet, refusal_for, steps_text, strong,
++use super::{keep, 
++    Cx, act, author_name, body, button, chip, entry, flow_row, go_to, heading, link, pad, part, primary, quiet, refusal_for, steps_text, strong,
+ };
+ use crate::FigApp;
+ use crate::i18n::{tr, tr_noop, trf};
+@@ -64,7 +64,7 @@ pub(super) fn show(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
+ fn run(app: &mut FigApp, id: Option<&str>) {
+     let params = id.map_or_else(|| json!({}), |id| json!({"id": id}));
+     if let Some(result) = act(app, id.unwrap_or("scenarios"), "proto.scenario.run", params) {
+-        app.ui.context.scenario_run = Ran::new(app, result);
++        keep(app, result, |r, ran| r.scenario_run = Some(ran));
+     }
+ }
+ 
+@@ -86,7 +86,7 @@ fn scenarios(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
+             run(app, None);
+         }
+         refusal_for(app, ui, "scenarios");
+-        if let Some(ran) = &app.ui.context.scenario_run {
++        if let Some(ran) = app.ui.context.results(cx.uid).and_then(|r| r.scenario_run.as_ref()) {
+             if ran.stale(&cx.doc) {
+                 ui.add_space(4.0);
+                 quiet(ui, tr("The file has changed since the scenarios last ran: the results below are from before."));
+@@ -127,7 +127,7 @@ fn scenario(app: &mut FigApp, ui: &mut Ui, cx: &Cx, s: &Scenario) {
+     });
+     // What the last run said about this scenario.
+     let result =
+-        app.ui.context.scenario_run.as_ref().and_then(|ran| ran.result["results"].as_array()?.iter().find(|r| r["id"] == json!(s.id)).cloned());
++        app.ui.context.results(cx.uid).and_then(|r| r.scenario_run.as_ref()).and_then(|ran| ran.result["results"].as_array()?.iter().find(|r| r["id"] == json!(s.id)).cloned());
+     if let Some(r) = &result {
+         ui.add_space(4.0);
+         outcome(ui, r, s.steps.len());
+@@ -226,11 +226,11 @@ fn flow_check(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
+         if primary(ui, tr("Check the flow"))
+             && let Some(result) = act(app, "flow", "proto.check", json!({}))
+         {
+-            app.ui.context.flow = Ran::new(app, result);
++            keep(app, result, |r, ran| r.flow = Some(ran));
+         }
+         refusal_for(app, ui, "flow");
+     });
+-    let Some((result, stale)) = app.ui.context.flow.as_ref().map(|ran| (ran.result.clone(), ran.stale(&cx.doc))) else { return };
++    let Some((result, stale)) = app.ui.context.results(cx.uid).and_then(|r| r.flow.as_ref()).map(|ran| (ran.result.clone(), ran.stale(&cx.doc))) else { return };
+     ui.add_space(6.0);
+     pad(ui, |ui| {
+         if stale {
