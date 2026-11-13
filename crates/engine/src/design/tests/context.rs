@@ -376,3 +376,68 @@ fn the_context_survives_save_and_reopen() {
     assert_eq!(json["design"]["stage"], "converging");
     assert_eq!(json["design"]["decisions"][0]["briefRevision"], 1);
 }
+
+#[test]
+fn opening_a_file_whose_design_context_cant_be_read_lists_it_with_the_repairs() {
+    let mut s = Session::new();
+    let home = frame(&mut s, "Home", 0.0, 320.0, 480.0);
+    let mut stored = figcraft_format::to_json(s.doc().unwrap()).unwrap();
+    // (the stored context, what the repair names)
+    let cases = [
+        (
+            json!({"brief": {"audience": "Nurses"}, "scenarios": [{"id": "S1", "name": "x"}], "counters": {"S": 1}}),
+            "`scenarios[0]`: missing field `start`",
+        ),
+        (json!({"brief": {"audience": "Nurses"}, "stage": "shipping"}), "`stage`: unknown variant `shipping`"),
+        (
+            json!({"brief": {"audience": "Nurses"}, "scenarios": [{"id": "S1", "name": "n", "start": home, "steps": [{"action": {"type": "swipe"}}]}], "counters": {"S": 1}}),
+            "`scenarios[0]`: unknown variant `swipe`",
+        ),
+    ];
+    let dir = std::env::temp_dir().join(format!("figcraft-design-load-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (k, (design, why)) in cases.into_iter().enumerate() {
+        stored["design"] = design;
+        let path = dir.join(format!("context-{k}.json"));
+        std::fs::write(&path, stored.to_string()).unwrap();
+        let mut opened = Session::new();
+        let r = ex(&mut opened, "file.open", json!({"path": path.to_string_lossy()}));
+        let repairs = super::strings(&r["repairs"]);
+        assert_eq!(repairs.len(), 1, "{r}");
+        assert!(repairs[0].starts_with("part of the design context couldn't be read and was left out (") && repairs[0].contains(why), "{repairs:?}");
+        assert!(opened.message.take().is_some_and(|m| m.contains("design context")), "the session says so");
+        // The layers are all there, and what could be read of the context is too.
+        assert!(opened.doc().unwrap().node(home).is_some_and(|n| n.name == "Home"));
+        let got = ex(&mut opened, "design.get", json!({}));
+        assert_eq!((&got["brief"]["audience"], &got["scenarios"], &got["stage"]), (&json!("Nurses"), &json!([]), &json!("exploring")));
+        // Working on it and saving it writes a context that reads clean.
+        ex(&mut opened, "design.brief.set", json!({"job": "Hand over"}));
+        assert!(super::reopened(&opened).design.brief.job == "Hand over");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_context_with_a_hundred_thousand_links_to_missing_layers_is_read_in_one_pass() {
+    // 200 assumptions with 500 links each (the most the limits allow per entry), every link to
+    // a layer that doesn't exist.
+    let assumptions: Vec<serde_json::Value> = (0..200u64)
+        .map(|k| json!({"id": format!("A{}", k + 1), "text": "t", "status": "untested", "links": (0..500u64).map(|i| 1_000_000 + k * 500 + i).collect::<Vec<u64>>()}))
+        .collect();
+    let mut doc = figcraft_doc::Document::new("Links");
+    doc.design = std::sync::Arc::new(serde_json::from_value(json!({"assumptions": assumptions, "counters": {"A": 200}})).unwrap());
+    let mut s = Session::with_document(doc);
+    let started = std::time::Instant::now();
+    let got = ex(&mut s, "design.get", json!({}));
+    let took = started.elapsed();
+    assert_eq!(got["counts"]["missingLinks"], 100_000);
+    assert_eq!(got["missingLinks"][0], json!({"node": 1_000_000, "from": "A1"}));
+    assert_eq!(got["missingLinks"][99_999], json!({"node": 1_099_999, "from": "A200"}), "in file order");
+    // Comparing every link with every other would take minutes here; one pass takes a moment.
+    assert!(took < std::time::Duration::from_secs(20), "design.get took {took:?}");
+    // The check that reports them reads them the same way.
+    let started = std::time::Instant::now();
+    let r = ex(&mut s, "design.check", json!({"rules": ["context.missingLink"]}));
+    assert_eq!(r["summary"]["total"], 100_000);
+    assert!(started.elapsed() < std::time::Duration::from_secs(20));
+}

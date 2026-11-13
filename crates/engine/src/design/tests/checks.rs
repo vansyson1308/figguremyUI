@@ -497,6 +497,11 @@ fn the_rule_list_says_what_each_measures_and_from_which_stage() {
     assert!(
         target.contains("SC 2.5.8") && target.contains("24×24") && target.contains("SC 2.5.5") && target.contains("44×44") && target.contains("AAA")
     );
+    // It says what it doesn't evaluate, so a result isn't read as a failure of the criterion.
+    for exception in ["spacing", "inside a sentence", "equivalent control", "essential"] {
+        assert!(target.contains(exception), "{exception}: {target}");
+    }
+    assert!(target.contains("aren't evaluated") && target.contains("judged against those exceptions"), "{target}");
     assert!(rules.as_array().unwrap().iter().all(|r| r["about"].as_str().is_some_and(|a| a.len() > 40)));
     // The profile is data: unknown rules (another module's) run from `converging`.
     assert_eq!(crate::design::min_stage("flow.brokenTarget"), Stage::Exploring);
