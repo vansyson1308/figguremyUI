@@ -124,6 +124,15 @@ command-line tool `target/release/figguremyui-cli`, which also runs the MCP serv
 packages keep their `figcraft-*` names, so `-p figcraft` builds the `figguremyui` binary. A first
 build takes a while; after that you run the binaries directly, no rebuild per session.
 
+Check the install, and get the setup lines for your agent with the binary's real path:
+
+```bash
+target/release/figguremyui-cli doctor --example examples/signup-flow.figcraft
+```
+
+**AI agents installing this for someone:** follow [`docs/install-for-agents.md`](docs/install-for-agents.md),
+a runbook to run top to bottom on Linux, macOS or Windows.
+
 On Linux the app needs the usual desktop libraries (for example on Debian/Ubuntu:
 `libxkbcommon-x11-0`, `libwayland-client0`, `libgl1`). Text uses your installed fonts; the examples
 are set in [Inter](https://rsms.me/inter/), so install it for them to look as designed. Optionally,
@@ -141,7 +150,9 @@ assumptions, decisions, scenarios and checks, and press the ▶ button at the to
 
 ## Connect an AI agent
 
-The MCP server is the same binary in two modes:
+`figguremyui-cli doctor` prints the lines below with your binary's absolute path filled in, after
+checking that the server works ([`docs/install-for-agents.md`](docs/install-for-agents.md) has the
+whole install). The MCP server is the same binary in two modes:
 
 | Mode | Command | What it does |
 |---|---|---|

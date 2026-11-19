@@ -297,7 +297,7 @@ live sessions (`collab.*`: without a key on a server open to the public, with `c
 ### `doctor [--json] [--example FILE] [--port PORT]`
 
 Checks that this install works and prints how to connect an AI agent to it. Run it right after
-building.
+building; [install-for-agents.md](install-for-agents.md) is the install runbook it belongs to.
 
 - Prints the version, this binary's absolute path (`current_exe`, canonicalized) and whether the
   desktop app `figguremyui` (`figguremyui.exe` on Windows) sits next to it. The app is needed only
