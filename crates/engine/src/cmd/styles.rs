@@ -1261,9 +1261,11 @@ fn apply_bindings_matching(doc: &mut Document, only: Option<&std::collections::B
         Some(ids) => ids.iter().copied().filter(|i| doc.node(*i).is_some_and(|n| !n.bound.is_empty())).collect(),
         None => doc.nodes().filter(|n| !n.bound.is_empty()).map(|n| n.id).collect(),
     };
+    let mut pass = Pass::default();
     for id in bound {
-        let modes = doc.modes_for(id);
+        let (modes, known) = pass.modes(doc, id);
         let Some(n) = doc.node(id) else { continue };
+        let was = doc.node_arc(id).cloned();
         let binds = n.bound.clone();
         let has_layout = n.layout.is_some();
         let mut sets = serde_json::Map::new();
@@ -1279,7 +1281,7 @@ fn apply_bindings_matching(doc: &mut Document, only: Option<&std::collections::B
             if !has_layout && super::props::LAYOUT_KEYS.contains(&field.as_str()) {
                 continue;
             }
-            let Some(val) = doc.variables.resolve(&var, &modes) else { continue };
+            let Some(val) = pass.resolve(&doc.variables, known, &var, &modes) else { continue };
             // One list item's value: a paint's colour, an effect's or a layout grid's field.
             if let Some((list, i, prop)) = list_binding(&field) {
                 match (list, &val) {
@@ -1346,7 +1348,93 @@ fn apply_bindings_matching(doc: &mut Document, only: Option<&std::collections::B
         if !prop_sets.is_empty() {
             super::component::apply_prop_bindings(doc, id, &prop_sets);
         }
+        pass.after(was.as_ref(), doc.node_arc(id));
     }
+}
+
+/// What one pass of [`apply_bindings_matching`] works out once: the layers' modes, each chain of
+/// parents once (siblings share it), and what each variable resolves to in each set of modes met
+/// (the variables don't change in a pass). A prototype's run applies bindings after nearly every
+/// action (performance budget PF2).
+#[derive(Default)]
+struct Pass {
+    modes: figcraft_doc::ModesCache,
+    /// Each set of modes met, by its place in `resolved`.
+    in_modes: std::collections::HashMap<std::sync::Arc<BTreeMap<CollectionId, ModeId>>, usize>,
+    resolved: Vec<std::collections::HashMap<String, Option<VariableValue>>>,
+}
+
+impl Pass {
+    /// Layer `id`'s modes (`Document::modes_for`), and their place for [`Self::resolve`].
+    fn modes(&mut self, doc: &Document, id: NodeId) -> (std::sync::Arc<BTreeMap<CollectionId, ModeId>>, usize) {
+        let modes = self.modes.shared(doc, id);
+        let known = match self.in_modes.get(&*modes) {
+            Some(i) => *i,
+            None => {
+                self.in_modes.insert(modes.clone(), self.resolved.len());
+                self.resolved.push(Default::default());
+                self.resolved.len() - 1
+            }
+        };
+        (modes, known)
+    }
+
+    /// `vars.resolve(var, modes)`, where `known` is the place [`Self::modes`] gave `modes`.
+    fn resolve(&mut self, vars: &Variables, known: usize, var: &str, modes: &BTreeMap<CollectionId, ModeId>) -> Option<VariableValue> {
+        let Some(known) = self.resolved.get_mut(known) else { return vars.resolve(var, modes) };
+        if let Some(v) = known.get(var) {
+            return v.clone();
+        }
+        let v = vars.resolve(var, modes);
+        known.insert(var.to_string(), v.clone());
+        v
+    }
+
+    /// A layer's bindings were applied (`was` before, `now` after): what the layers after it
+    /// resolve in changes with a layer's parent, children or modes, and with an instance's main
+    /// component (a bound variant property changes it here; its layers are rebuilt later, when the
+    /// edit is normalised).
+    fn after(&mut self, was: Option<&std::sync::Arc<Node>>, now: Option<&std::sync::Arc<Node>>) {
+        let changed = match (was, now) {
+            (Some(was), Some(now)) => !std::sync::Arc::ptr_eq(was, now) && moves_modes(was, now),
+            _ => true,
+        };
+        if changed {
+            self.modes.clear();
+        }
+    }
+}
+
+/// Whether going from `was` to `now` can change the variable modes of a layer (this one, or one
+/// inside it or elsewhere that inherits from it): see [`figcraft_doc::ModesCache`].
+fn moves_modes(was: &Node, now: &Node) -> bool {
+    fn instance(n: &Node) -> Option<(NodeId, &BTreeMap<String, Value>)> {
+        match &n.kind {
+            NodeKind::Instance { component, props } => Some((*component, props)),
+            _ => None,
+        }
+    }
+    was.parent != now.parent || was.var_modes != now.var_modes || was.children != now.children || instance(was) != instance(now)
+}
+
+/// Whether `list` compares equal to itself: not when a colour or a number in it is NaN.
+fn equals_itself(list: &[Paint]) -> bool {
+    list.eq(list)
+}
+
+/// Whether `list` after [`set_paint_color`] with these arguments would compare equal to it as it is
+/// (never for a list that doesn't equal itself: a NaN colour).
+pub(crate) fn paint_color_in_place(list: &[Paint], i: usize, stop: Option<usize>, c: Color) -> bool {
+    equals_itself(list)
+        && match (list.get(i), stop) {
+            (Some(p), Some(j)) => match &p.kind {
+                PaintKind::Gradient(g) => g.stops.get(j).is_none_or(|s| s.color == c),
+                _ => true,
+            },
+            (Some(p), None) => p.kind == PaintKind::Solid { color: c },
+            (None, None) => i != 0,
+            (None, Some(_)) => true,
+        }
 }
 
 /// Set paint `i`'s colour (or its gradient stop `stop`'s) to a bound colour; a first paint that
@@ -1401,6 +1489,15 @@ pub(crate) fn set_effect_field(effects: &mut [Effect], i: usize, prop: &str, val
 /// adds the paint.
 fn apply_paint_bindings(doc: &mut Document, id: NodeId, sets: &[(bool, usize, Option<usize>, Color)]) {
     let Some(n) = doc.node(id) else { return };
+    // Nearly always every colour is in place already: then nothing is copied to find that out (a
+    // prototype's run applies every binding after every action, PF2). Both lists are compared below,
+    // so both must equal themselves.
+    if equals_itself(&n.fills)
+        && equals_itself(&n.strokes)
+        && sets.iter().all(|(is_fill, i, stop, c)| paint_color_in_place(if *is_fill { &n.fills } else { &n.strokes }, *i, *stop, *c))
+    {
+        return;
+    }
     let (mut fills, mut strokes) = (n.fills.clone(), n.strokes.clone());
     for (is_fill, i, stop, c) in sets {
         set_paint_color(if *is_fill { &mut fills } else { &mut strokes }, *i, *stop, *c);

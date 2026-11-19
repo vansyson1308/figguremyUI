@@ -1366,3 +1366,82 @@ mod vector_regions_tests;
 mod width_sides_tests;
 #[cfg(test)]
 mod width_tests;
+
+/// [`Document::modes_for`] for many layers of one document in a row: what each chain of parents
+/// sets is worked out once and shared by the layers under it (applying variable bindings asks for
+/// every bound layer, PF2). It stays right while the document's parents, variable modes and
+/// instances' main components stay as they were: [`Self::clear`] it after a change to any of them.
+#[derive(Default)]
+pub struct ModesCache {
+    /// A layer's modes for the layers inside it (its own over its parents'), and how many layers
+    /// that chain has.
+    chains: std::collections::HashMap<NodeId, (Arc<BTreeMap<CollectionId, ModeId>>, usize)>,
+}
+
+/// The longest chain of parents a [`ModesCache`] works out; a deeper layer (or a loop of parents
+/// in a broken file) is answered by [`Document::modes_for`] itself, which stops where it stops.
+const MODES_CACHE_DEPTH: usize = 1_000;
+
+impl ModesCache {
+    /// Forget what was worked out (the document changed).
+    pub fn clear(&mut self) {
+        self.chains.clear();
+    }
+
+    /// The same as `doc.modes_for(id)`.
+    pub fn modes_for(&mut self, doc: &Document, id: NodeId) -> BTreeMap<CollectionId, ModeId> {
+        BTreeMap::clone(&self.shared(doc, id))
+    }
+
+    /// [`Self::modes_for`], shared with the layers around it where it sets no mode of its own.
+    pub fn shared(&mut self, doc: &Document, id: NodeId) -> Arc<BTreeMap<CollectionId, ModeId>> {
+        let Some(n) = doc.node(id) else { return Arc::new(doc.modes_for(id)) };
+        let around = match n.parent {
+            None => Arc::new(BTreeMap::new()),
+            Some(p) => match self.chain(doc, p) {
+                Some(c) => c,
+                None => return Arc::new(doc.modes_for(id)),
+            },
+        };
+        let mut own = doc.main_modes(n).chain(&n.var_modes).peekable();
+        if own.peek().is_none() {
+            return around;
+        }
+        let mut out = BTreeMap::clone(&around);
+        out.extend(own.map(|(k, v)| (k.clone(), v.clone())));
+        Arc::new(out)
+    }
+
+    /// What layer `p` and its parents set, outermost first and `p` last (what the layers inside
+    /// `p` inherit). `None` past [`MODES_CACHE_DEPTH`].
+    fn chain(&mut self, doc: &Document, p: NodeId) -> Option<Arc<BTreeMap<CollectionId, ModeId>>> {
+        // Up to the outermost layer, or to one already worked out.
+        let mut path = Vec::new();
+        let mut cur = Some(p);
+        let (mut acc, mut depth) = loop {
+            let Some(c) = cur else { break (Arc::new(BTreeMap::new()), 0) };
+            if let Some((m, d)) = self.chains.get(&c) {
+                break (m.clone(), *d);
+            }
+            if path.len() >= MODES_CACHE_DEPTH {
+                return None;
+            }
+            path.push(c);
+            cur = doc.node(c).and_then(|n| n.parent);
+        };
+        // Then down again, each layer's own modes over what is around it.
+        for c in path.into_iter().rev() {
+            depth += 1;
+            if let Some(n) = doc.node(c) {
+                let mut own = doc.main_modes(n).chain(&n.var_modes).peekable();
+                if own.peek().is_some() {
+                    let mut m = BTreeMap::clone(&acc);
+                    m.extend(own.map(|(k, v)| (k.clone(), v.clone())));
+                    acc = Arc::new(m);
+                }
+            }
+            self.chains.insert(c, (acc.clone(), depth));
+        }
+        (depth <= MODES_CACHE_DEPTH).then_some(acc)
+    }
+}
