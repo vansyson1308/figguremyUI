@@ -46,16 +46,16 @@ screenshot someone looked at).
 - [ ] Re-measure on a quiet machine with `bench.py` (baseline and new interleaved), update `docs/benchmarks.md`. Do not lower a budget or change the workload to pass; if one still can't be met, write down why with the profile.
 
 ### B2. Visual QC round 1 fixes (`handoff/notes/qc-round1.md`)
-- [ ] `git apply handoff/wip/qc-fixes-in-progress.patch` (panel files only, unfinished: it had started on QC-01) and continue.
-- [ ] **QC-01 (P1)**: the Design context panel shows another file's check results, scenario results, flow check and comparison after a tab switch or opening a file (a never-run scenario showed "Passed"). Results must be kept per document. Test: run in file A, switch to B → nothing from A.
-- [ ] QC-02 (P2, example): the sign-up form's error summary stays after the field is fixed. Fix in `examples/build/build_examples.py`, regenerate, pin with a scenario expectation.
-- [ ] QC-03 (P2, example): in the bike booking, Back on step 2 goes to step 3 after "Đổi". Same way.
-- [ ] QC-04 (P2): keyboard focus in the panel can move out of view; scroll the focused control into view.
-- [ ] QC-05 (P2): dark theme frame names on a light page: 1.92:1; pick the label colour against the page colour (≥ 4.5:1).
-- [ ] QC-06 (P2): Vietnamese panel partly English (the simulator caveat items; the rail label "Tài ngu…" cut). Rule messages from the engine may stay English if the panel says so.
-- [ ] QC-08, QC-09, QC-10, QC-14 (subset), QC-15 (`acceptedBy` on decisions and end states), QC-16 (focus reported for the panel): as listed in the notes file.
-- [ ] Look at every fix in the real app (screenshots read, not just taken).
-- [ ] Commit, then run the full checks (section F1) and push.
+- [x] `git apply handoff/wip/qc-fixes-in-progress.patch` (panel files only, unfinished: it had started on QC-01) and continue.
+- [x] **QC-01 (P1)**: the Design context panel shows another file's check results, scenario results, flow check and comparison after a tab switch or opening a file (a never-run scenario showed "Passed"). Results must be kept per document. Test: run in file A, switch to B → nothing from A.
+- [x] QC-02 (P2, example): the sign-up form's error summary stays after the field is fixed. Fix in `examples/build/build_examples.py`, regenerate, pin with a scenario expectation.
+- [x] QC-03 (P2, example): in the bike booking, Back on step 2 goes to step 3 after "Đổi". Same way.
+- [x] QC-04 (P2): keyboard focus in the panel can move out of view; scroll the focused control into view.
+- [x] QC-05 (P2): dark theme frame names on a light page: 1.92:1; pick the label colour against the page colour (≥ 4.5:1).
+- [x] QC-06 (P2): Vietnamese panel partly English (the simulator caveat items; the rail label "Tài ngu…" cut). Rule messages from the engine may stay English if the panel says so.
+- [x] QC-08, QC-09, QC-10, QC-14 (subset), QC-15 (`acceptedBy` on decisions and end states), QC-16 (focus reported for the panel): as listed in the notes file.
+- [x] Look at every fix in the real app (screenshots read, not just taken).
+- [ ] Commit (done locally, M11.43–M11.46; status per item in `handoff/notes/qc-round1.md`, screenshots in the scratchpad `qc/fix-shots/`), then run the full checks (section F1) and push.
 
 ## C. Visual QC round 2 and README screenshots
 - [ ] An independent reviewer (not whoever made the fixes) repeats the QC walk on a fresh release build: the three examples played by real clicks, the panel in light/dark/Vietnamese, keyboard, contrast.
@@ -85,7 +85,7 @@ screenshot someone looked at).
 - [ ] Simulator vs player: five documented differences remain (listed in every result as `knownDifferences`, pinned by the parity test); no animation timing, scroll, drag direction, devices, hit-testing.
 - [ ] Engine refusals and some rule suggestions shown in the panel contain command ids (QC-07); the presenter's arrows walk into components (QC-11); hotspot hints on after-delay frames (QC-12); reduce motion doesn't change prototype transitions (QC-13, documented).
 - [ ] Baseline P3 findings not addressed: F-11 (geometry values not capped), F-13 (no warning at the call site for a missing font family), F-14 (`component.addVariant {property, value}` on a lone component), F-15 (`save_file` into a missing folder gives a bare OS error), F-16 (`figcraft --help`, and a panic instead of a message when `libxkbcommon-x11` is missing).
-- [ ] No screen-reader pass over the new panel; `ui.inspect` doesn't report its focus (QC-16).
+- [ ] No screen-reader pass over the new panel (`ui.inspect` reports its focus since QC-16).
 - [ ] `.fig` export leaves out variable and conditional actions (documented).
 - [ ] **G3** delete `handoff/` (move anything still needed into `docs/`) in the last commit before merging.
 
@@ -96,6 +96,6 @@ context in the file (brief, assumptions, decisions, findings, alternatives, stag
 stored scenarios; MCP working document, revisions and `ifRevision`, structured errors, capabilities,
 verification tools, resources, instructions and 11 prompts; the Design context panel; player fixes
 (press/hover + click); a simulator/player parity test; app control channel: error details, identity,
-agent gestures, `ifRevision` on canvas input; three example prototypes with 15 scenarios built by a
+agent gestures, `ifRevision` on canvas input; three example prototypes with 17 scenarios built by a
 script; fork compliance (About, updater, default server); fixes for every confirmed P0/P1 from the
-baseline and two review rounds. Still open: QC-01 (P1, section B2).
+baseline and two review rounds. QC round 1 fixes landed (M11.43–M11.46, section B2).
