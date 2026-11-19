@@ -1,9 +1,9 @@
-# Where FigCraft falls short of Figma
+# Where Figgure My UI falls short of Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-10 · **Change:** minor (gap 13: a boolean group's corner radius (#2222); gap 24: mind maps, first step: a first node with three children on curved branches, laid out again after every edit (`board.mindMap`, `board.mindMapAdd`, #2226); gap 10: library analytics list how many layers and files use each style and variable; the Controller menu names each button as PlayStation and Switch controllers do; gap 6: widgets draw lines and SVG pictures (plugin API 6); gap 7: text reads only the fallback fonts it draws with; a board connector's path can be reshaped by dragging its path handles (#1710); gap 10: library analytics count insertions and show insertions and detachments over time; gap 6: a widget opens its plugin's panel (plugin API 5), whose callbacks redraw it; the keyboard's Menu key opens the context menu, as Shift+F10 does; gap 14: a collection of this file extends, following its edits at once; colour picker review fixes for text undo, fitted sidebars, moving controls and gradient variables; gap 6: plugin widgets have hover styles; gap 7: the browser draws a zoom's full render a band at a time; `.fig` import keeps the file's saved line breaks while the text and its box are unedited (#1236); FigJam outer shape outlines and sticky body fallback beside author text (#1341, #1397); Arabic draft catalog; gap 7: the browser refines a zoom's preview once the zoom has paused; gap 17: branches in live sessions, branch history entries, the list-merge rows brought up to date; gap 6: plugin widgets take text input and a property menu (plugin API 4); gap 24: board templates and tables; gap 24: a shared timer and voting sessions; gap 24: the board dot grid, connector ends dragged to re-attach, curved connectors; egui/eframe 0.37 verified for gap 18; known gaps from the #1311 review in gaps 4, 14, 15 and 16; gap 16: measurements kept on the canvas, a read-only layers panel in Dev Mode; gap 24: boards and their tail; Dev Mode tail: import lines in layer trees, compare with versions, an inspect-only canvas; gap 5: reviewed Turkish, Czech and Indonesian drafts, the Japanese draft completed; reviewed Russian catalog and integer plurals; `.fig` export: instance sizes, variables with modes, shared styles, variable-width strokes; sharing with a join code; text box sizes measured against documents re-saved by other software; live sessions per document; .fig export checked by opening written files in other software; experimental .fig export; keyboard shortcut parity suite and bindings; Simplified Chinese draft catalog; Latin American Spanish overlay; prototyping tail: gamepad triggers, widgets in prototypes, mode lookups; plugin directory on figcraft-server; Japanese and Korean draft catalogs and CJK UI fonts; plugin widgets and the plugin panel tail; French, German and Brazilian Portuguese draft catalogs; cursor chat and spotlight in live sessions; layers and assets panels behaviour suite and fixes; vector multi-edit and edit tail; dev resources links; extended collections tail; branch version history and finer list merges; comments and version history behaviour suite and fixes; canvas navigation, guides and grids behaviour suite and fixes; `.fig` import: editable vector networks, more layer kinds, variable prototype actions; `.fig` import, best effort: gap 1 down to its tail; Windows QA pass: everyday workflows on Windows 11, eight fixes incl. unsaved work kept after a crash or a forced quit; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail; the 2026-10-17 landings: `.fig` import fidelity, budgets for large files, the import report, a `.fig` copy from Save as and paste from another design app (gap 1); menus, the Actions palette, editor fixes, Selection colors and smart-selection spacing (gap 4); catalog counts re-measured (gap 5); bounded canvas pan overscan) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-10 · **Change:** minor (gap 13: a boolean group's corner radius (#2222); gap 24: mind maps, first step: a first node with three children on curved branches, laid out again after every edit (`board.mindMap`, `board.mindMapAdd`, #2226); gap 10: library analytics list how many layers and files use each style and variable; the Controller menu names each button as PlayStation and Switch controllers do; gap 6: widgets draw lines and SVG pictures (plugin API 6); gap 7: text reads only the fallback fonts it draws with; a board connector's path can be reshaped by dragging its path handles (#1710); gap 10: library analytics count insertions and show insertions and detachments over time; gap 6: a widget opens its plugin's panel (plugin API 5), whose callbacks redraw it; the keyboard's Menu key opens the context menu, as Shift+F10 does; gap 14: a collection of this file extends, following its edits at once; colour picker review fixes for text undo, fitted sidebars, moving controls and gradient variables; gap 6: plugin widgets have hover styles; gap 7: the browser draws a zoom's full render a band at a time; `.fig` import keeps the file's saved line breaks while the text and its box are unedited (#1236); FigJam outer shape outlines and sticky body fallback beside author text (#1341, #1397); Arabic draft catalog; gap 7: the browser refines a zoom's preview once the zoom has paused; gap 17: branches in live sessions, branch history entries, the list-merge rows brought up to date; gap 6: plugin widgets take text input and a property menu (plugin API 4); gap 24: board templates and tables; gap 24: a shared timer and voting sessions; gap 24: the board dot grid, connector ends dragged to re-attach, curved connectors; egui/eframe 0.37 verified for gap 18; known gaps from the #1311 review in gaps 4, 14, 15 and 16; gap 16: measurements kept on the canvas, a read-only layers panel in Dev Mode; gap 24: boards and their tail; Dev Mode tail: import lines in layer trees, compare with versions, an inspect-only canvas; gap 5: reviewed Turkish, Czech and Indonesian drafts, the Japanese draft completed; reviewed Russian catalog and integer plurals; `.fig` export: instance sizes, variables with modes, shared styles, variable-width strokes; sharing with a join code; text box sizes measured against documents re-saved by other software; live sessions per document; .fig export checked by opening written files in other software; experimental .fig export; keyboard shortcut parity suite and bindings; Simplified Chinese draft catalog; Latin American Spanish overlay; prototyping tail: gamepad triggers, widgets in prototypes, mode lookups; plugin directory on figguremyui-server; Japanese and Korean draft catalogs and CJK UI fonts; plugin widgets and the plugin panel tail; French, German and Brazilian Portuguese draft catalogs; cursor chat and spotlight in live sessions; layers and assets panels behaviour suite and fixes; vector multi-edit and edit tail; dev resources links; extended collections tail; branch version history and finer list merges; comments and version history behaviour suite and fixes; canvas navigation, guides and grids behaviour suite and fixes; `.fig` import: editable vector networks, more layer kinds, variable prototype actions; `.fig` import, best effort: gap 1 down to its tail; Windows QA pass: everyday workflows on Windows 11, eight fixes incl. unsaved work kept after a crash or a forced quit; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figguremyui-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail; the 2026-10-17 landings: `.fig` import fidelity, budgets for large files, the import report, a `.fig` copy from Save as and paste from another design app (gap 1); menus, the Actions palette, editor fixes, Selection colors and smart-selection spacing (gap 4); catalog counts re-measured (gap 5); bounded canvas pan overscan) · **Target:** Figma Design (desktop app 126.10.7)
 
 Every known shortfall against Figma, one entry each, ranked by how much it stops a Figma user from
-doing real work in FigCraft. Agents: pick work from the top unless the owner says otherwise. The
+doing real work in Figgure My UI. Agents: pick work from the top unless the owner says otherwise. The
 numbers behind the ranking are in [`target-app-parity.md`](target-app-parity.md). Hours are one
 Opus 5.5 agent working sequentially, tests included, calibrated as described there. "Estimated"
 everywhere unless marked measured.
@@ -14,7 +14,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 
 | # | Gap | Kind | Hours | Doc |
 |---|---|---|---|---|
-| 1 | `.fig` files: best-effort import with editable vector networks and stand-ins for non-design layers landed, then (2026-10-17) more fidelity on synthetic files, budgets for large files, an import report and paste from another design app; an experimental export, also as a copy from Save as (round trips through our own importer; written files opened in other software, where layers, fills, gradients, strokes, shadows, vectors, components and text draw as in FigCraft, instances keep their size and variables with modes and colour styles come across); real-file checks and the small tail left (**beta blocker** until checked on real files, gap 3) | File format | 5–10 | [file-format-parity](file-format-parity.md) |
+| 1 | `.fig` files: best-effort import with editable vector networks and stand-ins for non-design layers landed, then (2026-10-17) more fidelity on synthetic files, budgets for large files, an import report and paste from another design app; an experimental export, also as a copy from Save as (round trips through our own importer; written files opened in other software, where layers, fills, gradients, strokes, shadows, vectors, components and text draw as in Figgure My UI, instances keep their size and variables with modes and colour styles come across); real-file checks and the small tail left (**beta blocker** until checked on real files, gap 3) | File format | 5–10 | [file-format-parity](file-format-parity.md) |
 | 2 | Multiplayer and sharing are a preview, without accounts (**beta blocker**) | Feature | 42–84 | [collaboration-parity](collaboration-parity.md) |
 | 3 | No representative corpus checked against real Figma files | Fidelity | 15–30 | [target-app-parity](target-app-parity.md) |
 | 4 | Interaction fidelity not compared tool by tool | UI/UX | 40–60 | [ui-parity](ui-parity.md) |
@@ -46,7 +46,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   `file.import`, drag and drop, the CLI and MCP's `open_file` read `.fig`; the file is never saved
   over.
 - **Landed (2026-10-12):** an experimental export: `file.export {format: "fig"}`, File ▸ Export… ▸
-  .fig (experimental), `figcraft-cli export --format fig` and MCP's `export` write the whole document
+  .fig (experimental), `figguremyui-cli export --format fig` and MCP's `export` write the whole document
   with a kiwi encoder mirroring the decoder and a schema of the fields written: the layer tree,
   geometry, paints with image bytes, strokes, effects, text with styled runs, vector networks, auto
   layout, constraints, components, sets, instances with their overrides and property values, and
@@ -54,7 +54,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   left out with a warning ([file-format-parity](file-format-parity.md#export-to-fig-experimental)).
   The import gained ellipse arcs, boolean operation types and component set descriptions. Then
   (2026-10-12): written files were checked by opening them in other software: layers, fills,
-  gradients, strokes, shadows, vectors, components and text draw as in FigCraft, after the export
+  gradients, strokes, shadows, vectors, components and text draw as in Figgure My UI, after the export
   learned to say that the document and its pages are visible and opaque, to number its schema as
   the format does, to write outlines, text settings, standard font style names and line height
   units. Then (2026-10-13): instances keep their own size (an override addressed by the main's id,
@@ -137,7 +137,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   the local network with a code that carries the host's address) and joined by typing it; the app
   remembers the files it put online and lists them on the home screen (open again as owner, stop
   and start sharing, rename, remove, forget), per computer; a standalone
-  `figcraft-server` keeps many files (snapshot plus log, compacted; restarts lose nothing
+  `figguremyui-server` keeps many files (snapshot plus log, compacted; restarts lose nothing
   confirmed), takes files published from the app and hands out share links that let people edit
   or only view; the desktop app and the browser reach it over `wss://` through a TLS reverse
   proxy, and releases ship it with a deployment guide (`docs/server.md`); server message limits
@@ -242,7 +242,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   the browser) acting through the command registry, one undo step per run, manifest permissions,
   Plugins menu, Run last plugin, Manage plugins, `plugin.*` commands, a Rust SDK and two examples
   ([`plugins.md`](plugins.md)). Plugin panels and settings (ABI v2, 2026-10-11): a plugin shows a
-  panel of fields and buttons drawn with FigCraft's widgets and is called back for each button or
+  panel of fields and buttons drawn with Figgure My UI's widgets and is called back for each button or
   changed value (one undo step per callback, same sandbox limits), driven headless with
   `plugin.ui` / `plugin.event` / `plugin.close`; per-plugin settings kept with the preferences.
   Widgets (plugin API 3, 2026-10-12): a plugin draws a layer of its own on the canvas (Plugins ▸
@@ -250,10 +250,10 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   on the parts it names (one undo step each, a fresh metered sandbox, the state kept in the layer
   so it saves, copies, undoes, exports and syncs), `widget.click` / `widget.list` for agents, a
   Counter example; panels of several plugins side by side; the colour picker on plugin colour
-  fields. A plugin directory on `figcraft-server` (2026-10-12): bundles published with the server
-  key and checked in full (`figcraft-cli plugin publish`), browsed, installed after a permissions
+  fields. A plugin directory on `figguremyui-server` (2026-10-12): bundles published with the server
+  key and checked in full (`figguremyui-cli plugin publish`), browsed, installed after a permissions
   confirmation and updated from Plugins ▸ Manage plugins ▸ Browse, downloads checked against their
-  SHA-256, `plugin.directory.*` for scripts and MCP, moderation with `figcraft-server plugins`.
+  SHA-256, `plugin.directory.*` for scripts and MCP, moderation with `figguremyui-server plugins`.
   Widget fields and property menus (plugin API 4, 2026-10-24): a widget's text layer can be an
   editable field, edited on the canvas with a double-click like any text or with `widget.setText`
   (the value, cleaned and capped, goes into the widget's state and the plugin redraws; one undo
@@ -276,13 +276,13 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   timers. Figma's own plugins are JavaScript against
   Figma's plugin API and don't run.
 - **Impact:** teams that depend on specific Figma plugins (icons, content, accessibility checks)
-  can't bring them. FigCraft's CLI, control channel and MCP server cover agent automation better
+  can't bring them. Figgure My UI's CLI, control channel and MCP server cover agent automation better
   than Figma does.
-- **Estimate:** 6–22 h for the missing pieces of FigCraft's own API. Running Figma's plugins
+- **Estimate:** 6–22 h for the missing pieces of Figgure My UI's own API. Running Figma's plugins
   needs a JS engine and an API shim: **owner decision needed**.
 
 ### 7. CPU canvas where Figma uses the GPU
-- **Missing:** GPU rendering of the canvas. FigCraft renders with tiny-skia on the CPU (banded,
+- **Missing:** GPU rendering of the canvas. Figgure My UI renders with tiny-skia on the CPU (banded,
   parallel, retained) and shows the image through wgpu. A new zoom can't reuse the retained
   image; when renders from scratch take a frame or more, the whole view is previewed with a
   sixteenth of the pixels first, then refined. With no measure to go by (the first render, another
@@ -334,7 +334,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   through the data-control protocol; compiled in CI, not run on a Linux desktop here. Wayland
   compositors without server-side decorations (GNOME) give the window winit's Adwaita controls
   (#592: checked by its author on GNOME; KDE not run).
-- **Impact:** unknown bugs on the platforms where FigCraft is most attractive (Linux has no Figma
+- **Impact:** unknown bugs on the platforms where Figgure My UI is most attractive (Linux has no Figma
   desktop app).
 - **Estimate:** 10–20 h, partly human (hardware).
 
@@ -361,7 +361,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   styles and variables (they count layers and files using them; a component's instances,
   insertions and detachments are counted, the last two week by week),
   update notices pushed by the server (apps ask every 30 seconds while the Assets panel shows).
-- **Evidence:** a file's library is published to `figcraft-server` under the file and enabled in
+- **Evidence:** a file's library is published to `figguremyui-server` under the file and enabled in
   other files by a share link, with per-asset versions, updates with overrides kept, usage counts
   and swapping a whole library by names ([`server.md`](server.md#team-libraries),
   [`components-parity.md`](components-parity.md)).
@@ -378,7 +378,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 - **Landed (2026-10-11):** animated GIF fills (the file kept as is, the first frame on the canvas
   and in exports, played in the presenter and the preview) and TIFF images.
 - **Missing:** Figma takes JPG, PNG, HEIC, WebP, GIF and TIFF images and MP4, MOV and WebM video
-  (help center, checked 2026-10-10). FigCraft decodes PNG, JPEG, WebP, GIF, TIFF and BMP; HEIC and
+  (help center, checked 2026-10-10). Figgure My UI decodes PNG, JPEG, WebP, GIF, TIFF and BMP; HEIC and
   video need decoders that are C libraries (libheif, FFmpeg) or each platform's media framework.
 - **Estimate:** 5–10 h (video playback in the presenter is most of it; it can reuse the GIF clock).
 
@@ -421,8 +421,8 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   collection on its row in the Variables editor, `variable.extendCollection`), following its edits
   at once; an extended collection of this file extends again.
 - **Missing:** checked with synthetic files only. A paint style's color offers variables scoped to
-  any fill or stroke: FigCraft's own rule, since the help center doesn't say which scopes it takes.
-  The help center says an extended collection takes no variables or modes of its own; FigCraft's
+  any fill or stroke: Figgure My UI's own rule, since the help center doesn't say which scopes it takes.
+  The help center says an extended collection takes no variables or modes of its own; Figgure My UI's
   takes variables of its own (modes are refused), kept for now.
 - **Estimate:** 0–1 h.
 
@@ -477,7 +477,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 - **Landed (2026-10-24):** files dropped on the canvas, the Pages list and the Assets panel no
   longer edit the design in Dev Mode (a dropped document still opens as a file of its own, and
   the Pages list only opens pages).
-- **Landed (2026-10-30):** `figcraft-cli connect publish <file.figcraft> [--mappings
+- **Landed (2026-10-30):** `figguremyui-cli connect publish <file.figcraft> [--mappings
   figcraft.connect.json] [--dry-run]` publishes a code repository's mappings to a design file, so
   code owners keep them with the code and publish them from CI ([cli.md](cli.md)).
 - **Missing:** the file name field in the left panel still renames the file in Dev Mode
@@ -542,7 +542,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 ### 19. AI features
 - **Landed (2026-10-27, narrow slice without a model):** MCP agent feedback — comments as the task
   queue (`comment.prompt`, **Copy for AI**, `fix_comments` / `watch_comments`,
-  `figcraft://comments`), a bounded in-memory event log, `events.poll` and `wait_for_changes` for
+  `figguremyui://comments`), a bounded in-memory event log, `events.poll` and `wait_for_changes` for
   live feedback. Any MCP client can drive a headless file or an attached app; no in-app model and no
   network dependency.
 - **Missing:** Figma AI (first draft, rename layers, remove background, image generation and
@@ -551,7 +551,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 
 ### 20. Mobile apps
 - **Missing:** Figma's iOS and Android apps view and comment on files and mirror prototypes.
-  FigCraft's web build runs in mobile browsers but is not designed for touch.
+  Figgure My UI's web build runs in mobile browsers but is not designed for touch.
 - **Estimate:** 20–40 h for a touch-first viewer and mirror.
 
 ### 21. Menu items without a command (measured): none left

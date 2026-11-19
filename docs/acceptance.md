@@ -55,7 +55,7 @@ Machine, document sizes and commands are recorded with the numbers in
 
 | ID | Operation | Budget |
 |---|---|---|
-| PF1 | Operations that existed at the baseline (open, save, outline inspect, create, set properties, 50-step batch, frame screenshot; `figcraft-cli perf` engine and render timings at 1,000 and 10,000 layers) | No more than 10% slower than the baseline in mean and in p95; a larger difference is investigated and explained, not waved through |
+| PF1 | Operations that existed at the baseline (open, save, outline inspect, create, set properties, 50-step batch, frame screenshot; `figguremyui-cli perf` engine and render timings at 1,000 and 10,000 layers) | No more than 10% slower than the baseline in mean and in p95; a larger difference is investigated and explained, not waved through |
 | PF2 | `proto.check` on each example file | p95 ≤ 50 ms |
 | PF3 | `proto.scenario.run` of all scenarios of one example file | p95 ≤ 150 ms |
 | PF4 | `design.check` with the full rule set on each example file | p95 ≤ 500 ms |

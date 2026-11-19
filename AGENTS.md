@@ -51,13 +51,16 @@ Dependencies and assets use SPDX identifiers. An expression is allowed when ever
 `LicenseRef-Storyteller-Trademark` is not in this list. It covers Storyteller brand marks only, where a repository already says so.
 <!-- craft-house-rules:end -->
 
-# FigCraft — instructions for agents
+# Figgure My UI — instructions for agents
 
-FigCraft is a clean-room, open-source, pure-Rust (egui) reimplementation of the Figma design workflow:
-interface design, auto layout, components and variants, styles and variables, prototyping and
-inspection. It runs natively on macOS, Windows, Linux and FreeBSD, and in the browser via WASM.
-Siblings: `../vectorcraft` (Illustrator-class), `../photocraft` (Photoshop-class), `../designcraft`
-(InDesign-class) and the other Crafting Apps; same conventions.
+Figgure My UI is a fork of FigCraft (https://github.com/storytold/figcraft), made by the ArtCraft
+team and its contributors; it is not affiliated with or endorsed by them. Like upstream, it is a
+clean-room, open-source, pure-Rust (egui) reimplementation of the Figma design workflow: interface
+design, auto layout, components and variants, styles and variables, prototyping and inspection. The
+fork adds design context, prototype verification and an MCP loop for designing and verifying
+interactive prototypes with people and AI agents. It runs natively on macOS, Windows, Linux and
+FreeBSD, and in the browser via WASM. Upstream's siblings (VectorCraft, PhotoCraft, DesignCraft and
+the other Crafting Apps) follow the same conventions.
 
 Repos don't share code.
 
@@ -86,17 +89,19 @@ Do not ask for it, and do not stop when it is absent.
   other product, or from any source whose licence doesn't allow it.** This includes "lookalike"
   redraws of their icons. Breaking this rule is the worst thing you can do in this repo.
 - Every image, icon, font or other asset must be one of:
-  - original work created for FigCraft by a contributor (licensed MIT OR Apache-2.0);
+  - original work created for Figgure My UI (or for FigCraft upstream) by a contributor (licensed
+    MIT OR Apache-2.0);
   - OSI open source;
   - public domain / CC0;
   - Creative Commons with redistribution allowed.
 - **Every asset file must have a row in [`ATTRIBUTION.md`](ATTRIBUTION.md)** (path, author, source,
   licence, notes). `cargo xtask assets` (part of `cargo xtask ci`) fails on any unlisted file under
   `assets/`, `docs/brand/` or `docs/images/`.
-- FigCraft's UI icons are drawn in code (`crates/ui-egui/src/icons.rs`) from simple primitives and
+- Figgure My UI's UI icons are drawn in code (`crates/ui-egui/src/icons.rs`) from simple primitives and
   are original. Keep it that way: new icons are new code, designed from scratch.
-- The app icon is the owner's chameleon drawing, vectorised (`assets/app-icon/README.md`); `cargo xtask icon`
-  renders the PNGs and `.ico` from `assets/app-icon/figcraft.svg`.
+- The app icon is Figgure My UI's own original icon in `assets/app-icon/` (`assets/app-icon/README.md`);
+  `cargo xtask icon` renders the PNGs and `.ico` from `assets/app-icon/figguremyui.svg`. Upstream's
+  icon is not used.
 - **Fonts live in [storytold/craft-fonts](https://github.com/storytold/craft-fonts), never in this
   repo.** The app uses it only through the optional `CRAFT_FONTS_DIR` build input
   (`.cargo/config.toml` points it at `../craft-fonts` for local builds; `crates/text/build.rs`
@@ -138,12 +143,27 @@ Do not ask for it, and do not stop when it is absent.
   `app.set_props(ids, props)`. Colours come from `theme::Tokens`.
 - **Never break wasm** (`cargo xtask wasm`).
 
+### Names
+- The product is **Figgure My UI**; the binaries are `figguremyui` (desktop app), `figguremyui-cli`
+  and `figguremyui-server`; the app id is `io.github.vansyson1308.figguremyui`. Crate, package and
+  directory names stay `figcraft-*` / `figcraft_*` (internal identifiers), and the native format
+  stays `.figcraft`.
+- Environment variables are `FIGGUREMYUI_*`; the old `FIGCRAFT_*` name is still read when the new one
+  is absent. Never add a new `FIGCRAFT_*` name. `CRAFT_FONTS_DIR` is unchanged.
+- Invite links and MCP resources use `figguremyui://`; the old `figcraft://` forms are still accepted
+  where [`docs/migration.md`](docs/migration.md) says so.
+- `cargo xtask brand` fails on the old product name in user-visible text (UI catalogs, string
+  literals, packaging metadata, `README.md`, `docs/*.md`). Where the old name must stay (credit to
+  upstream, a compatibility alias), the line carries `brand: attribution` or `brand: compat` (in
+  Markdown, an HTML comment at the end of the line). Use the markers sparingly.
+
 ### Quality gates (before every commit)
-`cargo xtask ci` (fmt, clippy -D warnings, tests, layers, assets, wasm). One task per commit with a
+`cargo xtask ci` (fmt, clippy -D warnings, tests, layers, assets, brand, wasm). One task per commit with a
 milestone id in the message (`M2.1: auto layout wrap`). Commit after every landed arc of work.
 
 ## Running and looking at the app
-- `cargo run -p figcraft -- --control <port> [file.figcraft|file.svg|image]`. Pick a free port
+- `cargo run -p figcraft -- --control <port> [file.figcraft|file.svg|image]` (the package keeps its
+  `figcraft` name and builds the `figguremyui` binary, `target/debug/figguremyui`). Pick a free port
   (`python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])'`);
   sibling apps use the control channel too.
 - Drive it with JSON lines, e.g.
@@ -152,7 +172,7 @@ milestone id in the message (`M2.1: auto layout wrap`). Commit after every lande
   in `crates/ui-egui/src/control.rs` and `docs/control-protocol.md`.
 - **For UI work, look at the result** (take a screenshot and read the PNG). Compare with the
   incumbent side by side where the owner allows (`plan/figma/`).
-- Headless: `figcraft-cli` (`info`, `export`, `run`, `commands`, `mcp`). MCP: `figcraft-cli mcp`
+- Headless: `figguremyui-cli` (`info`, `export`, `run`, `commands`, `mcp`). MCP: `figguremyui-cli mcp`
   (see `docs/mcp.md`).
 - Parallel agents: separate `CARGO_TARGET_DIR` per agent, edit only the crates/files you own,
   write manifests atomically, delete your target dir when done (disk is limited).
