@@ -1120,3 +1120,93 @@ fn an_accepted_proposal_says_who_proposed_and_who_accepted_it() {
     assert_eq!(w.design().end_states[0].accepted_by, "user");
     assert!(w.says("proposed by Claude (agent)") && w.says("accepted by you"), "{:?}", w.texts());
 }
+
+/// The states of the screens, as an agent declares them and as a person adds one with clicks
+/// and keys: what shows each, whether it is designed and reached, and who proposed it.
+#[test]
+fn declared_states_show_what_shows_them_and_a_person_declares_one_by_clicks() {
+    let (s, home, done, go) = two_screens();
+    let mut w = Win::new(s);
+    w.open(Section::Flow);
+    assert!(w.says("No states are declared, so missing states aren't checked."), "{:?}", w.texts());
+    w.agent("proto.state.set", json!({"frame": home, "kind": "error", "shownBy": {"node": go}, "reason": "The code is wrong"})).unwrap();
+    assert!(w.says("Something went wrong") && w.says("proposed by Claude (agent)") && w.says("The code is wrong"), "{:?}", w.texts());
+    assert!(w.says("Designed") && w.says("Reachable"), "{:?}", w.texts());
+    assert_eq!(w.shown()["states"]["declared"], json!(1));
+    assert_eq!(w.shown()["states"]["summary"]["designed"], json!(1), "{}", w.shown()["states"]);
+    // What shows it is a link that selects the layer.
+    w.press("Continue", 0);
+    assert_eq!(w.app.session.ds().unwrap().selection, vec![go]);
+    // The person accepts the agent's declaration.
+    w.button("Accept");
+    assert!(w.design().states[0].status.is_accepted() && w.design().states[0].accepted_by == "user");
+    // A screen selected: declare its success state with clicks and keys.
+    w.run("select.set", json!({"ids": [done]}));
+    w.button("Declare a state of this screen");
+    assert_eq!(w.shown()["form"], json!("state"));
+    w.button("It worked");
+    w.fill("Why does the screen have this state?", "The parcel is ready to collect");
+    w.button("Save");
+    let st = w.design().states.iter().find(|st| st.frame == done).cloned().expect("declared");
+    assert_eq!(
+        (st.kind, st.reason.as_str(), st.author.as_str(), st.shown_by.is_none()),
+        (figcraft_doc::design::StateKind::Success, "The parcel is ready to collect", "user", true)
+    );
+    assert!(w.says("Not designed") && w.says("Nothing is said to show it yet."), "{:?}", w.texts());
+    // Undo takes it back, as every command.
+    w.run("edit.undo", json!({}));
+    assert_eq!(w.design().states.len(), 1);
+    // The agent may not take back what the person accepted.
+    let e = w.agent("proto.state.remove", json!({"frame": home, "kind": "error"})).unwrap_err();
+    assert!(e.contains("stands accepted"), "{e}");
+    w.button("Remove");
+    assert!(w.design().states.is_empty());
+}
+
+/// The brief lists what the design must show, with the layers that are it; a person adds one
+/// from the selection, an agent's waits to be accepted.
+#[test]
+fn required_elements_are_listed_with_their_layers_and_added_from_the_brief() {
+    let (s, home, _, go) = two_screens();
+    let mut w = Win::new(s);
+    w.open(Section::Brief);
+    assert!(w.says("What must it show?") && w.says("Nothing is listed yet."), "{:?}", w.texts());
+    w.run("select.set", json!({"ids": [go]}));
+    w.button("Add something it must show");
+    assert_eq!(w.shown()["form"], json!("required"));
+    w.fill("What must the design show, and where?", "The price before paying");
+    w.button("Only on their screens");
+    w.button("Save");
+    let r = w.design().brief.required[0].clone();
+    assert_eq!((r.id.as_str(), r.text.as_str(), r.nodes.clone(), r.screens.clone()), ("R1", "The price before paying", vec![go], vec![home]));
+    assert!(w.says("The layers that are it") && w.says("On these screens"), "{:?}", w.texts());
+    assert_eq!(w.shown()["required"], json!({"total": 1, "unlinked": 0, "proposed": 0}));
+    w.agent("design.required.add", json!({"text": "Consent to be contacted"})).unwrap();
+    assert!(w.says("proposed by Claude (agent)") && w.says("No layer is linked, so the checks can't find it yet."), "{:?}", w.texts());
+    assert_eq!(w.shown()["required"]["unlinked"], json!(1));
+    w.button("Accept");
+    assert!(w.design().brief.required[1].status.is_accepted());
+    // The selection (still the button) links to the second one.
+    w.button("Link the selected layer");
+    assert_eq!(w.design().brief.required[1].nodes, vec![go]);
+    // The selected layer says what refers to it.
+    assert_eq!(w.shown()["selected"]["refs"]["required"], json!(["R1", "R2"]));
+}
+
+/// The keyboard in a declared state's controls is reported by `ui.inspect` with that entry.
+#[test]
+fn ui_inspect_names_the_declared_state_the_keyboard_is_in() {
+    let (s, home, _, _) = two_screens();
+    let mut w = Win::new(s);
+    w.open(Section::Flow);
+    w.run("proto.state.set", json!({"frame": home, "kind": "loading"}));
+    let edit = w.controls("Edit")[0];
+    let id = w.ctx.viewport(|v| v.prev_pass.widgets.get_layer(egui::LayerId::background()).find(|r| r.rect == edit).map(|r| r.id)).unwrap();
+    w.ctx.memory_mut(|m| m.request_focus(id));
+    w.app.ui.nav.keyboard = true;
+    w.frames(3);
+    let ctx = w.ctx.clone();
+    let v = crate::control::handle(&mut w.app, &ctx, "ui.inspect", &json!({})).unwrap();
+    assert_eq!((&v["focus"]["region"], &v["focus"]["control"]), (&json!("designContext"), &json!("Edit")), "{}", v["focus"]);
+    assert_eq!(v["designContext"]["focusEntry"], json!(format!("state {home} loading ")));
+}
