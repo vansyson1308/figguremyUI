@@ -111,7 +111,8 @@ pub fn draw(app: &FigApp, painter: &Painter, t: &Tokens, doc: &Document, id: Nod
     } else if selected || hovered {
         crate::theme::canvas_accent(painter.ctx())
     } else {
-        t.text_secondary
+        // On the page, not on the panel: the grey that reads on the page's own colour.
+        crate::theme::label_on(crate::theme::canvas_page(painter.ctx()).unwrap_or(t.canvas), t.text_secondary)
     };
     // Drawn upright at the corner, then turned with the frame.
     let from = painter.add(Shape::Noop);

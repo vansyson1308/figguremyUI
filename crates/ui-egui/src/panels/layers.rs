@@ -19,6 +19,32 @@ pub const RAIL_WIDTH: f32 = 56.0;
 /// Size of the rail's tab icons: 20 pt, which `icons::paint` draws at 20 pt at 100 % and 200 %
 /// display scale.
 const RAIL_ICON: f32 = 20.0;
+/// The line height of a rail label that wraps.
+const RAIL_LINE: f32 = 12.0;
+
+/// A rail label as it is drawn in `max_w`: one line when it fits, else its words on two lines
+/// (the second ends in an ellipsis when even that doesn't fit; a word too long for a line is cut
+/// with one). Never more than two lines, so the next button keeps its place.
+pub(crate) fn rail_label_lines(ui: &Ui, label: &str, max_w: f32) -> Vec<String> {
+    let font = regular(10.0);
+    let width = |s: &str| ui.painter().layout_no_wrap(s.to_string(), font.clone(), Color32::WHITE).size().x;
+    if width(label) <= max_w {
+        return vec![label.to_string()];
+    }
+    let words: Vec<&str> = label.split_whitespace().collect();
+    // The most words that fit on the first line (at least one).
+    let mut n = 1;
+    while words.get(..=n).is_some_and(|w| width(&w.join(" ")) <= max_w) {
+        n += 1;
+    }
+    let first = words.get(..n).unwrap_or(&words).join(" ");
+    let rest = words.get(n..).map(|w| w.join(" ")).unwrap_or_default();
+    let mut lines = vec![crate::widgets::elide_font(ui, &first, max_w, font.clone())];
+    if !rest.is_empty() {
+        lines.push(crate::widgets::elide_font(ui, &rest, max_w, font));
+    }
+    lines
+}
 
 /// A boolean operation's icon.
 pub fn op_icon(op: figcraft_doc::BoolOp) -> Icon {
@@ -137,8 +163,12 @@ pub fn rail(app: &mut FigApp, ui: &mut Ui) {
             ui.painter().rect_filled(ir, CornerRadius::same(6), t.hover);
         }
         icons::paint(ui.painter(), Rect::from_center_size(ir.center(), Vec2::splat(RAIL_ICON)), icon, if active { t.accent_text } else { t.icon });
-        let shown = crate::widgets::elide_font(ui, label, (r.width() - 6.0).max(0.0), regular(10.0));
-        ui.painter().text(pos2(r.center().x, y + 46.0), Align2::CENTER_CENTER, shown, regular(10.0), t.text);
+        // One line when it fits; a longer label (a translation) wraps onto a second.
+        let lines = rail_label_lines(ui, label, (r.width() - 6.0).max(0.0));
+        let top = if lines.len() > 1 { y + 42.0 } else { y + 46.0 };
+        for (i, line) in lines.into_iter().enumerate() {
+            ui.painter().text(pos2(r.center().x, top + i as f32 * RAIL_LINE), Align2::CENTER_CENTER, line, regular(10.0), t.text);
+        }
         if resp.clicked() {
             match tab {
                 Some(tb) => {

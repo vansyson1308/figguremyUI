@@ -10,8 +10,8 @@ use serde_json::{Value, json};
 
 use super::records::submit;
 use super::{
-    Cx, Form, FormEnd, FormKind, Ran, SEVERITIES, act, author_name, body, button, chip, choice, draft, entry, flow_row, form_end, go_to_entry,
-    heading, layer_links, link, pad, part, primary, quiet, refusal_for, severity_label, stage, strong,
+    Cx, Form, FormEnd, FormKind, SEVERITIES, act, act_keeping, author_name, body, button, chip, choice, draft, entry, flow_row, form_end,
+    go_to_entry, heading, keep, layer_links, link, pad, part, primary, quiet, refusal_for, severity_label, stage, strong,
 };
 use crate::FigApp;
 use crate::i18n::{tr, tr_noop, trf};
@@ -155,19 +155,19 @@ fn checks(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
             if primary(ui, tr("Run the checks"))
                 && let Some(result) = act(app, "checks", "design.check", json!({}))
             {
-                app.ui.context.checks = Ran::new(app, result);
+                keep(app, result, |r, ran| r.checks = Some(ran));
             }
             if button(ui, tr("Store what they find"))
-                && let Some(result) = act(app, "checks", "design.check.record", json!({}))
+                && let Some(result) = act_keeping(app, "checks", "design.check.record", json!({}))
             {
-                app.ui.context.recorded = Ran::new(app, result);
+                keep(app, result, |r, ran| r.recorded = Some(ran));
             }
             if cx.design.findings.iter().any(|f| f.kind == FindingKind::Check) && button(ui, tr("Re-check the stored checks")) {
                 act(app, "checks", "design.finding.recheck", json!({}));
             }
         });
         refusal_for(app, ui, "checks");
-        if let Some(ran) = app.ui.context.recorded.as_ref().filter(|ran| !ran.stale(&cx.doc)) {
+        if let Some(ran) = app.ui.context.results(cx.uid).and_then(|r| r.recorded.as_ref()).filter(|ran| !ran.stale(&cx.doc)) {
             let n = |key: &str| ran.result[key].as_array().map_or(0, Vec::len);
             quiet(ui, &trf("Stored {added} new; {existing} were stored already.", &[("added", &n("added")), ("existing", &n("existing"))]));
             // The file holds as many findings as it may: what wasn't stored is said, in the
@@ -178,7 +178,10 @@ fn checks(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
             }
         }
     });
-    let Some((result, stale)) = app.ui.context.checks.as_ref().map(|ran| (ran.result.clone(), ran.stale(&cx.doc))) else { return };
+    let Some((result, stale)) = app.ui.context.results(cx.uid).and_then(|r| r.checks.as_ref()).map(|ran| (ran.result.clone(), ran.stale(&cx.doc)))
+    else {
+        return;
+    };
     let list = result["findings"].as_array().map_or(&[][..], Vec::as_slice);
     ui.add_space(6.0);
     pad(ui, |ui| {

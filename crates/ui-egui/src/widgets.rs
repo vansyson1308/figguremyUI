@@ -616,6 +616,11 @@ pub fn secret_field_named(ui: &mut Ui, id: Id, value: &str, width: f32, name: &s
 /// A multi-line text field across the panel (descriptions, notes) that commits when it loses
 /// focus: returns the new text then, when it changed. The draft lives only while it has focus.
 pub fn multiline_field(ui: &mut Ui, id: Id, value: &str, hint: &str, rows: usize) -> Option<String> {
+    multiline_field_named(ui, id, value, hint, rows, hint)
+}
+
+/// [`multiline_field`] named `name` for screen readers and `ui.inspect` (the question it answers).
+pub fn multiline_field_named(ui: &mut Ui, id: Id, value: &str, hint: &str, rows: usize, name: &str) -> Option<String> {
     cancel_retargeted_field_save(ui, id);
     let t = Tokens::get(ui.ctx());
     let te = id.with("te");
@@ -650,6 +655,9 @@ pub fn multiline_field(ui: &mut Ui, id: Id, value: &str, hint: &str, rows: usize
             )
         });
         crate::shortcuts::release_field_for_save(&r.inner);
+        a11y::text(&r.inner, name, &text);
+        // The keyboard's ring goes round the whole field, padding included, not the text alone.
+        a11y::ring_around(ui, r.response.rect, &r.inner);
         done = r.inner.lost_focus() || left;
     });
     if done {

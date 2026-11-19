@@ -1,5 +1,5 @@
 use super::{
-    FigApp, PendingAck, Value, cursors, dev_compare, home_recents, import_report, json, live, missing_fonts, online, present, tabs, windows,
+    FigApp, PendingAck, Value, a11y, cursors, dev_compare, home_recents, import_report, json, live, missing_fonts, online, present, tabs, windows,
 };
 
 impl FigApp {
@@ -38,6 +38,23 @@ impl FigApp {
         mine
     }
 
+    /// Where the keyboard is (`ui.inspect` › `focus`; the control channel adds the control's
+    /// name). The Design context panel takes the layers' place, and is named as itself, with the
+    /// entry (`D1`, `S2`…) the focused control belongs to.
+    fn focus_inspect(&self) -> Value {
+        let region = self.ui.nav.region;
+        let context = self.ui.context.open && !self.ui.left_collapsed && region == a11y::Region::Layers;
+        let mut v = json!({
+            "region": if context { "designContext" } else { region.id() },
+            "keyboard": self.ui.nav.keyboard,
+            "control": self.ui.nav.focused_name,
+        });
+        if let (true, Some(o)) = (context, v.as_object_mut()) {
+            o.insert("entry".into(), json!(self.ui.context.focus_entry));
+        }
+        v
+    }
+
     /// UI state as JSON (control channel `ui.inspect`).
     pub fn inspect(&self) -> Value {
         let mut state = json!({
@@ -49,7 +66,7 @@ impl FigApp {
             "homeSection": self.ui.home_view.section.id(),
             "homeRecents": home_recents::inspect(self),
             "dark": self.ui.dark,
-            "focus": {"region": self.ui.nav.region.id(), "keyboard": self.ui.nav.keyboard},
+            "focus": self.focus_inspect(),
             "reduceMotion": self.reduce_motion(),
             "presenting": self.ui.present.is_some(),
             "presenter": tabs::shown_or_paused(self).map(present::Presenter::inspect),

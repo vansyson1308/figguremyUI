@@ -10,13 +10,16 @@ use serde_json::{Value, json};
 
 use super::records::submit;
 use super::{
-    Cx, Form, FormEnd, FormKind, Ran, act, author_name, body, button, chip, draft, entry, flow_row, form_end, go_to, go_to_entry, heading, link, pad,
-    part, primary, quiet, refusal_for, strong,
+    Cx, Form, FormEnd, FormKind, act, author_name, body, button, chip, draft, entry, flow_row, form_end, go_to, go_to_entry, heading, keep, link,
+    pad, part, primary, quiet, refusal_for, strong,
 };
 use crate::FigApp;
 use crate::i18n::{tr, tr_noop, trf};
 use crate::theme::{Tokens, regular};
 use crate::widgets;
+
+/// The widest a column head of the comparison is before it ends in an ellipsis.
+const HEAD_WIDTH: f32 = 110.0;
 
 /// The counts `design.alternative.compare` gives for each frame, as the table names them.
 const METRICS: [(&str, &str); 12] = [
@@ -182,7 +185,7 @@ fn alternative_set(app: &mut FigApp, ui: &mut Ui, cx: &Cx, set: &AlternativeSet,
         if primary(ui, tr("Compare"))
             && let Some(result) = act(app, &set.id, "design.alternative.compare", json!({"set": set.id}))
         {
-            app.ui.context.compare = Ran::new(app, result).map(|ran| (set.id.clone(), ran));
+            keep(app, result, |r, ran| r.compare = Some((set.id.clone(), ran)));
         }
         if set.chosen != Some(set.source) && button(ui, tr("Keep the original")) {
             *form = Some(Form::new(FormKind::Choose(set.id.clone(), set.source)));
@@ -203,7 +206,13 @@ fn alternative_set(app: &mut FigApp, ui: &mut Ui, cx: &Cx, set: &AlternativeSet,
         });
     }
     refusal_for(app, ui, &set.id);
-    let shown = app.ui.context.compare.as_ref().filter(|(id, _)| *id == set.id).map(|(_, ran)| (ran.result.clone(), ran.stale(&cx.doc)));
+    let shown = app
+        .ui
+        .context
+        .results(cx.uid)
+        .and_then(|r| r.compare.as_ref())
+        .filter(|(id, _)| *id == set.id)
+        .map(|(_, ran)| (ran.result.clone(), ran.stale(&cx.doc)));
     if let Some((result, stale)) = shown {
         ui.add_space(6.0);
         comparison(ui, cx, &result, stale);
@@ -339,6 +348,12 @@ fn comparison(ui: &mut Ui, cx: &Cx, result: &Value, stale: bool) {
         if m["isSource"].as_bool() == Some(true) { trf("{name} (the original)", &[("name", &n)]) } else { n.to_string() }
     };
     let by_node = |id: &Value| members.iter().find(|m| m["node"] == *id).map(&name).unwrap_or_default();
+    // A column head is as wide as its share of the panel beside the row names (at most
+    // HEAD_WIDTH, at least enough for a few letters): a long name ends in an ellipsis in view.
+    let text_w = |ui: &Ui, s: &str| ui.painter().layout_no_wrap(s.to_string(), regular(11.0), t.text).size().x;
+    let names_w = METRICS.iter().map(|(_, label)| text_w(ui, tr(label))).fold(0.0, f32::max);
+    let columns = members.len().max(1) as f32;
+    let head_w = ((ui.available_width() - names_w - 12.0 * columns) / columns).clamp(48.0, HEAD_WIDTH);
     // The table scrolls sideways when the frames don't fit the panel: nothing is cut off.
     egui::ScrollArea::horizontal().id_salt(cx.id(("compare", result["set"].as_str().unwrap_or_default()))).auto_shrink([false, true]).show(
         ui,
@@ -353,7 +368,12 @@ fn comparison(ui: &mut Ui, cx: &Cx, result: &Value, stale: bool) {
                     } else {
                         m["name"].as_str().unwrap_or_default().to_string()
                     };
-                    cell(ui, &head, t.text);
+                    // A long name ends in an ellipsis, whole on hover: a column is never cut mid-word.
+                    let shown = widgets::elide_font(ui, &head, head_w, regular(11.0));
+                    let r = cell(ui, &shown, t.text);
+                    if shown != head {
+                        r.on_hover_text(&head);
+                    }
                 }
                 ui.end_row();
                 for (key, label) in METRICS {

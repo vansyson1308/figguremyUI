@@ -1644,8 +1644,12 @@ fn run_method(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
         "ui.inspect" => {
             let mut v = app.inspect();
             // The name of the control with the keyboard (what a screen reader announces).
+            // As the frame being drawn names it, else as the last frame ended.
             if let Some(f) = v.get_mut("focus") {
-                f["control"] = json!(crate::a11y::focused_name(ctx));
+                let name = crate::a11y::focused_name(ctx);
+                if !name.is_empty() || f.get("control").is_none() {
+                    f["control"] = json!(name);
+                }
             }
             Ok(v)
         }
