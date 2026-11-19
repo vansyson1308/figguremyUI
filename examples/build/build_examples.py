@@ -11,11 +11,12 @@ an AI agent would, checks it, and saves it. The same binary gives the same bytes
 reads the clock, random numbers or the machine's fonts.
 
 Over MCP every command runs as the client's AI agent ("Example builder (agent)"), so the end
-states it declares and the decisions it records are *proposals* that wait for a person. The
-separate step `accept_as_maintainer()` (on by default; `--no-accept-as-maintainer` leaves the
-proposals in place) then runs `figguremyui-cli run`, which acts as the user, to accept them. The
-maintainers' acceptance step stands in for a person's review of these example files; in your own
-files an agent's end states and decisions stay proposals until you accept them.
+states, screen states and required elements it declares and the decisions it records are
+*proposals* that wait for a person. The separate step `accept_as_maintainer()` (on by default;
+`--no-accept-as-maintainer` leaves the proposals in place) then runs `figguremyui-cli run`, which
+acts as the user, to accept them. The maintainers' acceptance step stands in for a person's review
+of these example files; in your own files an agent's proposals stay proposals until you accept
+them.
 
 Any tool error stops the build with a non-zero exit, naming the call and the error. Standard
 library only.
@@ -137,6 +138,8 @@ class Builder:
         # What the agent proposed and the maintainers' step accepts (see accept_as_maintainer).
         self.proposed_end_states = []
         self.proposed_decisions = []
+        self.proposed_states = []
+        self.proposed_required = []
 
     # -- setup ------------------------------------------------------------------------------
     def setup_theme(self):
@@ -311,6 +314,26 @@ class Builder:
         r = self.m.run("design.decision.add", kw)
         if r.get("status") == "proposed":
             self.proposed_decisions.append(r["id"])
+        return r["id"]
+
+    def state(self, frame, kind, shown_by, reason, name=None):
+        """Declare a state of screen `frame` (proto.state.set): `shown_by` is {"node": id} or
+        {"instance": id, "variant": name}."""
+        p = {"frame": frame, "kind": kind, "shownBy": shown_by, "reason": reason}
+        if name:
+            p["name"] = name
+        r = self.m.run("proto.state.set", p)
+        if r["state"].get("status") == "proposed":
+            key = {"frame": frame, "kind": kind}
+            if name:
+                key["name"] = name
+            self.proposed_states.append(key)
+
+    def required(self, text, screens, nodes):
+        """A required element of the brief (design.required.add), linked to its layers."""
+        r = self.m.run("design.required.add", {"text": text, "screens": screens, "nodes": nodes})
+        if r.get("status") == "proposed":
+            self.proposed_required.append(r["id"])
         return r["id"]
 
     def assumption(self, text, links):
@@ -605,7 +628,7 @@ def signup_flow(b):
     consent_row = b.frame(fbody, "Consent", layout="horizontal", gap=0, sizing=("fill", "hug"))
     box = b.instance(checkbox, consent_row, name="Consent checkbox")
     b.bind(box, "componentProperties/Checked", "consent_box")
-    b.text(consent_row, CONSENT, "Body", "text", name="Consent text", fill_width=True)
+    consent_text = b.text(consent_row, CONSENT, "Body", "text", name="Consent text", fill_width=True)
     ffoot = column(form, "Footer", gap=8)
     cont_off = btn(ffoot, "Tiếp tục", "Continue (disabled)", state="Disabled")
     cont = btn(ffoot, "Tiếp tục", "Continue")
@@ -833,6 +856,16 @@ def signup_flow(b):
                rationale="If most sign-ups are for children, one tap fewer for most people; the choice stays visible.",
                rejected="No default (one more required choice and one more error).",
                assumptions=[a1], links=[seg_row])
+    # -- Where time passes: the states each screen has, and what shows each.
+    b.state(form, "error", {"node": banner},
+            "A field left empty or consent not ticked: the summary names what is missing, in words.")
+    b.state(verify, "error", {"instance": code_f, "variant": "State=Error"},
+            "Confirm tapped with no code: the field says what to type.")
+    b.state(verify, "success", {"node": done}, "The code is right: the place is held and the class will call.")
+    b.state(verify, "other", {"node": toast}, "The code didn't arrive: a resend is confirmed, then goes away.",
+            name="Code sent again")
+    b.required("Consent to be contacted and to the pool's safety rules, beside its box, before the form is sent",
+               [form], [consent_text, box])
     m.run("design.stage.set", {"stage": "converging"})
     return {"screens": [welcome, form, verify, done], "overlays": [toast]}
 
@@ -1174,6 +1207,13 @@ def pantry_dashboard(b):
                rejected="A separate item page (loses the place in the list); expanding the row in place (pushes the rest "
                         "of the list down at phone width).",
                links=[detail])
+    # -- Where time passes: the dashboard waits for the stock sheet, can have nothing to list, and
+    # can fail to sync.
+    b.state(dash, "loading", {"node": skeleton}, "The count is being fetched from the stock sheet: placeholder rows.")
+    b.state(dash, "empty", {"node": empty}, "The out-of-stock filter finds nothing: say so, and offer to clear it.")
+    b.state(dash, "error", {"node": banner}, "The sync fails: the last good numbers stay, under a banner with Retry.")
+    b.state(dash, "success", {"node": listing}, "The count arrived: the low-stock list.")
+    b.required("When the numbers were last synced, so nobody restocks from stale ones without noticing", [dash], [updated])
     m.run("design.stage.set", {"stage": "converging"})
     return {"screens": [dash], "overlays": [toast, detail]}
 
@@ -1545,6 +1585,11 @@ def bike_repair_booking(b):
                rationale="Time and price decide most choices, so they sit on the card rather than on a details page.",
                rejected="A dropdown of services (hides the price); a free-text 'what's wrong' box (the shop can't plan from it).",
                assumptions=[a1], links=[cards])
+    # -- Where time passes: going on too early is answered in words; booking ends on Booked.
+    b.state(choose, "error", {"node": choose_hint}, "“Tiếp tục” tapped before a service is chosen: the hint says what to do.")
+    b.state(details, "error", {"node": details_hint}, "“Tiếp tục” tapped without a day and a time: the hint says which is missing.")
+    b.state(confirm, "success", {"node": booked}, "The booking is made: what was booked, and that the shop will text.")
+    b.required("The estimated price, on the summary before booking (payment happens at the shop)", [confirm], [price_value])
     m.run("design.stage.set", {"stage": "converging"})
     return {"screens": [choose, details, confirm, booked], "overlays": []}
 
@@ -1561,13 +1606,15 @@ EXAMPLES = {
 }
 
 
-def accept_as_maintainer(cli, path, end_states, decisions):
+def accept_as_maintainer(cli, path, end_states, decisions, states=(), required=()):
     """The maintainers' acceptance step. It stands in for a person's review of these example
-    files: `figguremyui-cli run` acts as the user (not as an agent), so it may accept the end states
-    and decisions the builder proposed. In your own files an agent's end states and decisions
-    stay proposals until you accept them."""
+    files: `figguremyui-cli run` acts as the user (not as an agent), so it may accept the end states,
+    screen states, required elements and decisions the builder proposed. In your own files an
+    agent's proposals stay proposals until you accept them."""
     steps = [{"command": "file.open", "params": {"path": path}}]
     steps += [{"command": "proto.endState.accept", "params": {"id": i}} for i in end_states]
+    steps += [{"command": "proto.state.accept", "params": s} for s in states]
+    steps += [{"command": "design.required.accept", "params": {"id": r}} for r in required]
     steps += [{"command": "design.decision.accept", "params": {"id": d}} for d in decisions]
     steps += [{"command": "file.save", "params": {"path": path}}]
     with tempfile.TemporaryDirectory() as tmp:
@@ -1577,7 +1624,7 @@ def accept_as_maintainer(cli, path, end_states, decisions):
         out = subprocess.run([cli, "--no-system-fonts", "run", script], capture_output=True, text=True)
     if out.returncode != 0:
         raise BuildError("accept_as_maintainer (%s) failed:\n%s%s" % (path, out.stdout, out.stderr))
-    return {"endStates": end_states, "decisions": decisions}
+    return {"endStates": end_states, "decisions": decisions, "states": list(states), "required": list(required)}
 
 
 def check(cli, path, shots=None, name=None):
@@ -1629,7 +1676,7 @@ def build(cli, out, name, accept=True, shots=None):
         m.close()
     accepted = None
     if accept:
-        accepted = accept_as_maintainer(cli, path, b.proposed_end_states, b.proposed_decisions)
+        accepted = accept_as_maintainer(cli, path, b.proposed_end_states, b.proposed_decisions, b.proposed_states, b.proposed_required)
     report = check(cli, path, shots, name)
     return path, accepted, report
 
@@ -1657,7 +1704,8 @@ def main(argv=None):
             return 1
         print("built %s" % path)
         if accepted:
-            print("  accepted as maintainer: end states %s, decisions %s" % (accepted["endStates"], accepted["decisions"]))
+            print("  accepted as maintainer: end states %s, decisions %s, states %d, required %s" % (
+                accepted["endStates"], accepted["decisions"], len(accepted["states"]), accepted["required"]))
         print("  proto.check ok: %s" % report["flowOk"])
         for p in report["problems"]:
             print("  problem: %s (%s) %s" % p)

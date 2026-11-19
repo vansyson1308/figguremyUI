@@ -15,8 +15,10 @@ nothing is sent anywhere.
 Each file also holds its components (below the screens; beside them in the dashboard, which grows
 tall at phone width), a `Theme` variable collection (colours whose text pairs pass WCAG AA), text
 styles, a collection of prototype state variables, one flow start, five or six stored scenarios,
-three untested assumptions and three decisions with the options they rejected, at stage
-`converging`. The end states and decisions the builder proposed record who accepted them
+three untested assumptions and three decisions with the options they rejected, the states its
+screens are declared to have where time passes (each linked to what shows it), one required
+element of the brief linked to its layers, at stage `converging`. The end states, declared
+states, required elements and decisions the builder proposed record who accepted them
 (`acceptedBy`, see below).
 
 ## Running the scenarios headless
@@ -73,6 +75,11 @@ Scenarios: S1 Happy path · S2 Missing contact shows an error · S3 Back keeps w
 S4 Resend toast closes by itself · S5 Continue explains itself while consent is off · S6 Fixing
 the form updates the error.
 
+Declared states: Sign-up form `error` (the Error summary), Verify code `error` (the Code field
+showing `State=Error`), `success` (Done) and `other` "Code sent again" (the toast). Required
+element R1: consent to be contacted and to the pool's safety rules, on the Sign-up form, linked
+to the Consent text and the Consent checkbox.
+
 ### Pantry dashboard (`pantry-dashboard.figcraft`)
 
 One frame that is responsive by auto layout: the header, the KPI cards and the main row wrap,
@@ -92,6 +99,10 @@ an outside click or with Close.
 Scenarios: S1 Load, then ready · S2 Filter to empty and clear · S3 Error, retry, ready ·
 S4 Row detail closes on an outside click · S5 Row detail closes with its button.
 
+Declared states of the Pantry dashboard: `loading` (Loading), `empty` (Empty state), `error`
+(Error banner) and `success` (List), each shown by a scenario. Required element R1: when the
+numbers were last synced, linked to the Updated text.
+
 ### Bike repair booking (`bike-repair-booking.figcraft`)
 
 Three service cards (one selected at a time), then a day and a time as chips with an optional
@@ -104,6 +115,13 @@ service is the flow start and has no Back.
 Scenarios: S1 Book a tune-up · S2 Change the service from Confirm · S3 Back from Details keeps
 the service highlighted · S4 Booked is where the flow ends · S5 Continue waits for a day and a
 time · S6 Back after changing the time goes to step 1.
+
+Declared states: Choose service `error` and Details `error` (each screen's hint, which names what
+is missing when "Tiếp tục" is tapped too early) and Confirm `success` (Booked). No `empty` state is
+declared: nothing in this flow can have nothing to show, so at stage `ready` `states.errorEmpty`
+would ask that question of Confirm, on purpose, for a person to answer. Required element R1: the
+estimated price on the summary before booking, linked to the Value text of the
+estimated-price row on Confirm.
 
 ## Rebuilding them
 
@@ -121,14 +139,15 @@ stops with a non-zero exit, naming the call and its error, when a tool fails, an
 doesn't pass its checks. It needs a `figguremyui-cli` built with craft-fonts (`CRAFT_FONTS_DIR`), since
 the files use Inter.
 
-Because the builder is an AI agent, the end states it declares and the decisions it records are
-proposals. The script's separate step `accept_as_maintainer()` (on by default;
+Because the builder is an AI agent, the end states and screen states it declares, the required
+elements it lists and the decisions it records are proposals. The script's separate step `accept_as_maintainer()` (on by default;
 `--no-accept-as-maintainer` skips it) then accepts them with `figguremyui-cli run`, which acts as the
 user. The maintainers' acceptance step stands in for a person's review of these example files; in
 your own files an agent's end states and decisions stay proposals until you accept them. An
 accepted proposal keeps its author (the builder) and records who accepted it (`acceptedBy: user`),
 and the Design context panel shows both ("proposed by Example builder (agent) · accepted by you").
 
-`crates/mcp/tests/it/examples.rs` keeps them working: flow check, scenarios, design check, save
-and reopen, the dashboard at four widths, a missing font, and an end state that stays a proposal
-without the acceptance step.
+`crates/mcp/tests/it/examples.rs` keeps them working: flow check, scenarios, design check (the
+`states.*` and `context.requiredMissing` rules included, with no finding at `converging`), the
+declared states and required elements, save and reopen, the dashboard at four widths, a missing
+font, and an end state that stays a proposal without the acceptance step.
