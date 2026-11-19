@@ -589,3 +589,39 @@ fn removing_forgets_members_and_deletes_layers_only_when_asked() {
     assert_eq!(ex(&mut s, "design.alternative.remove", json!({"set": "V2"})), json!({"removed": [d], "deleted": []}));
     assert!(s.doc().unwrap().contains(d));
 }
+
+/// Book-to-product chapter 9: steps to the goal, side by side for alternatives, as facts. A
+/// scenario counts for the frame it starts on, or that it shows on the way; nothing else is
+/// attributed to a member, and a member that isn't a screen says so.
+#[test]
+fn compare_puts_each_members_steps_to_the_goal_side_by_side() {
+    let mut s = Session::new();
+    let sc = screen(&mut s);
+    let copy = alternative(&mut s, sc.home, "Shorter");
+    let copy_button = twin(&s, sc.home, copy, sc.button);
+    let r = compared(&mut s);
+    assert_eq!(r["members"][0]["stepsToGoal"], json!({"attributed": true, "scenarios": []}), "no scenario stored: none to report");
+    ex(&mut s, "proto.scenario.add", json!({"name": "Start", "start": sc.home, "steps": [{"click": sc.button, "expect": {"screen": sc.done}}]}));
+    ex(&mut s, "proto.scenario.add", json!({"name": "Start the copy", "start": copy, "steps": [{"click": copy_button}, {"type": "wait"}]}));
+    let r = compared(&mut s);
+    let source = &r["members"][0]["stepsToGoal"];
+    assert_eq!(
+        source["scenarios"],
+        json!([{"id": "S1", "name": "Start", "via": "start", "passed": true, "stepsTaken": 1, "screens": [sc.home, sc.done], "screenCount": 2}])
+    );
+    let member = &r["members"][1]["stepsToGoal"]["scenarios"];
+    assert_eq!(member.as_array().unwrap().len(), 1, "{member}");
+    assert_eq!((&member[0]["id"], &member[0]["via"], &member[0]["stepsTaken"]), (&json!("S2"), &json!("start"), &json!(2)));
+    // A scenario that only passes through the frame is listed as on its path.
+    ex(&mut s, "proto.scenario.add", json!({"name": "Comes back", "start": sc.done, "steps": []}));
+    let r = compared(&mut s);
+    assert_eq!(r["members"][0]["stepsToGoal"]["scenarios"].as_array().unwrap().len(), 1, "S3 never shows Home");
+    // No score and no ranking: the words aren't there.
+    let text = r.to_string().to_lowercase();
+    assert!(!text.contains("score") && !text.contains("rank") && !text.contains("best"), "{text}");
+    // A member that is gone isn't attributed anything.
+    ex(&mut s, "edit.delete", json!({"ids": [copy]}));
+    let r = compared(&mut s);
+    assert_eq!(r["members"][1]["stepsToGoal"]["attributed"], json!(false));
+    assert!(r["members"][1]["stepsToGoal"]["why"].as_str().unwrap().contains("no longer exists"));
+}

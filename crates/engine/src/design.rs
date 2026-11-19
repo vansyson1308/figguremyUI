@@ -21,6 +21,7 @@ mod compare;
 mod context;
 mod findings;
 mod input;
+mod required;
 #[cfg(test)]
 mod tests;
 
@@ -31,6 +32,7 @@ pub(crate) use input::{USER, actor, agent, author_name};
 
 pub fn specs() -> Vec<CommandSpec> {
     let mut all = context::specs();
+    all.extend(required::specs());
     all.extend(findings::specs());
     all.extend(alternatives::specs());
     all

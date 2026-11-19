@@ -359,6 +359,15 @@ fn read(doc: &Document, n: &Node) -> Option<Reading> {
     })
 }
 
+/// How text `id` fails the contrast it needs, as `contrast.text` says it; `None` when it passes,
+/// can't be measured with certainty or isn't text that shows.
+pub(super) fn fails(doc: &Document, id: NodeId) -> Option<String> {
+    match read(doc, doc.node(id)?)? {
+        Reading::Fails(sample) => Some(sample.evidence()),
+        Reading::Unmeasured(_) | Reading::Passes => None,
+    }
+}
+
 fn readings(doc: &Document, scope: &[NodeId]) -> Vec<(NodeId, Reading)> {
     shown_layers(doc, scope).into_iter().filter_map(|id| Some((id, read(doc, doc.node(id)?)?))).collect()
 }

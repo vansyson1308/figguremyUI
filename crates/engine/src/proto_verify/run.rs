@@ -70,6 +70,22 @@ impl Run {
         let after = self.steps.iter().flat_map(|s| std::iter::once(s.state.screen).chain(s.state.overlays.iter().map(|o| o.id)));
         std::iter::once(start).chain(after).collect()
     }
+
+    /// The screens the run went through (overlays aren't screens), each once, in the order it
+    /// first showed them: the start, then the screen after each step that ran. Empty when the
+    /// run couldn't start.
+    pub fn screens(&self, start: NodeId) -> Vec<NodeId> {
+        if self.state.is_none() {
+            return Vec::new();
+        }
+        let mut out: Vec<NodeId> = Vec::new();
+        for id in std::iter::once(start).chain(self.steps.iter().map(|s| s.state.screen)) {
+            if !out.contains(&id) {
+                out.push(id);
+            }
+        }
+        out
+    }
 }
 
 /// A step fails when it couldn't run or an action in it couldn't, when a gesture or key set
@@ -83,20 +99,35 @@ fn failed(action: &StepAction, report: &StepReport) -> bool {
 /// run ends at the first failing step and the final expectation isn't checked (the prototype
 /// isn't where the steps meant it to be).
 pub(super) fn run(doc: &Document, start: NodeId, steps: &[Step], expect: &Expect, stop_on_failure: bool) -> Run {
+    run_watched(doc, start, steps, expect, stop_on_failure, &mut |_| {})
+}
+
+/// [`run`], showing `watch` the simulator at the start and after each step that passes: what a
+/// scenario shows on its way, as it meant to go (a step that fails isn't where it meant to be).
+pub(super) fn run_watched(doc: &Document, start: NodeId, steps: &[Step], expect: &Expect, stop_on_failure: bool, watch: &mut dyn FnMut(&Sim)) -> Run {
     match Sim::new(doc, start) {
-        Ok(sim) => play(sim, steps, expect, stop_on_failure),
+        Ok(sim) => play_watched(sim, steps, expect, stop_on_failure, watch),
         Err(why) => Run { passed: false, steps: Vec::new(), failed_step: None, failures: vec![format!("can't start: {why}")], state: None },
     }
 }
 
 /// [`run`] on a simulator that has started.
-pub(super) fn play(mut sim: Sim, steps: &[Step], expect: &Expect, stop_on_failure: bool) -> Run {
+pub(super) fn play(sim: Sim, steps: &[Step], expect: &Expect, stop_on_failure: bool) -> Run {
+    play_watched(sim, steps, expect, stop_on_failure, &mut |_| {})
+}
+
+fn play_watched(mut sim: Sim, steps: &[Step], expect: &Expect, stop_on_failure: bool, watch: &mut dyn FnMut(&Sim)) -> Run {
     let mut reports = Vec::new();
     let mut failed_step = None;
+    watch(&sim);
     for (i, step) in steps.iter().enumerate() {
         let outcome = sim.step(&step.action);
         let report = StepReport { outcome, failures: sim.check(&step.expect), state: Showing::of(&sim) };
         let stop = failed(&step.action, &report);
+        // Past the first failure the walk isn't the one the scenario meant: it shows nothing more.
+        if !stop && failed_step.is_none() {
+            watch(&sim);
+        }
         reports.push(report);
         if stop {
             failed_step = failed_step.or(Some(i));

@@ -56,7 +56,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
         spec!(
             "design.alternative.compare",
             "Compare alternatives",
-            "{set}  facts only, no ranking → {set, question, constraints, chosen, decision, proposal: {node, decision} | null (an AI agent's pending proposal to choose), members: [{node, name, isSource, constraint, intent, tradeoffs, exists, metrics: {width, height, layers (inside it), depth, textLayers, words, characters, interactive (layers with interactions), instances, components (distinct main components), images, density (area of the layers that hold no others, inside the frame, over the frame's area; 0–1, overlaps count twice)}, readingOrder: [up to 40 texts, top to bottom then left to right, each cut to 80 chars], actions: [names of layers with a click interaction]}] (the source first; hidden layers aren't counted), differences: [{a, b, structure (kinds, nesting or number of layers), order (the texts in reading order, ignoring case and spacing), content (the set of texts), actions (what reacts and what it does), size, layout (places and sizes of layers) and paint (fills, strokes, effects, fonts): null when the structure differs (layers can't be matched one to one), paintOnly, identical}] (each member with the source; members with each other up to 12 members), warnings: [text] (a member that differs from the source only in paint, or not at all; layers that are gone)}",
+            "{set}  facts only, no ranking → {set, question, constraints, chosen, decision, proposal: {node, decision} | null (an AI agent's pending proposal to choose), members: [{node, name, isSource, constraint, intent, tradeoffs, exists, metrics: {width, height, layers (inside it), depth, textLayers, words, characters, interactive (layers with interactions), instances, components (distinct main components), images, density (area of the layers that hold no others, inside the frame, over the frame's area; 0–1, overlaps count twice)}, readingOrder: [up to 40 texts, top to bottom then left to right, each cut to 80 chars], actions: [names of layers with a click interaction], stepsToGoal: {attributed, why? (when not attributed: only a top-level frame that isn't a component is walked by a scenario), scenarios: [{id, name, via: start|path (it starts on the frame, or shows it as a screen on the way), passed, stepsTaken, screens, screenCount}] (each stored scenario run headless, as proto.scenario.run; its steps and screens are the whole walk's, from its start)}}] (the source first; hidden layers aren't counted), differences: [{a, b, structure (kinds, nesting or number of layers), order (the texts in reading order, ignoring case and spacing), content (the set of texts), actions (what reacts and what it does), size, layout (places and sizes of layers) and paint (fills, strokes, effects, fonts): null when the structure differs (layers can't be matched one to one), paintOnly, identical}] (each member with the source; members with each other up to 12 members), warnings: [text] (a member that differs from the source only in paint, or not at all; layers that are gone)}",
             false,
             compare
         ),
@@ -258,6 +258,37 @@ struct Row<'a> {
     facts: Option<Facts>,
 }
 
+/// The stored scenarios that walk through frame `node` of a comparison, each with its steps and
+/// screens as facts: those that start on it (`via: start`) or show it as a screen on the way
+/// (`via: path`). Only a top-level frame that isn't a component is a screen a scenario walks; for
+/// anything else nothing is attributed, and it says so rather than counting another frame's walk.
+fn steps_to_goal(doc: &Document, node: NodeId, walks: &[crate::proto_verify::Walk]) -> Value {
+    let screen = doc.top_level_frame(node) == Some(node)
+        && !doc.node(node).is_some_and(|n| matches!(n.kind, NodeKind::Component { .. } | NodeKind::ComponentSet { .. }));
+    if !screen {
+        let why = if doc.contains(node) {
+            "not attributed: it isn't a top-level frame a scenario walks through (a component or a layer inside a screen)"
+        } else {
+            "not attributed: the layer no longer exists"
+        };
+        return json!({"attributed": false, "why": why, "scenarios": []});
+    }
+    let mine: Vec<Value> = walks
+        .iter()
+        .filter_map(|w| {
+            let via = if w.start == node {
+                "start"
+            } else if w.screens.contains(&node) {
+                "path"
+            } else {
+                return None;
+            };
+            Some(json!({"id": w.id, "name": w.name, "via": via, "passed": w.passed, "stepsTaken": w.steps_taken, "screens": w.screens, "screenCount": w.screens.len()}))
+        })
+        .collect();
+    json!({"attributed": true, "scenarios": mine})
+}
+
 impl Row<'_> {
     fn json(&self) -> Value {
         let said = |pick: fn(&Alternative) -> &String| self.member.map(pick).cloned().unwrap_or_default();
@@ -288,6 +319,8 @@ fn compare(s: &mut Session, p: &Value) -> Result<Value> {
     let mut rows = vec![Row { node: set.source, name: source_name, member: None, facts: Facts::of(&played, set.source) }];
     rows.extend(set.members.iter().map(|m| Row { node: m.node, name: m.name.clone(), member: Some(m), facts: Facts::of(&played, m.node) }));
 
+    // Steps-to-goal: the stored scenarios through each frame, run headless once each.
+    let walks = if doc.design.scenarios.is_empty() { Vec::new() } else { crate::proto_verify::walks(doc) };
     let mut warnings = Vec::new();
     for r in &rows {
         match (&r.facts, r.member) {
@@ -333,7 +366,16 @@ fn compare(s: &mut Session, p: &Value) -> Result<Value> {
         "chosen": set.chosen,
         "decision": set.decision,
         "proposal": set.proposal,
-        "members": rows.iter().map(Row::json).collect::<Vec<_>>(),
+        "members": rows
+            .iter()
+            .map(|r| {
+                let mut v = r.json();
+                if let Some(o) = v.as_object_mut() {
+                    o.insert("stepsToGoal".into(), steps_to_goal(doc, r.node, &walks));
+                }
+                v
+            })
+            .collect::<Vec<_>>(),
         "differences": differences,
         "warnings": warnings,
     }))

@@ -2,7 +2,7 @@
 //! should be true along the way, run headless on the simulator; and the rules that report on
 //! them (`scenario.*`).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use figcraft_doc::design::{MAX_ENTRIES, Scenario, Severity, StepAction};
@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use super::flow::{Graph, page_subject};
 use super::parse;
-use super::run::{Run, run, steps_json};
+use super::run::{Run, run, run_watched, steps_json};
 use crate::check::Found;
 use crate::design::{actor, agent, author_name};
 use crate::params::{get, req_id, req_string};
@@ -138,6 +138,36 @@ fn play(doc: &Document, s: &Scenario) -> Run {
     run(doc, s.start, &s.steps, &s.expect, true)
 }
 
+/// One stored scenario as it ran: where it went and how far.
+pub(crate) struct Walk {
+    pub id: String,
+    pub name: String,
+    pub start: NodeId,
+    pub passed: bool,
+    pub steps_taken: usize,
+    /// The screens it went through, each once, in order (see [`Run::screens`]).
+    pub screens: Vec<NodeId>,
+}
+
+/// Every stored scenario, run headless as `proto.scenario.run` runs it.
+pub(crate) fn walks(doc: &Document) -> Vec<Walk> {
+    doc.design
+        .scenarios
+        .iter()
+        .map(|sc| {
+            let r = play(doc, sc);
+            Walk {
+                id: sc.id.clone(),
+                name: sc.name.clone(),
+                start: sc.start,
+                passed: r.passed,
+                steps_taken: r.steps.len(),
+                screens: r.screens(sc.start),
+            }
+        })
+        .collect()
+}
+
 pub(super) fn run_stored(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "proto.scenario.run";
     let doc = s.doc()?;
@@ -158,6 +188,8 @@ pub(super) fn run_stored(s: &mut Session, p: &Value) -> Result<Value> {
                 "failures": r.first_failures(),
                 "steps": steps_json(&sc.steps, &r),
                 "stepsTaken": r.steps.len(),
+                "screens": r.screens(sc.start),
+                "screenCount": r.screens(sc.start).len(),
             });
             if let (Some(o), Some(i)) = (v.as_object_mut(), r.failed_step) {
                 o.insert("failedStep".into(), json!(i));
@@ -213,20 +245,42 @@ fn failure(doc: &Document, sc: &Scenario, r: &Run) -> Found {
     }
 }
 
-/// What the `scenario.*` rules find for the graph's page: the stored scenarios starting on it are
-/// run (a scenario whose start is gone belongs to every page, so that it is reported somewhere).
-pub(super) fn findings(doc: &Document, g: &Graph) -> Vec<Found> {
+/// What running the stored scenarios of one page gave.
+pub(crate) struct ScenarioFacts {
+    /// What the `scenario.*` rules find.
+    pub found: Vec<Found>,
+    /// The declared states (by their place in the file's list) the runs showed, with the
+    /// scenarios that showed each (see [`super::states`]).
+    pub covered: BTreeMap<usize, Vec<String>>,
+}
+
+/// What the `scenario.*` rules find for the graph's page, and which declared states the runs
+/// show: the stored scenarios starting on it are run (a scenario whose start is gone belongs to
+/// every page, so that it is reported somewhere).
+pub(super) fn findings(doc: &Document, g: &Graph) -> ScenarioFacts {
     let here: Vec<&Scenario> = doc.design.scenarios.iter().filter(|s| doc.page_of(s.start) == Some(g.page)).collect();
     let orphans = doc.design.scenarios.iter().filter(|s| !doc.contains(s.start));
     let mut out = Vec::new();
     let mut shown = BTreeSet::new();
+    let mut covered: BTreeMap<usize, Vec<String>> = BTreeMap::new();
     for sc in here.iter().copied().chain(orphans) {
-        let r = play(doc, sc);
+        let mut seen = BTreeSet::new();
+        let r = run_watched(doc, sc.start, &sc.steps, &sc.expect, true, &mut |sim| super::states::showing(doc, sim, &mut seen));
+        for i in seen {
+            covered.entry(i).or_default().push(sc.id.clone());
+        }
         shown.extend(r.shown(sc.start));
         if !r.passed {
             out.push(failure(doc, sc, &r));
         }
     }
+    let out = scenario_found(doc, g, &here, &shown, out);
+    ScenarioFacts { found: out, covered }
+}
+
+/// The `scenario.none` and `scenario.unvisited` findings of the graph's page, after `out` (the
+/// failures): `here` are the scenarios starting on it, `shown` what their runs showed.
+fn scenario_found(doc: &Document, g: &Graph, here: &[&Scenario], shown: &BTreeSet<NodeId>, mut out: Vec<Found>) -> Vec<Found> {
     if here.is_empty() {
         if let Some(start) = g.starts.first().filter(|_| g.has_flow) {
             out.push(Found {

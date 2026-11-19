@@ -50,11 +50,16 @@ pub struct DesignContext {
     /// way out that isn't listed here is a dead end.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub end_states: Vec<EndState>,
+    /// The states each screen is declared to have because time passes (first use, nothing yet,
+    /// waiting, failure, coming back) and its outcome: what the missing-states checks compare
+    /// with what the file has. Nothing declared is reported as that, not as missing states.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub states: Vec<DeclaredState>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub findings: Vec<Finding>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub alternatives: Vec<AlternativeSet>,
-    /// The last number given out per id prefix (`A`, `D`, `S`, `F`, `V`): ids are never reused, so
+    /// The last number given out per id prefix (`A`, `D`, `S`, `F`, `V`, `R`): ids are never reused, so
     /// a reference to a removed entry can't come to mean another one.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub counters: BTreeMap<String, u64>,
@@ -111,6 +116,16 @@ impl DesignContext {
             out.extend(s.expect.nodes().into_iter().map(|n| (n, format!("{} result", s.id))));
         }
         out.extend(self.end_states.iter().map(|e| (e.node, "end state".to_string())));
+        for st in &self.states {
+            let at = st.label();
+            out.push((st.frame, at.clone()));
+            if let Some(by) = &st.shown_by {
+                out.push((by.node(), at));
+            }
+        }
+        for r in &self.brief.required {
+            out.extend(r.screens.iter().chain(&r.nodes).map(|n| (*n, r.id.clone())));
+        }
         for f in &self.findings {
             out.extend(f.nodes.iter().map(|n| (*n, f.id.clone())));
         }
@@ -192,6 +207,156 @@ pub struct Brief {
     /// How success would be recognised, as things that can be observed.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub success: Vec<String>,
+    /// What the design must show (consent text, a price, a permission prompt, an error), each
+    /// linked to the layers that are it, so a check can find it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub required: Vec<RequiredElement>,
+}
+
+/// Whether a person stands behind a declaration (a state of a screen, a required element).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProposalStatus {
+    /// Declared by an AI agent and not yet accepted by a person.
+    Proposed,
+    /// A person declared or accepted it.
+    #[default]
+    Accepted,
+}
+
+impl ProposalStatus {
+    pub fn is_accepted(&self) -> bool {
+        *self == ProposalStatus::Accepted
+    }
+}
+
+/// Something the design must show, as the brief requires it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RequiredElement {
+    /// `R1`, `R2`…
+    pub id: String,
+    /// What must be shown, in words ("consent to be contacted, before the form is sent").
+    pub text: String,
+    /// The top-level frames it must be on; empty: anywhere.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub screens: Vec<NodeId>,
+    /// The layers that are it. Empty: not linked yet, so nothing can be checked.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub nodes: Vec<NodeId>,
+    /// Who listed it: an agent's name, or `user`.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub author: String,
+    #[serde(skip_serializing_if = "ProposalStatus::is_accepted")]
+    pub status: ProposalStatus,
+    /// The person who accepted an AI agent's entry.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub accepted_by: String,
+}
+
+/// Why a screen is in a state: the places where time passes, and how it ends.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StateKind {
+    /// The first time somebody meets it, with nothing of theirs in it yet.
+    FirstUse,
+    /// Nothing to show (yet, or any more).
+    Empty,
+    /// Waiting for something to arrive.
+    Loading,
+    /// Something went wrong.
+    #[default]
+    Error,
+    /// Coming back after a while.
+    Returning,
+    /// It worked.
+    Success,
+    /// Another state, named by `name`.
+    Other,
+}
+
+impl StateKind {
+    pub const ALL: [StateKind; 7] =
+        [StateKind::FirstUse, StateKind::Empty, StateKind::Loading, StateKind::Error, StateKind::Returning, StateKind::Success, StateKind::Other];
+
+    /// The name commands and files use.
+    pub fn id(self) -> &'static str {
+        match self {
+            StateKind::FirstUse => "firstUse",
+            StateKind::Empty => "empty",
+            StateKind::Loading => "loading",
+            StateKind::Error => "error",
+            StateKind::Returning => "returning",
+            StateKind::Success => "success",
+            StateKind::Other => "other",
+        }
+    }
+}
+
+/// What shows a declared state: a frame or overlay, a layer of the screen, or an instance in the
+/// screen showing one of its variants.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ShownBy {
+    /// A layer: a top-level frame (another screen, an overlay) or a layer in the screen.
+    Node { node: NodeId },
+    /// An instance in the screen and the variant it shows the state with: the variant's name
+    /// (`State=Error`), one of its property values (`Error`), or the variant component's id.
+    Variant { instance: NodeId, variant: String },
+}
+
+impl ShownBy {
+    /// The layer it names (the instance, for a variant).
+    pub fn node(&self) -> NodeId {
+        match self {
+            ShownBy::Node { node } => *node,
+            ShownBy::Variant { instance, .. } => *instance,
+        }
+    }
+}
+
+/// A state a screen is declared to have.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeclaredState {
+    /// The screen: a top-level frame.
+    pub frame: NodeId,
+    pub kind: StateKind,
+    /// Required for `other`; a label otherwise. One declaration per frame, kind and name.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    /// What shows it; `None`: not designed yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shown_by: Option<ShownBy>,
+    /// Why the screen has this state.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub reason: String,
+    /// Who declared it: an agent's name, or `user`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub author: String,
+    #[serde(default, skip_serializing_if = "ProposalStatus::is_accepted")]
+    pub status: ProposalStatus,
+    /// The person who accepted an AI agent's declaration.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub accepted_by: String,
+}
+
+impl DeclaredState {
+    /// Whether this is the declaration of `kind` named `name` on `frame` (names compare without
+    /// case or surrounding space).
+    pub fn is(&self, frame: NodeId, kind: StateKind, name: &str) -> bool {
+        self.frame == frame && self.kind == kind && self.name.trim().to_lowercase() == name.trim().to_lowercase()
+    }
+
+    /// How messages, links and finding subjects name it: `state error of 12`,
+    /// `state other "Offline" of 12`.
+    pub fn label(&self) -> String {
+        if self.name.is_empty() {
+            format!("state {} of {}", self.kind.id(), self.frame)
+        } else {
+            format!("state {} {:?} of {}", self.kind.id(), self.name, self.frame)
+        }
+    }
 }
 
 impl Brief {
@@ -614,7 +779,7 @@ pub struct Alternative {
 
 /// The most problems one read of a stored context spells out; the rest are counted.
 const MAX_LOAD_ISSUES: usize = 20;
-/// The longest id-counter prefix (`A`, `D`, `S`, `F`, `V` are one letter) and the most counters.
+/// The longest id-counter prefix (`A`, `D`, `S`, `F`, `V`, `R` are one letter) and the most counters.
 const MAX_COUNTER_KEY: usize = 16;
 const MAX_COUNTERS: usize = 64;
 
@@ -681,6 +846,17 @@ fn entries<T: DeserializeOwned>(out: &mut Vec<T>, value: Value, name: &str, lost
             Ok(v) => out.push(v),
             Err(why) => lost.say(format!("`{name}[{i}]`: {why}")),
         }
+    }
+}
+
+/// The brief of a stored context: whole when it reads, else its required elements entry by entry
+/// and the rest as one part.
+fn brief_part(slot: &mut Brief, value: Value, lost: &mut Said) {
+    let Value::Object(mut map) = value else { return part(slot, value, "brief", lost) };
+    let required = map.remove("required");
+    part(slot, Value::Object(map), "brief", lost);
+    if let Some(required) = required {
+        entries(&mut slot.required, required, "brief.required", lost);
     }
 }
 
@@ -800,13 +976,14 @@ impl DesignContext {
         let mut lost = Said::default();
         for (key, value) in map {
             match key.as_str() {
-                "brief" => part(&mut ctx.brief, value, "brief", &mut lost),
+                "brief" => brief_part(&mut ctx.brief, value, &mut lost),
                 "briefRevision" => part(&mut ctx.brief_revision, value, "briefRevision", &mut lost),
                 "stage" => part(&mut ctx.stage, value, "stage", &mut lost),
                 "assumptions" => entries(&mut ctx.assumptions, value, "assumptions", &mut lost),
                 "decisions" => entries(&mut ctx.decisions, value, "decisions", &mut lost),
                 "scenarios" => entries(&mut ctx.scenarios, value, "scenarios", &mut lost),
                 "endStates" => entries(&mut ctx.end_states, value, "endStates", &mut lost),
+                "states" => entries(&mut ctx.states, value, "states", &mut lost),
                 "findings" => entries(&mut ctx.findings, value, "findings", &mut lost),
                 "alternatives" => entries(&mut ctx.alternatives, value, "alternatives", &mut lost),
                 "counters" => part(&mut ctx.counters, value, "counters", &mut lost),
@@ -832,6 +1009,14 @@ impl DesignContext {
         }
         c.texts(&mut b.constraints, "brief.constraints");
         c.texts(&mut b.success, "brief.success");
+        c.list(&mut b.required, "brief.required");
+        for r in &mut b.required {
+            for t in [&mut r.id, &mut r.text, &mut r.author, &mut r.accepted_by] {
+                c.text(t);
+            }
+            c.list(&mut r.screens, "required screens");
+            c.list(&mut r.nodes, "required nodes");
+        }
         c.list(&mut self.assumptions, "assumptions");
         for a in &mut self.assumptions {
             for t in [&mut a.id, &mut a.text, &mut a.evidence] {
@@ -872,6 +1057,15 @@ impl DesignContext {
             c.text(&mut e.reason);
             c.text(&mut e.author);
             c.text(&mut e.accepted_by);
+        }
+        c.list(&mut self.states, "states");
+        for st in &mut self.states {
+            for t in [&mut st.name, &mut st.reason, &mut st.author, &mut st.accepted_by] {
+                c.text(t);
+            }
+            if let Some(ShownBy::Variant { variant, .. }) = &mut st.shown_by {
+                c.text(variant);
+            }
         }
         c.list(&mut self.findings, "findings");
         for f in &mut self.findings {
@@ -938,6 +1132,7 @@ impl DesignContext {
         self.scenarios.iter().for_each(|s| see("S", &s.id));
         self.findings.iter().for_each(|f| see("F", &f.id));
         self.alternatives.iter().for_each(|v| see("V", &v.id));
+        self.brief.required.iter().for_each(|r| see("R", &r.id));
         let mut moved = false;
         for (prefix, top) in highest {
             let n = self.counters.entry(prefix.to_string()).or_insert(0);
@@ -1159,6 +1354,103 @@ mod tests {
         assert_eq!(serde_json::to_value(&odd).unwrap(), json!({}));
         odd.load_issues.0.clear();
         assert_eq!(odd, DesignContext::default());
+    }
+
+    #[test]
+    fn declared_states_and_required_elements_round_trip_and_files_from_before_load_without_them() {
+        use super::{DeclaredState, ProposalStatus, RequiredElement, ShownBy, StateKind};
+        // A file from before has neither: they read empty and aren't written.
+        let old: DesignContext = serde_json::from_value(json!({"brief": {"audience": "Nurses"}, "endStates": [{"node": 3}]})).unwrap();
+        assert!(old.states.is_empty() && old.brief.required.is_empty());
+        assert_eq!(serde_json::to_value(&old).unwrap(), json!({"brief": {"audience": "Nurses"}, "endStates": [{"node": 3}]}));
+        let ctx = DesignContext {
+            brief: Brief {
+                required: vec![RequiredElement {
+                    id: "R1".into(),
+                    text: "Consent".into(),
+                    screens: vec![NodeId(4)],
+                    nodes: vec![NodeId(9)],
+                    author: "Claude (agent)".into(),
+                    status: ProposalStatus::Proposed,
+                    accepted_by: String::new(),
+                }],
+                ..Brief::default()
+            },
+            states: vec![
+                DeclaredState {
+                    frame: NodeId(4),
+                    kind: StateKind::Error,
+                    name: String::new(),
+                    shown_by: Some(ShownBy::Node { node: NodeId(7) }),
+                    reason: "the network fails".into(),
+                    author: "user".into(),
+                    status: ProposalStatus::Accepted,
+                    accepted_by: String::new(),
+                },
+                DeclaredState {
+                    frame: NodeId(4),
+                    kind: StateKind::Other,
+                    name: "Offline".into(),
+                    shown_by: Some(ShownBy::Variant { instance: NodeId(8), variant: "State=Offline".into() }),
+                    reason: String::new(),
+                    author: "Claude (agent)".into(),
+                    status: ProposalStatus::Proposed,
+                    accepted_by: String::new(),
+                },
+            ],
+            counters: [("R".to_string(), 1)].into_iter().collect(),
+            ..DesignContext::default()
+        };
+        let v = serde_json::to_value(&ctx).unwrap();
+        assert_eq!(
+            v,
+            json!({
+                "brief": {"required": [{"id": "R1", "text": "Consent", "screens": [4], "nodes": [9], "author": "Claude (agent)", "status": "proposed"}]},
+                "states": [
+                    {"frame": 4, "kind": "error", "shownBy": {"node": 7}, "reason": "the network fails", "author": "user"},
+                    {"frame": 4, "kind": "other", "name": "Offline", "shownBy": {"instance": 8, "variant": "State=Offline"}, "author": "Claude (agent)", "status": "proposed"},
+                ],
+                "counters": {"R": 1},
+            })
+        );
+        assert_eq!(DesignContext::from_stored(v.clone()), ctx);
+        assert!(DesignContext::from_stored(v).load_issues.0.is_empty());
+        // Every layer they name is a link of the context, so a gone one is reported.
+        let links: Vec<(NodeId, String)> = ctx.links();
+        assert!(links.contains(&(NodeId(7), "state error of 4".into())) && links.contains(&(NodeId(8), "state other \"Offline\" of 4".into())));
+        assert!(links.contains(&(NodeId(9), "R1".into())) && links.contains(&(NodeId(4), "R1".into())));
+        // One declaration per frame, kind and name (case and spaces aside).
+        assert!(ctx.states[1].is(NodeId(4), StateKind::Other, " offline ") && !ctx.states[1].is(NodeId(4), StateKind::Other, "Online"));
+        let ids: Vec<&str> = StateKind::ALL.iter().map(|k| k.id()).collect();
+        assert_eq!(ids, ["firstUse", "empty", "loading", "error", "returning", "success", "other"]);
+        for k in StateKind::ALL {
+            assert_eq!(serde_json::to_value(k).unwrap(), json!(k.id()));
+        }
+    }
+
+    #[test]
+    fn a_declared_state_or_required_element_that_cant_be_read_is_left_out_alone() {
+        let stored = json!({
+            "brief": {"audience": "Nurses", "required": [{"id": "R1", "text": "Consent"}, {"id": "R2", "text": 5}, "junk"]},
+            "states": [{"frame": 4, "kind": "error"}, {"frame": 4, "kind": "panic"}, {"frame": "x", "kind": "empty"}, {"frame": 4, "kind": "loading", "shownBy": {"node": "x"}}],
+            "counters": {"R": 1},
+        });
+        let ctx = DesignContext::from_stored(stored);
+        let issues = ctx.load_issues.0.join("; ");
+        assert!(issues.contains("`brief.required[1]`") && issues.contains("`brief.required[2]`") && issues.contains("`states[1]`"), "{issues}");
+        assert_eq!(ctx.brief.audience, "Nurses", "the rest of the brief is kept");
+        assert_eq!(ctx.brief.required.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["R1"]);
+        assert_eq!(ctx.states.len(), 1, "{:?}", ctx.states);
+        // Past the limits, cut and said.
+        let many: Vec<serde_json::Value> =
+            (0..MAX_ENTRIES + 2).map(|k| json!({"frame": k, "kind": "empty", "reason": "é".repeat(MAX_TEXT + 1)})).collect();
+        let ctx = DesignContext::from_stored(json!({"states": many}));
+        assert_eq!(ctx.states.len(), MAX_ENTRIES);
+        assert!(ctx.states.iter().all(|s| s.reason.chars().count() == MAX_TEXT));
+        assert!(ctx.load_issues.0.join("; ").contains(&format!("`states` from {} to {MAX_ENTRIES} entries", MAX_ENTRIES + 2)));
+        // Counters behind the ids in use are raised for required elements too.
+        let ctx = DesignContext::from_stored(json!({"brief": {"required": [{"id": "R7", "text": "x"}]}}));
+        assert_eq!(DesignContext::clone(&ctx).next_id("R"), "R8");
     }
 
     #[test]

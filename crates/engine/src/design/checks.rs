@@ -8,6 +8,7 @@
 mod clipping;
 mod context;
 mod contrast;
+mod required;
 mod target;
 
 use std::collections::BTreeSet;
@@ -82,6 +83,12 @@ pub fn rules() -> Vec<Rule> {
             run: |f, _| context::stale_decision(f.doc),
             unsettled: None,
         },
+        Rule {
+            id: required::MISSING,
+            about: "The brief's required elements (design.required.add) looked for through the layers linked to each: minor when no layer is linked (it can't be checked until one is); major when a linked layer is gone, hidden (itself or a layer around it), at 0% opacity (itself or a layer around it), not on one of the screens the element must be on, or entirely outside a frame around it that clips its content and doesn't scroll that way; major when a screen it must be on holds none of its layers; major when a linked text is below the contrast it needs (WCAG 2.2 SC 1.4.3 Contrast (Minimum), level AA: 4.5:1, or 3:1 for large text, measured as contrast.text measures it; text whose contrast can't be measured with certainty isn't reported here). No text-size threshold is applied: none of these rules has one. Elements of the whole file.",
+            run: |f, scope| required::missing(f.doc, scope),
+            unsettled: None,
+        },
     ];
     all.extend(external_rules());
     all
@@ -98,7 +105,14 @@ fn external_rules() -> Vec<Rule> {
 pub fn min_stage(rule_id: &str) -> Stage {
     match rule_id {
         "flow.brokenTarget" | context::MISSING_LINK | clipping::NO_FONT => Stage::Exploring,
-        context::BRIEF_INCOMPLETE | context::UNTESTED_ASSUMPTION | context::STALE_DECISION | "scenario.none" | "scenario.unvisited" => Stage::Ready,
+        context::BRIEF_INCOMPLETE
+        | context::UNTESTED_ASSUMPTION
+        | context::STALE_DECISION
+        | "scenario.none"
+        | "scenario.unvisited"
+        | "states.none"
+        | "states.unreachable"
+        | "states.errorEmpty" => Stage::Ready,
         _ => Stage::Converging,
     }
 }

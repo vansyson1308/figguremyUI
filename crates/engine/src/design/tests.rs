@@ -5,6 +5,7 @@ mod alternatives;
 mod checks;
 mod context;
 mod findings;
+mod required;
 
 use figcraft_doc::{Document, NodeId};
 use serde_json::{Value, json};
@@ -105,7 +106,7 @@ fn strings(v: &Value) -> Vec<String> {
 }
 
 /// Every `design.*` command with whether it is an undo step: reading and checking never are.
-const COMMANDS: [(&str, bool); 28] = [
+const COMMANDS: [(&str, bool); 32] = [
     ("design.get", false),
     ("design.forNode", false),
     ("design.brief.set", true),
@@ -117,6 +118,10 @@ const COMMANDS: [(&str, bool); 28] = [
     ("design.decision.set", true),
     ("design.decision.remove", true),
     ("design.decision.accept", true),
+    ("design.required.add", true),
+    ("design.required.set", true),
+    ("design.required.remove", true),
+    ("design.required.accept", true),
     ("design.check", false),
     ("design.check.rules", false),
     ("design.check.record", true),
