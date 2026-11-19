@@ -13,11 +13,11 @@
 </p>
 
 > [!NOTE]
-> **Figgure My UI is a fork of [FigCraft](https://github.com/storytold/figcraft)**, an open-source
-> interface design tool made by the ArtCraft team and its contributors. It is not made or endorsed by
-> them. The rename is not done yet: **the app, its window, its binaries (`figcraft`, `figcraft-cli`)
-> and its file format (`.figcraft`) still carry the FigCraft name**, and this README uses those names
-> where you type them.
+> **Figgure My UI is a fork of [FigCraft](https://github.com/storytold/figcraft)**, an open-source <!-- brand: attribution -->
+> interface design tool made by the ArtCraft team and its contributors. It is not affiliated with or
+> endorsed by them. Its documents keep the `.figcraft` extension and format, so files open in both.
+> Coming from upstream? [`docs/migration.md`](docs/migration.md) lists what was renamed (binaries,
+> settings folder, invite links, MCP names) and what is still accepted under the old names.
 
 <p align="center">
   <img src="docs/images/m11-editor-signup.png" alt="The sign-up example open in the editor: four phone screens of a Vietnamese swimming-class sign-up on the canvas, their components below, and the Design context panel on the left showing the brief as plain questions (Who is it for? Who is asking for it, and what do they want from it? What do they need to get done? Where and how will they use it?)" width="100%">
@@ -34,7 +34,7 @@ it yourself at any point. Then the agent **runs** the prototype's flows headless
 step leads to, checks the design against measured rules, fixes what fails, and saves. The file you
 reopen tomorrow still has the screens, the behaviour, the scenarios and the reasons.
 
-What is new in this fork, on top of FigCraft's editor:
+What is new in this fork, on top of the editor it inherits:
 
 - **Design context in the file**: a brief (who, who is asking, the job, the situation, the content, the
   form, the tone, what can't change, how success would show), assumptions marked untested / supported /
@@ -119,9 +119,10 @@ cd figguremyUI
 cargo build --release -p figcraft -p figcraft-cli
 ```
 
-This gives you the desktop app `target/release/figcraft` (`figcraft.exe` on Windows) and the
-command-line tool `target/release/figcraft-cli`, which also runs the MCP server. A first build takes
-a while; after that you run the binaries directly, no rebuild per session.
+This gives you the desktop app `target/release/figguremyui` (`figguremyui.exe` on Windows) and the
+command-line tool `target/release/figguremyui-cli`, which also runs the MCP server. The Cargo
+packages keep their `figcraft-*` names, so `-p figcraft` builds the `figguremyui` binary. A first
+build takes a while; after that you run the binaries directly, no rebuild per session.
 
 On Linux the app needs the usual desktop libraries (for example on Debian/Ubuntu:
 `libxkbcommon-x11-0`, `libwayland-client0`, `libgl1`). Text uses your installed fonts; the examples
@@ -132,7 +133,7 @@ so fonts are built into the binaries.
 Open an example:
 
 ```bash
-target/release/figcraft examples/signup-flow.figcraft
+target/release/figguremyui examples/signup-flow.figcraft
 ```
 
 Open **View ▸ Panels ▸ Design context** (or the **Context** button on the left rail) to see its brief,
@@ -144,8 +145,8 @@ The MCP server is the same binary in two modes:
 
 | Mode | Command | What it does |
 |---|---|---|
-| **Headless** | `figcraft-cli mcp` | An engine session with no window. Fast, good for building and checking files; nobody sees it live. There is no player window: verify flows with the simulator tools. |
-| **Attached** | `figcraft-cli mcp --attach 7979` | Drives the app you started with `figcraft --control 7979`. You see every change as it happens and can edit at the same time; the agent's changes are its own undo steps, and `ifRevision` stops it overwriting what you just did. |
+| **Headless** | `figguremyui-cli mcp` | An engine session with no window. Fast, good for building and checking files; nobody sees it live. There is no player window: verify flows with the simulator tools. |
+| **Attached** | `figguremyui-cli mcp --attach 7979` | Drives the app you started with `figguremyui --control 7979`. You see every change as it happens and can edit at the same time; the agent's changes are its own undo steps, and `ifRevision` stops it overwriting what you just did. |
 
 The control channel listens on 127.0.0.1 only. To keep an agent to certain folders, start the
 headless server (or, for attached mode, the app) with `--automation-read-root DIR` and
@@ -161,13 +162,13 @@ doesn't promise that it can.
 From the folder you work in (replace the path with the absolute path to your binary):
 
 ```bash
-claude mcp add --transport stdio figcraft -- /path/to/figguremyUI/target/release/figcraft-cli mcp
+claude mcp add --transport stdio figguremyui -- /path/to/figguremyUI/target/release/figguremyui-cli mcp
 ```
 
-Attached to the running app instead (start the app first with `figcraft --control 7979`):
+Attached to the running app instead (start the app first with `figguremyui --control 7979`):
 
 ```bash
-claude mcp add --transport stdio figcraft-app -- /path/to/figguremyUI/target/release/figcraft-cli mcp --attach 7979
+claude mcp add --transport stdio figguremyui-app -- /path/to/figguremyUI/target/release/figguremyui-cli mcp --attach 7979
 ```
 
 Add `--scope user` to have it in every project, or `--scope project` to write it to the project's
@@ -177,7 +178,7 @@ The same server in a project's `.mcp.json`:
 ```json
 {
   "mcpServers": {
-    "figcraft": { "command": "/path/to/figguremyUI/target/release/figcraft-cli", "args": ["mcp"] }
+    "figguremyui": { "command": "/path/to/figguremyUI/target/release/figguremyui-cli", "args": ["mcp"] }
   }
 }
 ```
@@ -187,14 +188,14 @@ Source: [Claude Code MCP documentation](https://code.claude.com/docs/en/mcp) (ch
 ### Codex
 
 ```bash
-codex mcp add figcraft -- /path/to/figguremyUI/target/release/figcraft-cli mcp
+codex mcp add figguremyui -- /path/to/figguremyUI/target/release/figguremyui-cli mcp
 ```
 
 Or in `~/.codex/config.toml` (shared by the Codex CLI and its IDE extension):
 
 ```toml
-[mcp_servers.figcraft]
-command = "/path/to/figguremyUI/target/release/figcraft-cli"
+[mcp_servers.figguremyui]
+command = "/path/to/figguremyUI/target/release/figguremyui-cli"
 args = ["mcp", "--attach", "7979"]
 tool_timeout_sec = 120
 ```
@@ -209,7 +210,7 @@ Claude Desktop:
 ```json
 {
   "mcpServers": {
-    "figcraft": { "command": "/path/to/figguremyUI/target/release/figcraft-cli", "args": ["mcp", "--attach", "7979"] }
+    "figguremyui": { "command": "/path/to/figguremyUI/target/release/figguremyui-cli", "args": ["mcp", "--attach", "7979"] }
   }
 }
 ```
@@ -220,7 +221,7 @@ come from the clients' documentation; they were not run against each client here
 
 ## From a request to a working prototype
 
-Start the app with `figcraft --control 7979`, connect your agent attached, and ask, for example:
+Start the app with `figguremyui --control 7979`, connect your agent attached, and ask, for example:
 
 > Make a sign-up prototype for a community swimming class. It's for parents signing up a child on a
 > phone at the pool gate, often on slow mobile data. They need to give a name, a phone number or
@@ -252,7 +253,7 @@ any point.
 |---|---|---|
 | **The design file** | `.figcraft` (File ▸ Save) | The editable source: pages, layers, components, variables, styles, interactions, and the design context and scenarios. Reopens as it was. |
 | **The interactive prototype** | Inside the app's player (▶), or verified headless | Clickable, with real state. There is no standalone HTML or app export of the prototype. |
-| **Images and documents** | File ▸ Export, `figcraft-cli export` | PNG, JPG, WebP, SVG, PDF (and Android Vector Drawable XML): static pictures of frames or layers. |
+| **Images and documents** | File ▸ Export, `figguremyui-cli export` | PNG, JPG, WebP, SVG, PDF (and Android Vector Drawable XML): static pictures of frames or layers. |
 | **Code** | Developer Mode (Inspect) | CSS, HTML, React, Vue, SwiftUI, Jetpack Compose and more for a layer or component: a starting point for developers, not a running app. |
 | **A production app with a backend** | — | Not produced. The examples' data is simulated; typing is stood in for by setting variables. |
 
@@ -263,7 +264,7 @@ experimental and drops what that format can't hold (variable and conditional act
 
 ## Limits (read this)
 
-- **Alpha software.** The editor underneath is FigCraft's alpha (its own assessment is in
+- **Alpha software.** The editor underneath is upstream's alpha (its own assessment is in
   [`ROADMAP.md`](ROADMAP.md)). `.fig` import and export are best effort.
 - **The simulator is not a person using the prototype.** It follows the player's rules for what state
   comes next, but it does not model animation timing, scroll position, drag direction, device frames
@@ -277,18 +278,20 @@ experimental and drops what that format can't hold (variable and conditional act
   anything with full access to the control channel or the command line acts as you.
 - **Live editing by two people** merges the design context as a whole: if two people edit it at the
   same moment in a live session, the later edit wins.
-- **Known open problems in the Design context panel** (being fixed; `handoff/CHECKLIST.md`): after
-  you switch tabs or open another file, the panel can still show the previous file's check and
-  scenario results, so run them again in the file you look at; keyboard focus can move to a control
-  that is scrolled out of view; parts of the Vietnamese panel are still in English.
+- **The Design context panel has had one hands-on check.** What it found is fixed (each file shows
+  its own results after a tab switch, keyboard focus stays in view, the Vietnamese panel's own
+  labels are translated); an independent re-check on a fresh build is still to do
+  (`handoff/CHECKLIST.md`). Messages from the rules and the simulator are in English in every
+  language, and some engine refusals still show command ids.
 - **Accessibility**: the app has keyboard navigation and screen-reader names (AccessKit); the new
   Design context panel's text contrast was measured in both themes (at least 5:1 for its text) and
-  Tab reaches its fields and buttons. A screen-reader pass over the new panel has not been done. In
-  the dark theme, frame names on a light page are hard to read (1.9:1; open).
+  Tab reaches its fields and buttons. A screen-reader pass over the new panel has not been done.
 - **Online sharing is off by default** in this fork: Share ▸ Online needs a server you enter in
   Preferences (or run yourself, [`docs/server.md`](docs/server.md)); sharing on your local network
   works without one. Shared files are not end-to-end encrypted.
-- **No release builds** of this fork yet, and the app is not yet renamed.
+- **No release builds** of this fork yet. The release workflow still carries upstream's names and
+  needs signing secrets the fork doesn't have, so it is not usable until a separate CI change
+  ([`docs/migration.md`](docs/migration.md#release-workflow-follow-up)).
 
 ## Documentation
 
@@ -316,11 +319,12 @@ never panics, assets must be original or openly licensed and listed in
 ## License and credits
 
 Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option. Required
-notices are in [NOTICE](NOTICE); the copyright of FigCraft's code stays with the ArtCraft Team and the
-FigCraft contributors, whose history this repository keeps.
+notices are in [NOTICE](NOTICE). The copyright of the code this fork started from stays with the
+ArtCraft Team and the FigCraft contributors, whose history this repository keeps. <!-- brand: attribution -->
 
-Figgure My UI is based on FigCraft by the ArtCraft team and community. The ArtCraft name and logos are
-the ArtCraft Team's trademarks; this fork doesn't use them, and is not an ArtCraft product.
+Figgure My UI is based on FigCraft by the ArtCraft team and contributors, and is not affiliated <!-- brand: attribution -->
+with or endorsed by them. The ArtCraft name and logos are the ArtCraft Team's trademarks; this fork
+doesn't use them, and is not an ArtCraft product.
 
 Every icon is drawn in code or made for the project, and other assets keep their own open licences;
 each one is listed with its author, source and licence in [ATTRIBUTION.md](ATTRIBUTION.md).

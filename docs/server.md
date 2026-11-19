@@ -1,6 +1,6 @@
-# figcraft-server
+# figguremyui-server
 
-`figcraft-server` keeps FigCraft files for a team and serves their live sessions. A file published
+`figguremyui-server` keeps Figgure My UI files for a team and serves their live sessions. A file published
 to it stays there when everyone has left; people open it with a **share link** that lets them
 **edit** it or only **view** it. Edits are kept as a snapshot plus a log of what changed, so a
 restart (or a crash) loses nothing that was confirmed, and apps reconnect where they were. It is
@@ -20,12 +20,13 @@ The protocol and the design behind it are in [`collab-protocol.md`](collab-proto
 
 ```sh
 cargo build --release -p figcraft-server
-target/release/figcraft-server --listen 0.0.0.0:47900 --data /srv/figcraft
+target/release/figguremyui-server --listen 0.0.0.0:47900 --data /srv/figcraft
 ```
 
-Releases also ship it ready-built for Linux (`figcraft-server-<version>-linux-x86_64.tar.gz` and
-`-linux-aarch64`). To run it for others on a rented server, see
-[Deploy on a Linux server](#deploy-on-a-linux-server).
+The package keeps its `figcraft-server` name; the binary it builds is `figguremyui-server`. Figgure
+My UI publishes no release builds yet, so build it from source (upstream's ready-built
+`figcraft-server-<version>-linux-<arch>.tar.gz` archives are upstream's server, not this fork's). To
+run it for others on a rented server, see [Deploy on a Linux server](#deploy-on-a-linux-server).
 
 - `--listen` defaults to `127.0.0.1:47900`: only this machine can connect. `0.0.0.0:47900` (or an
   interface's address) lets the network in; put it behind a TLS reverse proxy before you expose
@@ -48,7 +49,7 @@ Releases also ship it ready-built for Linux (`figcraft-server-<version>-linux-x8
 ## Publishing a file
 
 ```sh
-figcraft-server --data /srv/figcraft key
+figguremyui-server --data /srv/figcraft key
 ```
 
 prints the address to publish to, `ws://<host>:47900/?key=<server key>`. In the desktop app,
@@ -76,14 +77,14 @@ and the date the server deletes the file unless someone opens it.
 
 **Share ▸ Online ▸ Start sharing** in the app (`collab.share`) is the short way to do all of the
 above on a server open to the public: it publishes the open file to the server in **Preferences ▸
-Server for online sharing** (the FigCraft server unless you put yours there; Reset goes back; empty
-turns online sharing off), then shows a **join code** such as `K7M-2QX-9TD` in place of the links.
+Server for online sharing** (empty in Figgure My UI until you put a server there, which keeps online
+sharing off; Reset goes back to that), then shows a **join code** such as `K7M-2QX-9TD` in place of the links.
 Someone else types it under **Share ▸ Join with a code** (or on the home screen, or
 `collab.join {code}`) with the same server in their Preferences, and is in the file. The popover
 switches between the code that lets people edit and the one that only lets them view.
 
 The file is its owner's: the app keeps the file's first links and its owner token for itself and
-makes two more links ("Shared (edit)", "Shared (view)" in `figcraft-server links list`) for
+makes two more links ("Shared (edit)", "Shared (view)" in `figguremyui-server links list`) for
 everyone else, with their codes. **Stop sharing** revokes those two: their codes and links stop
 working at once, whoever joined with them is disconnected ("Sharing was stopped…"; they keep the
 copy they have), and the owner stays in the file, which stays on the server, open only to them.
@@ -151,7 +152,7 @@ screen lists them under **Online**:
   can't be reached the copy opens as an unsaved document, as before.
 
 The owner token is a password for that one file: it is kept only in the preferences file of your
-user account (`state.json` in FigCraft's settings folder), is never logged, and never appears in
+user account (`state.json` in Figgure My UI's settings folder), is never logged, and never appears in
 what commands return (`collab.files` says `hasOwnerToken: true`). Whoever can read that file can
 manage your online files; a list of at most 200 files is kept (the one opened longest ago makes
 room). The files are the ones published **from this computer**: another computer of yours doesn't
@@ -180,11 +181,11 @@ someone in, so keep it off on a server open to anyone.
   only published, or shared with links that have no code, aren't listed. The list names each file,
   when it last changed and how many people are in it, most recently changed first (at most 500).
 - **In the app.** Home ▸ Online asks the server in **Preferences ▸ Server for online sharing** for
-  its list each time it opens (not the public server FigCraft ships with, which keeps none) and
+  its list each time it opens (a public server keeps no such list) and
   shows it below your own online files, under **Shared by your team on …**. Clicking a row joins
   the file. Scripts and agents read it from `collab.files {refresh: true}` (`team`).
 - **Links without a secret.** A file of the list is named by the server and the file:
-  `figcraft://join?server=wss://figcraft.example.com/&file=<id>&team=1`. The row's menu copies it
+  `figguremyui://join?server=wss://figcraft.example.com/&file=<id>&team=1`. The row's menu copies it
   (**Copy link**), and it can go into a ticket or a chat: it joins only while the file is shared,
   and only for someone who reaches the server. Opening it asks the server for the file's **team
   link** (labelled `Team (edit)`, made the first time someone asks, then the same for everyone)
@@ -207,8 +208,8 @@ A [join code](#sharing-with-a-join-code) is the short way in. Share links look l
 app's invite links and join the same way (the same **Join with a code** field takes them, as do
 **File ▸ Join live session…**, opening the link, and `collab.join {link}`):
 
-- `figcraft://join?host=<host:port>&file=<id>&token=<token>` for a plain `ws://` server;
-- `figcraft://join?server=wss://figcraft.example.com/&file=<id>&token=<token>` for a server behind
+- `figguremyui://join?host=<host:port>&file=<id>&token=<token>` for a plain `ws://` server;
+- `figguremyui://join?server=wss://figcraft.example.com/&file=<id>&token=<token>` for a server behind
   a TLS reverse proxy or under a path;
 - `ws://<host:port>/?file=<id>&token=<token>` or `wss://…` (the same link as a WebSocket URL).
 
@@ -281,22 +282,22 @@ port as everything else; no other service is involved.
   are no publisher accounts, so give it only to people you trust to put code on your team's
   machines. A plugin's author is shown as the publisher typed it in the manifest; nothing verifies
   it.
-- **Publishing.** `figcraft-cli plugin publish FOLDER --server ws://host:47900/` with the key in
-  `FIGCRAFT_SERVER_KEY` (or `?key=` in the address), or `plugin.directory.publish` from the app's
+- **Publishing.** `figguremyui-cli plugin publish FOLDER --server ws://host:47900/` with the key in
+  `FIGGUREMYUI_SERVER_KEY` (or `?key=` in the address), or `plugin.directory.publish` from the app's
   scripts and MCP. Each version must be newer than the last (`1.0.0` → `1.0.1`); the server keeps
   every version until it is unpublished, and lists the latest.
 - **What the server checks** before keeping a bundle: its size (`max_plugin_mb`), that it decodes
   (an uncompressed format: nothing expands), that its manifest parses and asks for a plugin API this
-  server's FigCraft runs, a version of one to four numbers newer than the one kept, that the module
-  is WebAssembly that compiles and imports only what FigCraft's sandbox provides (it is never run on
+  server's Figgure My UI runs, a version of one to four numbers newer than the one kept, that the module
+  is WebAssembly that compiles and imports only what Figgure My UI's sandbox provides (it is never run on
   the server), and that asset names are plain file names. Then the caps: `max_plugins` versions in
   all and `max_plugins_mb` of bundles.
 - **Downloads** carry the bundle's SHA-256, which the app checks before reading it, and which the
   server checks again when it reads the bundle back from disk (a damaged one is never sent, and is
   logged). Downloads share a budget of about 32 MiB a second, so many at once are turned away with
   "busy" rather than queued in memory.
-- **Moderation** is the operator's: `figcraft-server plugins` lists every plugin and its versions,
-  `figcraft-server plugins remove ID [--version V]` takes a version, or the whole plugin, down (it
+- **Moderation** is the operator's: `figguremyui-server plugins` lists every plugin and its versions,
+  `figguremyui-server plugins remove ID [--version V]` takes a version, or the whole plugin, down (it
   works on a running server too). Installed copies keep working; users can't tell the server to
   remove anything without the key.
 - **Turning it off**: `max_plugins = 0`.
@@ -305,18 +306,18 @@ port as everything else; no other service is involved.
 
 | Command | What it does |
 |---|---|
-| `figcraft-server key [--rotate]` | The address to publish to, with the key; `--rotate` makes a new key (the server must be stopped) |
-| `figcraft-server check` | Check the settings (after editing the `--config` file) |
-| `figcraft-server files [list] [--sort size\|age\|idle]` | The files: id, name, people in it now, size, created, days unused, expiry, reports, and who published it (`key`, or the address of a file published without it); biggest, oldest or longest unused first |
-| `figcraft-server files remove FILE` | Remove a file and its links for good (whoever is in it is disconnected) |
-| `figcraft-server links list FILE` | A file's links: id, access, created, label |
-| `figcraft-server links create FILE --access edit\|comment\|view [--label TEXT]` | A new link, printed once |
-| `figcraft-server links revoke FILE LINK` | Revoke a link: it no longer joins, and whoever joined with it is disconnected |
-| `figcraft-server plugins [list]` | The plugin directory: every plugin, its versions, author, access, size and SHA-256 |
-| `figcraft-server plugins remove ID [--version V]` | Unpublish a version of a plugin, or every version |
-| `figcraft-server reports` | What people in files reported to you: when, which file, the link and address they came with, why |
-| `figcraft-server block-ip IP` | Refuse an address (an IPv6 address: its /64) and drop its connections; kept in `blocked.json` |
-| `figcraft-server unblock-ip IP` / `blocked` | Accept it again / list the blocked addresses |
+| `figguremyui-server key [--rotate]` | The address to publish to, with the key; `--rotate` makes a new key (the server must be stopped) |
+| `figguremyui-server check` | Check the settings (after editing the `--config` file) |
+| `figguremyui-server files [list] [--sort size\|age\|idle]` | The files: id, name, people in it now, size, created, days unused, expiry, reports, and who published it (`key`, or the address of a file published without it); biggest, oldest or longest unused first |
+| `figguremyui-server files remove FILE` | Remove a file and its links for good (whoever is in it is disconnected) |
+| `figguremyui-server links list FILE` | A file's links: id, access, created, label |
+| `figguremyui-server links create FILE --access edit\|comment\|view [--label TEXT]` | A new link, printed once |
+| `figguremyui-server links revoke FILE LINK` | Revoke a link: it no longer joins, and whoever joined with it is disconnected |
+| `figguremyui-server plugins [list]` | The plugin directory: every plugin, its versions, author, access, size and SHA-256 |
+| `figguremyui-server plugins remove ID [--version V]` | Unpublish a version of a plugin, or every version |
+| `figguremyui-server reports` | What people in files reported to you: when, which file, the link and address they came with, why |
+| `figguremyui-server block-ip IP` | Refuse an address (an IPv6 address: its /64) and drop its connections; kept in `blocked.json` |
+| `figguremyui-server unblock-ip IP` / `blocked` | Accept it again / list the blocked addresses |
 
 Each takes `--data` (or `--config`). When a server is running on the directory, the command asks
 it over the same port with the server key (so a revoked link's users are disconnected at once);
@@ -449,11 +450,11 @@ gives people `wss://` links (and browsers the `wss://` they need on an `https://
 - Tokens never travel in the WebSocket request (the client sends them inside its first message),
   so the proxy's access logs don't record them.
 
-The desktop app, `figcraft-cli` (and so agents through MCP) and the browser build all open
+The desktop app, `figguremyui-cli` (and so agents through MCP) and the browser build all open
 `wss://` links. The desktop app and the CLI check the certificate against Mozilla's list of root
 authorities built into them (not the operating system's store), so a certificate from a public
 authority such as Let's Encrypt just works. For a certificate from a private authority (or a
-self-signed one, such as Caddy's `tls internal`), set the environment variable `FIGCRAFT_CA_FILE`
+self-signed one, such as Caddy's `tls internal`), set the environment variable `FIGGUREMYUI_CA_FILE`
 to that authority's certificate (a PEM file) before starting the app: it is trusted in addition
 to the built-in list. There is no way to skip the check: a certificate that has expired, is for
 another name or comes from an unknown authority is refused, and the app says which.
@@ -492,12 +493,12 @@ keeps the key for everything else.
   expire.
 - **Team libraries** on a public server live only in files published with the key: a file published
   without it can't hold one (a library is a whole archive the server unpacks and checks).
-- **Moderation.** `figcraft-server files list --sort size|age|idle` shows who published what
+- **Moderation.** `figguremyui-server files list --sort size|age|idle` shows who published what
   (the address) and how many reports each file has; `files remove FILE` takes a file down (whoever
   is in it is disconnected); `block-ip` refuses an address and drops its connections (kept across
   restarts in `blocked.json`; the operator's own key still gets in from anywhere); anyone in a file
   can report it (**Report this file…** in the Share popover, `collab.report`; ten an hour per
-  address), and `figcraft-server reports` lists the reports with the link and address they came
+  address), and `figguremyui-server reports` lists the reports with the link and address they came
   from. Plugin directory publishing stays key-only.
 - **Your responsibility.** As the operator you answer for what is published on your server: give a
   working abuse contact (`operator_contact`) and terms (`terms_url`), read the reports, and remove
@@ -509,7 +510,7 @@ keeps the key for everything else.
 At startup a public server warns in its log when `operator_contact` is empty, when it seems to be
 behind a reverse proxy (a `wss://` `public_url`, or listening on the loopback interface) without
 `trusted_proxy` (every client would then count as the proxy's address, so one person's limits would
-stop everyone), and when `idle_days = 0`. `figcraft-server check` reads the settings without
+stop everyone), and when `idle_days = 0`. `figguremyui-server check` reads the settings without
 starting.
 
 ### Threat model
@@ -536,7 +537,7 @@ rate: over any stretch of time it gets at most the largest object plus the rate 
 a link or removing a file cuts every connection that used it, library connections included. Not
 defended against: someone with many unrelated addresses (each gets its own limits; the global caps
 still hold, so they can fill the server up to them until you block them or the files expire), a
-link or owner token that leaks (revoke links with the owner token or `figcraft-server links
+link or owner token that leaks (revoke links with the owner token or `figguremyui-server links
 revoke`; remove the file), and the operator reading files (no end-to-end encryption).
 
 ### Resource limits
@@ -618,24 +619,17 @@ upgrades the binary and restarts the server only when something changed.
 1. Create the server (Ubuntu 24.04, x86_64 or arm64) with your SSH key, and note its address.
 2. At your DNS provider, point `figcraft.example.com` (A, and AAAA for IPv6) at that address. Caddy
    needs it to get the certificate.
-3. Log in and run the script, from a release archive:
+3. Log in and run the script from a copy of the source. Figgure My UI publishes no release
+   archives yet ([`migration.md`](migration.md#release-workflow-follow-up)), so this is the way
+   for now: the script builds that copy as it is (with the swap file on a small machine). Once
+   there are releases, running the `install.sh` of an unpacked release archive installs its
+   binary instead.
 
    ```sh
-   ssh root@figcraft.example.com
-   VERSION=$(curl -fsSL https://api.github.com/repos/storytold/figcraft/releases/latest | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')
-   curl -fLO "https://github.com/storytold/figcraft/releases/download/v$VERSION/figcraft-server-$VERSION-linux-$(uname -m).tar.gz"
-   tar -xzf figcraft-server-*.tar.gz && cd figcraft-server-*/
-   sudo ./install.sh --host figcraft.example.com --email abuse@example.com --terms https://example.com/figcraft-terms
-   ```
-
-   or from a copy of the source (a private repository, or unreleased changes): it then builds that
-   copy as it is (with the swap file on a small machine).
-
-   ```sh
-   git archive --format=tar.gz -o figcraft-src.tar.gz HEAD          # on your machine
-   scp figcraft-src.tar.gz root@figcraft.example.com:
-   ssh root@figcraft.example.com 'mkdir -p figcraft && tar -xzf figcraft-src.tar.gz -C figcraft &&
-     figcraft/packaging/server/install.sh --host figcraft.example.com --email abuse@example.com'
+   git archive --format=tar.gz -o figguremyui-src.tar.gz HEAD          # on your machine
+   scp figguremyui-src.tar.gz root@figcraft.example.com:
+   ssh root@figcraft.example.com 'mkdir -p figguremyui && tar -xzf figguremyui-src.tar.gz -C figguremyui &&
+     figguremyui/packaging/server/install.sh --host figcraft.example.com --email abuse@example.com'
    ```
 
    Without `--host` or `--email` it asks for them. `--private` keeps publishing key-only;
@@ -643,8 +637,8 @@ upgrades the binary and restarts the server only when something changed.
    the newer source over and run it again.
 4. Check it: `curl https://figcraft.example.com/healthz` answers `ok` once Caddy has its
    certificate (a minute after DNS is right); `journalctl -u figcraft-server -f` shows the log.
-5. In FigCraft, **Share ▸ Publish to server…** with `wss://figcraft.example.com/`. Moderate with
-   the commands it printed (`sudo -u figcraft figcraft-server --config /etc/figcraft-server/server.toml
+5. In Figgure My UI, **Share ▸ Publish to server…** with `wss://figcraft.example.com/`. Moderate with
+   the commands it printed (`sudo -u figcraft figguremyui-server --config /etc/figcraft-server/server.toml
    files list --sort size`, `reports`, `block-ip`).
 6. Point an uptime monitor at `https://figcraft.example.com/healthz`, copy
    `/var/backups/figcraft-server` off the machine, and upgrade by running the script again.
@@ -655,30 +649,20 @@ Hosting for people outside your network: a small Linux server (1 CPU and 1 GB of
 plenty for a team), a DNS name pointing at it (`figcraft.example.com` below: use yours), the
 server behind Caddy or nginx for TLS, and systemd keeping it running. The commands are for Debian
 and Ubuntu; other distributions differ only in how packages are installed. `install.sh` does all of
-it ([above](#on-a-fresh-ubuntu-server-with-installsh)); these are the steps by hand.
+it ([above](#on-a-fresh-ubuntu-server-with-installsh)); these are the steps by hand. Only the binary
+is named `figguremyui-server`: the deployment keeps the names of the files in `packaging/server/`
+(the `figcraft` user, `/etc/figcraft-server`, `/var/lib/figcraft-server`, the `figcraft-server`
+systemd unit and Caddy site, and the `figcraft.example.com` placeholder that `install.sh` replaces).
 
-**1. Install the binary**, from the latest release (x86_64 or aarch64), checked against the
-release's `SHA256SUMS.txt`:
-
-```sh
-VERSION=$(curl -fsSL https://api.github.com/repos/storytold/figcraft/releases/latest | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')
-NAME="figcraft-server-$VERSION-linux-$(uname -m)"
-curl -fLO "https://github.com/storytold/figcraft/releases/download/v$VERSION/$NAME.tar.gz"
-curl -fLO "https://github.com/storytold/figcraft/releases/download/v$VERSION/SHA256SUMS.txt"
-sha256sum --ignore-missing -c SHA256SUMS.txt
-tar -xzf "$NAME.tar.gz" && cd "$NAME"
-sudo install -m 755 figcraft-server /usr/local/bin/
-```
-
-or from source (it needs a C compiler for the TLS library; the example files are then in
-`packaging/server/`):
+**1. Install the binary**, built from source (Figgure My UI publishes no release archives yet; the
+build needs a C compiler for the TLS library; the example files are then in `packaging/server/`):
 
 ```sh
 sudo apt install -y build-essential git curl
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && . "$HOME/.cargo/env"
-git clone https://github.com/storytold/figcraft && cd figcraft
+git clone https://github.com/vansyson1308/figguremyUI && cd figguremyUI
 cargo build --release --locked -p figcraft-server
-sudo install -m 755 target/release/figcraft-server /usr/local/bin/
+sudo install -m 755 target/release/figguremyui-server /usr/local/bin/
 cd packaging/server
 ```
 
@@ -747,7 +731,7 @@ sudo ufw enable
 it in the app's **File ▸ Publish to server…** (see [Publishing a file](#publishing-a-file)):
 
 ```sh
-sudo -u figcraft figcraft-server --config /etc/figcraft-server/server.toml key
+sudo -u figcraft figguremyui-server --config /etc/figcraft-server/server.toml key
 ```
 
 The other commands ([Managing files and links](#managing-files-and-links)) run the same way, as
@@ -774,12 +758,12 @@ loopback interface only (ports Docker publishes bypass `ufw`), with the proxy fr
 `172.17.0.1` by default):
 
 ```sh
-docker build -f packaging/server/Dockerfile -t figcraft-server .
+docker build -f packaging/server/Dockerfile -t figguremyui-server .
 sudo install -d /etc/figcraft-server
 printf 'listen = "0.0.0.0:47900"\ndata = "/data"\npublic_url = "wss://figcraft.example.com/"\n' | sudo tee /etc/figcraft-server/server.toml
-docker run -d --name figcraft-server --restart unless-stopped -p 127.0.0.1:47900:47900 \
-  -v figcraft-data:/data -v /etc/figcraft-server/server.toml:/etc/figcraft-server/server.toml:ro figcraft-server
-docker exec figcraft-server /usr/local/bin/figcraft-server --config /etc/figcraft-server/server.toml key
+docker run -d --name figguremyui-server --restart unless-stopped -p 127.0.0.1:47900:47900 \
+  -v figcraft-data:/data -v /etc/figcraft-server/server.toml:/etc/figcraft-server/server.toml:ro figguremyui-server
+docker exec figguremyui-server /usr/local/bin/figguremyui-server --config /etc/figcraft-server/server.toml key
 ```
 
 **Upgrading.** Install the new binary as in step 1, then restart: the restart is graceful and apps
@@ -790,7 +774,7 @@ so: upgrade apps and server together when the release notes say the protocol cha
 sudo systemctl restart figcraft-server
 ```
 
-With Docker: rebuild the image, then `docker rm -f figcraft-server` and the `docker run` above
+With Docker: rebuild the image, then `docker rm -f figguremyui-server` and the `docker run` above
 again (the volume keeps the files).
 
 **Backups.** See [Backups](#backups); with systemd, for example:
@@ -805,11 +789,11 @@ sudo systemctl start figcraft-server
 
 - **Not end-to-end encrypted.** TLS (from the reverse proxy) protects files on their way to and from
   the server; on the server they are stored unencrypted, so the operator and anyone who can read
-  the data directory can read every file. Tell the people who publish to your server so (the
-  README's [Privacy and online sharing](../README.md#privacy-and-online-sharing) says it for the
-  default public server, which a build can replace or leave out with `FIGCRAFT_DEFAULT_SERVER`
-  ([releasing](releasing.md#the-default-server)), and whose terms are [online-sharing-terms.md](online-sharing-terms.md): a
-  starting point for your own), and set `operator_contact` and `terms_url` on a public one.
+  the data directory can read every file. Tell the people who publish to your server so (Figgure
+  My UI builds have no default server unless one is set with `FIGGUREMYUI_DEFAULT_SERVER` when
+  building, [releasing](releasing.md#the-default-server); the terms upstream wrote for its public
+  server, kept in [online-sharing-terms.md](online-sharing-terms.md), are a starting point for your
+  own), and set `operator_contact` and `terms_url` on a public one.
 - **Access** is a share link (128-bit random token) per file and access level, an owner token
   (128-bit) per file published without the key, or the server key (128-bit) for managing files.
   Tokens are stored as SHA-256 hashes and every comparison runs in constant time; revoking a link
@@ -845,7 +829,7 @@ sudo systemctl start figcraft-server
   Everything published is checked in full and never run on the server; a bundle's name on disk is
   its hash, so nothing a publisher chooses reaches the file system; downloads are hash-checked at
   both ends and share a bandwidth budget. Installing still means trusting the publisher: a plugin
-  runs in FigCraft's sandbox with the permissions its manifest asks for, which the app shows before
+  runs in Figgure My UI's sandbox with the permissions its manifest asks for, which the app shows before
   it installs anything.
 - **Not end-to-end encrypted**: the server reads every file it keeps (it validates and stores them);
   so can its operator.

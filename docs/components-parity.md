@@ -54,7 +54,7 @@ updates with overrides kept: `library_tests.rs`, `components_scale_tests.rs`.
 | Enable a library in a file; read-only linked copies | done | |
 | Go to main component from an instance of a library component | done | opens the library file in a tab, or brings it to the front, on the page holding the main, selected and zoomed to; a variant goes to that variant. Team libraries on a server are refused with a note; no Return to instance yet |
 | Library updates available; overrides kept | done | a library file saved again within two seconds of being read, at the same length, is read again (its time stamp can't prove it unchanged; #652) |
-| Team libraries: publish to a `figcraft-server` under the file, enable by a share link (a view link reads it), background update checks | done | [server.md](server.md#team-libraries); no team-wide library list or accounts ([gaps](gaps.md) #10) |
+| Team libraries: publish to a `figguremyui-server` under the file, enable by a share link (a view link reads it), background update checks | done | [server.md](server.md#team-libraries); no team-wide library list or accounts ([gaps](gaps.md) #10) |
 | Library analytics | partial | instances per component and the files using them, and the instances each file detached (per component and per file), as apps report them; insertions and detachments week by week for a year (Show usage: the past 30 days, 90 days or year), for components; the layers and files using each style and variable, without insertions, detachments or modes; no chart |
 | Swap library (instances, styles and variables to another library's of the same names, overrides kept) | done | what has no match stays and is listed; one undo step |
 

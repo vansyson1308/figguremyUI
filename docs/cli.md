@@ -1,16 +1,16 @@
-# figcraft-cli
+# figguremyui-cli
 
-FigCraft without a window: inspect, export, convert and render documents, run command scripts, list
+Figgure My UI without a window: inspect, export, convert and render documents, run command scripts, list
 commands, serve MCP, publish plugins and code connect mappings, and measure performance. Build it with
-`cargo build --release -p figcraft-cli` (binary `target/release/figcraft-cli`).
+`cargo build --release -p figcraft-cli` (binary `target/release/figguremyui-cli`).
 
 The CLI follows [RFC-0012](https://github.com/storytold/craft-contrib/blob/main/rfcs/0012-cli-conventions.md),
 the command-line conventions the Craft apps share, in how it parses its arguments (with clap). The
-rules it doesn't follow yet are listed below. `figcraft-cli --help` is the source of truth for
+rules it doesn't follow yet are listed below. `figguremyui-cli --help` is the source of truth for
 the flags; this page explains what they do.
 
-`figcraft-cli --help` (or `-h`, `help`, `help <subcommand>`) prints help on stdout and exits with
-0. So does `--help` or `-h` after a subcommand (`figcraft-cli mcp --help`), even after a mistake on
+`figguremyui-cli --help` (or `-h`, `help`, `help <subcommand>`) prints help on stdout and exits with
+0. So does `--help` or `-h` after a subcommand (`figguremyui-cli mcp --help`), even after a mistake on
 the same line. `--version` (or `-V`) prints the version. Bad arguments are usage errors, caught
 before any work starts: an option the subcommand doesn't take, an option given twice (only the
 automation roots repeat), a missing or bad value (`--scale 0`, `--format bmp`, `--attach nope`)
@@ -19,7 +19,7 @@ Failures exit with 1. The CLI never panics on input.
 
 A value that starts with `-` is written with `=`, for example `--filter=--json`, so an option never
 takes the next option as its value. Put options before `--` to pass a filename beginning with a
-dash, for example `figcraft-cli info --json -- --drawing.figcraft`. Every argument after `--` is
+dash, for example `figguremyui-cli info --json -- --drawing.figcraft`. Every argument after `--` is
 literal, including a filename named `--no-system-fonts`.
 
 Not yet as RFC-0012 asks:
@@ -27,7 +27,7 @@ Not yet as RFC-0012 asks:
   error (exit 2) rather than reaching the command.
 - Failures are messages rather than error enums, and `main` isn't yet a `run(args, out, err)`
   function the tests call in-process.
-- `FIGCRAFT_NO_SYSTEM_FONTS` and `FIGCRAFT_SERVER_KEY` are read where they're used, not declared
+- `FIGGUREMYUI_NO_SYSTEM_FONTS` and `FIGGUREMYUI_SERVER_KEY` are read where they're used, not declared
   on a flag, so `--help` names them only in the flag descriptions.
 - Packages don't install the generated shell completions or man pages yet.
 - There are no ast-grep checks in CI yet.
@@ -49,23 +49,23 @@ The directory contains completions for five shells:
 
 | Shell | File |
 |---|---|
-| Bash | `figcraft-cli.bash` |
-| Elvish | `figcraft-cli.elv` |
-| Fish | `figcraft-cli.fish` |
+| Bash | `figguremyui-cli.bash` |
+| Elvish | `figguremyui-cli.elv` |
+| Fish | `figguremyui-cli.fish` |
 | PowerShell | `_figcraft-cli.ps1` |
 | Zsh | `_figcraft-cli` |
 
-It also contains `figcraft-cli.1` and one man page per subcommand, including nested commands such
+It also contains `figguremyui-cli.1` and one man page per subcommand, including nested commands such
 as `figcraft-cli-plugin-publish.1`. For example, `man target/cli-docs/figcraft-cli-export.1` shows
 the export subcommand's options. Generating these files doesn't install them; package installation
 is still outstanding in [#1396](https://github.com/storytold/figcraft/issues/1396).
 
 ## Fonts
 
-Text lays out and renders with the same fonts as the desktop app: the fonts built into FigCraft
+Text lays out and renders with the same fonts as the desktop app: the fonts built into Figgure My UI
 plus the installed system fonts. The system fonts are indexed once per run, the first time text is
 laid out (about 60 ms warm on a Windows machine with ~900 font files; a run without text skips it).
-Every subcommand takes `--no-system-fonts` (or set `FIGCRAFT_NO_SYSTEM_FONTS=1`, which the desktop
+Every subcommand takes `--no-system-fonts` (or set `FIGGUREMYUI_NO_SYSTEM_FONTS=1`, which the desktop
 app honours too) to use only the built-in fonts, for renders that come out the same on every
 machine, e.g. in CI.
 
@@ -83,8 +83,8 @@ On macOS, fonts activated through Adobe Fonts are read where Creative Cloud keep
 (`~/Library/Application Support/Adobe/CoreSync/plugins/livetype`), so they're available while
 they're active there. Files without an extension are read when they start like a font file.
 
-The collaboration server is a binary of its own, `figcraft-server` (`cargo build --release -p
-figcraft-server`): it keeps files with share links and serves their live sessions, and its
+The collaboration server is a binary of its own, `figguremyui-server` (`cargo build --release -p
+figguremyui-server`): it keeps files with share links and serves their live sessions, and its
 `key`, `files`, `links`, `reports`, `block-ip` and `check` subcommands manage them (a server can
 be open to the public: [server.md](server.md#running-a-public-server)). See [server.md](server.md).
 
@@ -105,7 +105,7 @@ so are `.sketch` files saved by Sketch 48 or newer;
 `info` lists what wasn't imported as `note:` lines.
 
 ```text
-$ figcraft-cli info app.figcraft
+$ figguremyui-cli info app.figcraft
 app.figcraft — App (412 nodes, 6 styles, 12 variables, 3 images)
 page 1 "Screens": 380 nodes, 4 top-level
   2 FRAME "Home" 393.0×852.0
@@ -124,12 +124,12 @@ page 1 "Screens": 380 nodes, 4 top-level
 - `--node` takes a layer id (`12` or `0:12`) or a layer name.
 - `--format fig` (or an `<out>` ending in `.fig`) writes the whole file as `.fig`, experimental:
   written from public format notes, including variables with their modes and bindings and shared
-  styles with their layer links. Checked by opening it again in FigCraft and, on the example
+  styles with their layer links. Checked by opening it again in Figgure My UI and, on the example
   documents and small test files, in other software; other apps may not open every file. What was
   left out (comments, Developer Mode data, some bindings and settings…) is printed as `note:` lines;
   `docs/file-format-parity.md` lists what was checked and what is unchecked.
 - `--format xml` (or an `<out>` ending in `.xml`) writes an Android Vector Drawable, e.g.
-  `figcraft-cli export app.figcraft --node Icon -o ic_icon.xml`. What the format can't draw is
+  `figguremyui-cli export app.figcraft --node Icon -o ic_icon.xml`. What the format can't draw is
   printed as `note:` lines; `--vd-compat` picks how it's handled: `bestEffort` (default:
   approximated), `exact` (left out) or `ignore` (no notes: overlapping layer opacity is dropped,
   even-odd fills keep `fillType="evenOdd"`, diamond gradients are left out). See
@@ -156,21 +156,21 @@ page 1 "Screens": 380 nodes, 4 top-level
   outside the bleed; the page boxes are set (MediaBox the sheet, BleedBox, TrimBox the frame).
   `--cmyk` writes CMYK colour, images included, converted from sRGB with the naive formula
   `K = 1 − max(R, G, B)`, `C = (1 − R − K) / (1 − K)` (M and Y alike): DeviceCMYK without an
-  output intent (no CMYK profile ships with FigCraft), so proof against your printer's profile.
+  output intent (no CMYK profile ships with Figgure My UI), so proof against your printer's profile.
 
 ```sh
-figcraft-cli export app.figcraft -o exports/ --scale 2
-figcraft-cli export app.figcraft -o hero.svg --node "Hero"
-figcraft-cli export app.figcraft -o screens.pdf --page "Screens"
-figcraft-cli export app.figcraft -o poster.pdf --node "Poster" --bleed 3mm --crop-marks --cmyk
-figcraft-cli export app.figcraft -o handoff.fig
+figguremyui-cli export app.figcraft -o exports/ --scale 2
+figguremyui-cli export app.figcraft -o hero.svg --node "Hero"
+figguremyui-cli export app.figcraft -o screens.pdf --page "Screens"
+figguremyui-cli export app.figcraft -o poster.pdf --node "Poster" --bleed 3mm --crop-marks --cmyk
+figguremyui-cli export app.figcraft -o handoff.fig
 ```
 
 ### `convert <in> <out>`
 
-By extension. Inputs: `.figcraft`, `.json` (FigCraft or REST API file JSON), `.fig` (best effort), `.sketch` (Sketch 48 or newer, best effort), `.svg` (an editable frame: groups,
+By extension. Inputs: `.figcraft`, `.json` (Figgure My UI or REST API file JSON), `.fig` (best effort), `.sketch` (Sketch 48 or newer, best effort), `.svg` (an editable frame: groups,
 shapes, text, gradients, masks and effects; `info` lists what it left out as `note:` lines), `.png/.jpg/.webp/.gif/.tif/.bmp`
-(an image layer). Outputs: `.figcraft`, `.json` (FigCraft JSON, pretty-printed), `.svg`,
+(an image layer). Outputs: `.figcraft`, `.json` (Figgure My UI JSON, pretty-printed), `.svg`,
 `.png/.jpg/.webp` (the current page rendered at 1x with its background), `.pdf` (the current page's
 frames, one page each), `.fig` (the whole file, experimental, as `export --format fig`), `.penpot`
 (the whole file as a Penpot 2.x archive, as `export --format penpot`).
@@ -190,7 +190,7 @@ Runs commands in a headless session (a new document, or `--in`), printing one JS
 
 The whole script is **one undo step**, and it is **all-or-nothing**, exactly like running the same
 commands through `command.batch` (the MCP tool `batch`, the control channel, plugins). A step key
-other than `command`, `params` and `as`, or a parameter the command's doc (`figcraft-cli commands`)
+other than `command`, `params` and `as`, or a parameter the command's doc (`figguremyui-cli commands`)
 doesn't list, fails the script with an error naming it (`ids` and `id` are always taken). A step named
 with `"as"` can be used by later steps: `{"$ref": "name"}` in a step's params is the `id` in that
 step's result (`{"$step": n}` does the same by zero-based position), and `"field"` takes another key
@@ -248,8 +248,8 @@ them and `file.newFromTemplate` opens one as the document the following steps (a
 
 ```sh
 echo '[{"command": "file.newFromTemplate", "params": {"template": "dashboard"}}]' > start.json
-figcraft-cli run start.json --out dashboard.figcraft
-figcraft-cli export dashboard.figcraft -o dashboard.png
+figguremyui-cli run start.json --out dashboard.figcraft
+figguremyui-cli export dashboard.figcraft -o dashboard.png
 ```
 
 ### Confining a run: `--automation-read-root DIR` / `--automation-write-root DIR`
@@ -263,10 +263,10 @@ reads and writes as the user who started it.
 
 ```sh
 # Renders in/doc.figcraft to out/ok.png and can touch nothing else.
-figcraft-cli render in/doc.figcraft -o out/ok.png \
+figguremyui-cli render in/doc.figcraft -o out/ok.png \
   --automation-read-root in --automation-write-root out
 
-figcraft-cli render in/doc.figcraft -o ./escaped.png \
+figguremyui-cli render in/doc.figcraft -o ./escaped.png \
   --automation-read-root in --automation-write-root out
 # error: automation path rejected: . is outside the folders that may be written: …/out
 ```
@@ -282,7 +282,7 @@ machines.
 ### `mcp [--attach PORT] [--automation-read-root DIR]… [--automation-write-root DIR]…`
 
 Serve MCP on stdio: headless by default, or attached to a running app started with
-`figcraft --control PORT`. See [mcp.md](mcp.md). The automation roots (each repeatable; existing
+`figguremyui --control PORT`. See [mcp.md](mcp.md). The automation roots (each repeatable; existing
 folders) confine the files the agent's calls read (inside a read or write root) and write (inside a
 write root); everything else is refused ([mcp.md › Confining file access](mcp.md#confining-file-access)).
 They apply to the headless session only, and that is why `--attach` refuses them: an attached server
@@ -296,9 +296,9 @@ live sessions (`collab.*`: without a key on a server open to the public, with `c
 ### `plugin publish <folder> --server ws://host:port/[?key=KEY]`
 
 Publishes a plugin folder (`figcraft-plugin.json`, the module its `main` names, an optional `assets/`
-folder) to a `figcraft-server`'s plugin directory as a new version, and prints its name, version,
+folder) to a `figguremyui-server`'s plugin directory as a new version, and prints its name, version,
 size and SHA-256. The server's key comes from the address or, better, from the
-`FIGCRAFT_SERVER_KEY` environment variable (it then stays out of the shell history and process
+`FIGGUREMYUI_SERVER_KEY` environment variable (it then stays out of the shell history and process
 lists); it is never printed. The bundle is checked before it is sent and again by the server. See
 [plugins.md](plugins.md#plugin-directories).
 
@@ -314,7 +314,7 @@ is linked, nothing is saved and the exit code is 1. `--dry-run` reports what wou
 without saving. Run it from the repository, for example in CI after the mappings change:
 
 ```sh
-figcraft-cli connect publish ../design/ui.figcraft --mappings figcraft.connect.json
+figguremyui-cli connect publish ../design/ui.figcraft --mappings figcraft.connect.json
 ```
 
 It takes the automation roots like the other file subcommands. See

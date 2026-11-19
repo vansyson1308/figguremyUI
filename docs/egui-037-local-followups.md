@@ -116,7 +116,7 @@ Human review and human merge are required; no publication is authorized by this 
 
 ## Outgoing IME surrounding text (E21b/P7b)
 
-Implemented for FigCraft's one custom IME producer, `shortcuts::ime_output`, against the reviewed
+Implemented for Figgure My UI's one custom IME producer, `shortcuts::ime_output`, against the reviewed
 fork API. The descriptor now carries:
 
 - a stable owner `(document uid, text node)` and the engine's `TextEdit::editing_session` as the
@@ -173,7 +173,7 @@ not a passing claim.
 - The committed root `[patch.crates-io]` table pins the egui family and winit to
   immutable published fork revisions. `craft-window` is pinned to the reviewed
   craft-libs revision targeting egui 0.37; its optional `egui` feature stays disabled
-  because FigCraft needs only the frame probe.
+  because Figgure My UI needs only the frame probe.
 - `Cargo.lock` is committed and resolves the canonical Git sources without local
   path overrides. Use `--locked`; the earlier parent integration config is not
   required to reproduce this graph.

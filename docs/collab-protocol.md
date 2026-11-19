@@ -8,10 +8,10 @@ embeds, invite links, document sync end to end (several apps edit one file), liv
 selections, avatars and follow. **Step 3 is implemented**: per-user undo and redo, rejection
 handling and offline queueing with reconnect (`crates/collab`, wired into the engine's live
 session and the transport). **Step 4 is implemented**: the browser build joins sessions a desktop
-app hosts and publishes files to a server, and `figcraft://` invite links open the app and join. Styles, variables, collections,
+app hosts and publishes files to a server, and `figguremyui://` invite links open the app and join. Styles, variables, collections,
 modes and comments created in a session take ids from their creator's id space, and others' text
 carets, cursor chat and spotlights show live (see Presence). **Step 5 is implemented**: the
-standalone `figcraft-server` (`apps/figcraft-server`, running it: [`server.md`](server.md)) keeps
+standalone `figguremyui-server` (`apps/figcraft-server`, running it: [`server.md`](server.md)) keeps
 many files with persistence and compaction, and share links that let people edit or only view;
 the app publishes to it, and a file's team library lives there for other files to use. Files are
 shared with **join codes** (see *Sharing with a join code*): online through a server that names
@@ -36,12 +36,12 @@ resolve **last-writer-wins in server order**. Clients apply their own edits imme
 (optimistically) and reconcile when the server echoes or overrides them. Cursors, selections and
 viewports are **ephemeral presence** messages that are never stored. The desktop app can **host a
 session itself** (LAN or a forwarded port), so no public server is needed to start; the same
-server code also builds as a standalone `figcraft-server` binary for self-hosting.
+server code also builds as a standalone `figguremyui-server` binary for self-hosting.
 
 ## Why this shape
 
 Public engineering write-ups about multiplayer design tools converge on the same choices, and they
-fit FigCraft's architecture:
+fit Figgure My UI's architecture:
 
 - **WebSockets**: one long-lived, bidirectional, ordered connection; works natively (tungstenite)
   and in the browser build (the browser's WebSocket API through `web-sys`), passes through proxies
@@ -52,10 +52,10 @@ fit FigCraft's architecture:
   general CRDTs carry metadata and tombstones we don't need when a server orders everything. With
   per-property last-writer-wins plus a few tree rules (below), every client converges to the
   server's state, and the server can reject invalid changes (cycles, edits to deleted objects).
-- **State-based changes instead of replaying commands**: FigCraft's commands are deterministic
+- **State-based changes instead of replaying commands**: Figgure My UI's commands are deterministic
   locally, but replaying them on other clients would require identical documents, fonts and
   floating point everywhere. Instead a command runs once, on the client that issued it, and the
-  resulting document difference is what gets sent. FigCraft's document is a persistent map of
+  resulting document difference is what gets sent. Figgure My UI's document is a persistent map of
   `Arc<Node>` with dirty tracking, so computing the exact changed nodes and properties after a
   command is cheap.
 - **Binary encoding**: cursor traffic is frequent and documents are large; a compact, schema-based
@@ -485,11 +485,11 @@ resuming with its offline edits, and leaving the session going back to snapshot 
 - **Host from the app** (first step, no public server): "Share ▸ Local network ▸ Start sharing"
   (or `collab.host`) starts the embedded server on the local machine for the open file and shows
   a join code and an invite link
-  (`figcraft://join?host=192.168.1.20:47900&file=<id>&token=<secret>`; also a plain
+  (`figguremyui://join?host=192.168.1.20:47900&file=<id>&token=<secret>`; also a plain
   `ws://`/`wss://` URL). Others on the same network (or through a forwarded port / VPN such as a
   mesh VPN) join with "File ▸ Join live session" or by opening the link. When the host leaves, the
   session ends; everyone keeps a local copy.
-- **Self-hosted server**: the same server as a `figcraft-server` binary that keeps many files,
+- **Self-hosted server**: the same server as a `figguremyui-server` binary that keeps many files,
   persists them (a snapshot plus an append-only log of accepted batches, compacted into new
   snapshots), and survives restarts. TLS comes from a reverse proxy (`wss://`). *Built*, below.
 - **Auth**: an unguessable per-session token in the invite link (hosting from the app); per-file
@@ -530,7 +530,7 @@ resuming with its offline edits, and leaving the session going back to snapshot 
   the user chooses the local network (`lan`: the address of the interface the default route uses)
   or names an interface (`bind: "<ip>"`, e.g. a VPN's). It runs the core's `Server` as the
   authority and takes part itself without a socket.
-- Links: `figcraft://join?host=<ip:port>&file=<id>&token=<secret>` or
+- Links: `figguremyui://join?host=<ip:port>&file=<id>&token=<secret>` or
   `ws://<ip:port>/?file=<id>&token=<secret>` (either works for joining). The client connects to
   `ws://<ip:port>/` and sends the token only inside its `Hello`. Links are pasted into the Join
   dialog (its field has the keyboard when it opens; Escape closes it), or opened from anywhere:
@@ -696,7 +696,7 @@ resuming with its offline edits, and leaving the session going back to snapshot 
   the browser build (`web_url`). A server without a list answers `Failed`; one older than the
   request can't read it. `collab.files {refresh: true}` asks the server in Preferences (not the
   public server the app ships with), after the owned files.
-- **Joining.** A team list link names the server and the file, `figcraft://join?server=…&file=<id>&team=1`
+- **Joining.** A team list link names the server and the file, `figguremyui://join?server=…&file=<id>&team=1`
   (`Lookup::Team` in `Invite::parse_join`). The guest's first connection sends `ResolveTeam
   {file}` instead of a hello; the server makes the file's team link the first time (access from
   `team_files`, label `Team (<access>)`, its token kept in `links.json`) and answers `Resolved
@@ -758,7 +758,7 @@ resuming with its offline edits, and leaving the session going back to snapshot 
   page refuses other hosts up front with a message instead of failing obscurely. To join from
   other machines, serve the web build over `http://` on a trusted network (locally:
   `python3 -m http.server 8767` in the built site, then `http://localhost:8767/` or the machine's
-  LAN address), or use `wss://` links of a `figcraft-server` behind a TLS reverse proxy (the
+  LAN address), or use `wss://` links of a `figguremyui-server` behind a TLS reverse proxy (the
   browser opens them; see *Built (the standalone server)*). Some browsers also ask before a public
   site may reach private network addresses.
 
@@ -779,16 +779,16 @@ resuming with its offline edits, and leaving the session going back to snapshot 
   (people in the file are told as when a host stops: close code 1001 with the reason, final)
   (or removing a file) disconnects whoever joined with it, with the reason; the link no longer
   joins.
-- **Links** name the server's endpoint: `figcraft://join?host=<host:port>&file=…&token=…` for a
-  plain `ws://` endpoint at `/`, `figcraft://join?server=<ws(s)://host[:port][/path]>&file=…&token=…`
+- **Links** name the server's endpoint: `figguremyui://join?host=<host:port>&file=…&token=…` for a
+  plain `ws://` endpoint at `/`, `figguremyui://join?server=<ws(s)://host[:port][/path]>&file=…&token=…`
   for any endpoint (TLS, a path behind a proxy), or `ws(s)://…?file=…&token=…`. The desktop app,
-  `figcraft-cli` and the browser all open `wss://`: natively through rustls (ring, Mozilla's root
-  certificates compiled in, plus any authority in the PEM file `FIGCRAFT_CA_FILE` names), always
+  `figguremyui-cli` and the browser all open `wss://`: natively through rustls (ring, Mozilla's root
+  certificates compiled in, plus any authority in the PEM file `FIGGUREMYUI_CA_FILE` names), always
   verifying the certificate; the browser through its own WebSocket.
 - **Managing files.** A connection that opens with `Manage {key}` instead of `Hello` sends
   `Admin` requests: publish a document (its snapshot) as a new file, which returns an edit link
   and a view link; list files and links; make and revoke links; remove a file. The server key is
-  128 bits in the data directory. The server's command line (`figcraft-server files|links|key`)
+  128 bits in the data directory. The server's command line (`figguremyui-server files|links|key`)
   uses the same requests when a server is running on the directory, else it changes the directory
   itself (one process holds it at a time: an OS file lock).
 - **Publishing from the app.** `collab.publish {server, name?}` (File ▸ Publish to server…)
@@ -904,20 +904,22 @@ installing: [`plugins.md`](plugins.md#plugin-directories)):
 
 *Built* (opening invite links):
 
-- The desktop app takes an invite link on its command line (`figcraft "figcraft://join?…"`): once
+- The desktop app takes an invite link on its command line (`figguremyui "figguremyui://join?…"`): once
   the window is up it joins (`collab.join`); a link it can't use opens the Join dialog with the
-  link and the reason. Other arguments are files, as paths or `file://` URLs.
-- **Windows**: the app registers itself per user as the opener of `figcraft://` under
-  `HKEY_CURRENT_USER\Software\Classes\figcraft` (no administrator rights): the scheme, its icon
-  and `"<figcraft.exe>" "%1"`. Preferences ▸ **Open invite links in FigCraft** (and
+  link and the reason. Other arguments are files, as paths or `file://` URLs. A link with upstream's
+  `figcraft://` scheme is still accepted there and when pasted; the system only registers
+  `figguremyui://` ([`migration.md`](migration.md)).
+- **Windows**: the app registers itself per user as the opener of `figguremyui://` under
+  `HKEY_CURRENT_USER\Software\Classes\figguremyui` (no administrator rights): the scheme, its icon
+  and `"<figguremyui.exe>" "%1"`. Preferences ▸ **Open invite links in Figgure My UI** (and
   `collab.registerLinks {on?}`) turns it on or off; it defaults to on for installed builds, which
   register on first run, and off for builds from source (inside a Cargo build directory, or debug
   builds), which leave any registration alone. Turning it off removes only this copy's
   registration. The registry sits behind a trait, so tests use a fake.
-- **macOS**: the bundle declares the scheme (`CFBundleURLTypes`), so links open FigCraft; the
+- **macOS**: the bundle declares the scheme (`CFBundleURLTypes`), so links open Figgure My UI; the
   link itself arrives as an Apple Event, which the windowing layer doesn't pass on yet, so the app
   opens without joining (paste the link) until it does.
-- **Linux and FreeBSD**: the desktop entry declares `x-scheme-handler/figcraft` and passes URLs
+- **Linux and FreeBSD**: the desktop entry declares `x-scheme-handler/figguremyui` and passes URLs
   (`%U`); the app joins from its command line.
 - An app that is already running doesn't receive the link: a second window starts and joins.
 
@@ -938,7 +940,7 @@ Decisions, as built:
   snapshot and is told how many unsent changes couldn't be kept.
 - **Catch-up.** The server keeps a log of accepted batches (`Limits::max_log_batches`, default
   10 000, `max_log_changes`, default 1 000 000, and `max_log_bytes`, default 64 MiB, which a
-  desktop host uses as they are and `figcraft-server` takes from its `max_log_mb`). If every batch
+  desktop host uses as they are and `figguremyui-server` takes from its `max_log_mb`). If every batch
   after the client's sequence number is still in it, the welcome carries them (`CatchUp::Delta`);
   otherwise the whole document (`CatchUp::Snapshot`), compressed for a client whose hello
   announced `packed` (`CatchUp::Packed`, `message::pack` / `unpack`: deflate at its fastest level
@@ -979,12 +981,12 @@ Everything stays a command: `collab.share`, `collab.host`, `collab.join`, `colla
 `collab.forgetFile` and `collab.manageFile` are ordinary commands, so the CLI, the control channel and MCP can
 host, publish and join sessions and manage the files they put online; an agent can be a participant with its own cursor.
 
-*Built*: the desktop app (control channel) and the MCP server's headless session (`figcraft-cli
+*Built*: the desktop app (control channel) and the MCP server's headless session (`figguremyui-cli
 mcp`) both have the network link installed; `collab.join` returns at once with status
 `"connecting"` and `collab.peers` tells when it is live (or why it failed) and who is typing in
 which text layer. Sessions are per document there too: the commands are about the active
 document's session (`doc.switch` changes it) and `sessions` in `collab.peers` lists them all. An agent's pointer is `collab.cursor {x, y}`; it can chat next to it
-(`collab.cursorChat {text}`) and spotlight (`collab.spotlight`). The one-shot CLI (`figcraft-cli run`) has no link: there the commands say
+(`collab.cursorChat {text}`) and spotlight (`collab.spotlight`). The one-shot CLI (`figguremyui-cli run`) has no link: there the commands say
 live sessions aren't available.
 
 ## Security
@@ -1005,10 +1007,10 @@ chooses to share on the network; the default is the invite link with a random to
   new for every session (stopping and starting again invalidates old links). It is compared in
   constant time (the hub's backend). It is in the invite link by design, so whoever holds the link
   can join until the session stops: share it like a password. It never travels in the WebSocket
-  request (the path is `/`), so proxies don't log it; FigCraft never logs it (logs name addresses
+  request (the path is `/`), so proxies don't log it; Figgure My UI never logs it (logs name addresses
   and ports only), and errors about links never echo the link. Traffic is not encrypted (`ws://`):
   on a shared network, others on the path could read presence and the token. Use a trusted LAN
-  or a VPN; TLS (`wss://`) comes from a reverse proxy in front of a `figcraft-server`.
+  or a VPN; TLS (`wss://`) comes from a reverse proxy in front of a `figguremyui-server`.
 - **Limits.** At most 64 open sockets (joined or not) and the core's 256 people; a connection must
   finish the WebSocket handshake and say hello within 10 s, and one silent for 45 s is dropped
   (clients ping every 15 s); client messages are at most 16 MiB (what the host sends keeps the
@@ -1088,8 +1090,8 @@ chooses to share on the network; the default is the invite link with a random to
    resuming connection), followed by client-scoped ids for document-level objects and remote text
    carets on the canvas.
 4. **Browser client** (WebSocket through `web-sys`). **Done** (the web build joins
-   desktop-hosted sessions and publishes files to a server, #917; `figcraft://` links open the desktop app and join).
-5. **Standalone `figcraft-server`** with persistence, compaction, share links and permissions.
+   desktop-hosted sessions and publishes files to a server, #917; `figguremyui://` links open the desktop app and join).
+5. **Standalone `figguremyui-server`** with persistence, compaction, share links and permissions.
    **Done** (`apps/figcraft-server` on the shared hub; edit and view links, the server key,
    publishing from the app; see [`server.md`](server.md)), followed by open hosting for a public
    server (owner tokens, limits per address, idle expiry, reports and blocks), by sharing with

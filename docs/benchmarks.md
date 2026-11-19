@@ -1,7 +1,7 @@
 # Benchmarks: milestone M11 before and after
 
 > **Measured:** 2026-11-13 · **Baseline:** `011f08e5` · **New:** `4501b37b` · Both release builds of
-> `figcraft-cli`. **Status: two budgets missed; the performance work to fix them is in progress**
+> `figguremyui-cli`. **Status: two budgets missed; the performance work to fix them is in progress**
 > (`handoff/CHECKLIST.md`).
 
 ## How it was measured

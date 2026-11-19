@@ -2,15 +2,15 @@
 
 > **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-10 · **Change:** minor (unused; zoomed-out images draw from small copies that stay decoded, so a page of photos zooms out without decoding them again; under Wayland a minimised window answers control and MCP requests in about half a second instead of timing out after 60 s (#1906); images copied in other apps paste in the browser (#492); text reads only the fallback fonts it draws with; `doc.list` gives AI agents and plugins the open files' names, not their paths (#1117); a batch keeps one undo snapshot, not one per step (#1099); one depth cap bounds a whole render, pattern sources included, and render threads get 8 MiB stacks (#1082); in the browser an internal error that stops the page keeps its unsaved files, which open again on reload (#1123); the portable Windows zip keeps its settings, recovery copies and plugins in `config\` beside the executable, starting with an installed copy's preferences; the window starts on other graphics when its first ones fail before the first frame: Direct3D 12 compiles with FXC and no device compiles wgpu's indirect-validation shaders, then Vulkan, OpenGL and lower requirements on the power-saving GPU (#965, #1438); large images on the canvas draw from a smaller copy, so two 16k images no longer lag (#1483); macOS: the Quit menu and ⌘Q ask about unsaved changes (#857); egui/eframe 0.37 dependency migration; hidden-window screenshot deadlines; zoom previews; hidden windows answer control requests; macOS file opening, the Windows start-up message, Linux packaging; copy and paste in the browser; Windows QA pass; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; pen pressure for the Pencil and brushes on Windows and from browser styluses; macOS: quitting ends the process once everything is kept, avoiding the Touch Bar teardown crash (#781); Linux and BSD clipboard: images under Wayland, reads time out; minimised windows under Wayland; window controls on Wayland without server decorations; canvas textures on device pixels) · **Target:** Figma Design (desktop app 126.10.7)
 
-How FigCraft uses hardware and which platforms it runs on, against Figma. Figma's desktop app is
+How Figgure My UI uses hardware and which platforms it runs on, against Figma. Figma's desktop app is
 Electron with a GPU helper process; its canvas renders on the GPU (WebGL, with WebGPU rolling out
-since 2025). FigCraft renders the canvas on the CPU and presents it through wgpu.
+since 2025). Figgure My UI renders the canvas on the CPU and presents it through wgpu.
 
 **Summary (estimated):** hardware ~60%, performance ~60%, platforms ~75%.
 
 ## Hardware
 
-| Feature | Figma | FigCraft (macOS / Windows / Linux / web) | Hours |
+| Feature | Figma | Figgure My UI (macOS / Windows / Linux / web) | Hours |
 |---|---|---|---|
 | Canvas rendering | GPU | CPU (tiny-skia), banded across cores, retained (re-renders only what an edit or pan touches), levels of detail below 50% zoom, images drawn from the smallest copy that holds the size they show, down to 256 px (#1483); when renders from scratch are slow, a new zoom shows the whole view coarsely first, then refines it (#312); shown through wgpu (WebGPU or WebGL2 in the browser) | 30–60 for a GPU path |
 | Effects (blurs, glass, noise) | GPU | CPU | in the above |
@@ -24,7 +24,7 @@ since 2025). FigCraft renders the canvas on the CPU and presents it through wgpu
 
 ## Performance (measured by `cargo xtask bench`, synthetic files, owner's Mac)
 
-| Case | FigCraft | Figma |
+| Case | Figgure My UI | Figma |
 |---|---|---|
 | 50k-layer page, zoomed out, full render | ~8 ms (levels of detail) | not timed side by side |
 | 10k layers: full 1440×900 render | 7–15 ms | not timed |
@@ -37,10 +37,10 @@ Nothing has been timed against Figma on the same document (needs `.fig` import).
 
 ## Platforms
 
-| Platform | Figma | FigCraft | Notes |
+| Platform | Figma | Figgure My UI | Notes |
 |---|---|---|---|
 | macOS | desktop app (Intel and Apple silicon) | universal `.dmg`, signed and notarized (v0.2.0) | where nearly all QA happens. Quitting ends the process once the preferences, recovery copies and live sessions are taken care of: the window's teardown crashed on Macs with a Touch Bar (#781); the Quit menu and ⌘Q ask about unsaved changes like the main window's close button (#857), and like it close the main window only: with several windows open, each quit closes one; a quit that never asked — killed or crashed — still leaves recovery copies for the next start |
-| Windows x64 / arm64 | desktop app | `.msi` and portable zip for x64, x86 and arm64 | built in CI; Windows: QA pass done 2026-10-11, findings in PR. The portable zip keeps its settings in `config\` beside `figcraft.exe` (a `portable` file there), taking an installed copy's preferences on its first start (#1320). Draws with Direct3D 12 (FXC shaders) or OpenGL; when the graphics fail before the first frame it starts again on Vulkan, then OpenGL, then the power-saving GPU with lower limits (#965) |
+| Windows x64 / arm64 | desktop app | `.msi` and portable zip for x64, x86 and arm64 | built in CI; Windows: QA pass done 2026-10-11, findings in PR. The portable zip keeps its settings in `config\` beside `figguremyui.exe` (a `portable` file there), taking an installed copy's preferences on its first start (#1320). Draws with Direct3D 12 (FXC shaders) or OpenGL; when the graphics fail before the first frame it starts again on Vulkan, then OpenGL, then the power-saving GPU with lower limits (#965) |
 | Linux | none (browser only) | AppImage, `.deb`, `.rpm`, Flatpak, tarball, x86_64 and aarch64; riscv64 tarball | CI tests run here. Clipboard (also the BSDs): reads run on a helper thread that gives up after 2 s, and images copied in other apps paste under Wayland through the data-control protocol (#693). Under Wayland the app can't tell its window is minimised: a window that draws nothing for 0.2 s while a control request waits for it answers the request as a hidden window does (about half a second each, #1906), and only requests that need a drawn frame (screenshots, input) wait there (#720). None of this run on a Linux desktop here. On a Wayland compositor without server-side decorations (GNOME) the window gets winit's Adwaita controls (#592: checked by its author in a GNOME Wayland session; KDE not run) |
 | FreeBSD | none | tarball | |
 | Web | primary (figma.com) | `figcraft-web` (WASM, WebGPU/WebGL2), web zip | no accessibility tree; file access through the browser; copy and paste through the system clipboard (copies written from the copy event, pastes read from the paste event, its text or an image copied in another app); an internal error stops the page (a panic can't be caught there), but its unsaved files are kept in the page's local storage (about 5 MB) and open again on reload (#1123) |

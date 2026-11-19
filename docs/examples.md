@@ -23,7 +23,7 @@ three untested assumptions and three decisions with the options they rejected, a
 
 ```sh
 cargo build -p figcraft-cli
-figcraft-cli mcp   # then, from an MCP client:
+figguremyui-cli mcp   # then, from an MCP client:
 #   open_file {"path": "examples/signup-flow.figcraft"}
 #   run_scenarios {}            → passed, total, failed and each scenario's steps
 #   check_prototype {}          → screens, flow problems (none in these files)
@@ -31,7 +31,7 @@ figcraft-cli mcp   # then, from an MCP client:
 #   simulate_prototype {"start": <frame>, "steps": [...], "image": true}   → a state as a picture
 ```
 
-or without a client, as the user, with a script for `figcraft-cli run`:
+or without a client, as the user, with a script for `figguremyui-cli run`:
 
 ```json
 [{"command": "file.open", "params": {"path": "examples/bike-repair-booking.figcraft"}},
@@ -111,19 +111,19 @@ The files are generated, not edited by hand:
 
 ```sh
 cargo build -p figcraft-cli
-python3 examples/build/build_examples.py --cli target/debug/figcraft-cli --out examples
-python3 examples/build/build_examples.py --cli target/debug/figcraft-cli --out /tmp/x --only pantry-dashboard --shots /tmp/x/shots
+python3 examples/build/build_examples.py --cli target/debug/figguremyui-cli --out examples
+python3 examples/build/build_examples.py --cli target/debug/figguremyui-cli --out /tmp/x --only pantry-dashboard --shots /tmp/x/shots
 ```
 
-The script (Python 3, standard library only) starts `figcraft-cli --no-system-fonts mcp` and
+The script (Python 3, standard library only) starts `figguremyui-cli --no-system-fonts mcp` and
 builds each file with tool calls, as an AI agent would; the same binary gives the same bytes. It
 stops with a non-zero exit, naming the call and its error, when a tool fails, and when an example
-doesn't pass its checks. It needs a `figcraft-cli` built with craft-fonts (`CRAFT_FONTS_DIR`), since
+doesn't pass its checks. It needs a `figguremyui-cli` built with craft-fonts (`CRAFT_FONTS_DIR`), since
 the files use Inter.
 
 Because the builder is an AI agent, the end states it declares and the decisions it records are
 proposals. The script's separate step `accept_as_maintainer()` (on by default;
-`--no-accept-as-maintainer` skips it) then accepts them with `figcraft-cli run`, which acts as the
+`--no-accept-as-maintainer` skips it) then accepts them with `figguremyui-cli run`, which acts as the
 user. The maintainers' acceptance step stands in for a person's review of these example files; in
 your own files an agent's end states and decisions stay proposals until you accept them. An
 accepted proposal keeps its author (the builder) and records who accepted it (`acceptedBy: user`),
