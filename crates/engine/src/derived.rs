@@ -2,12 +2,19 @@ use super::{Arc, BTreeSet, Document, Node, NodeId, board, cmd, components, measu
 
 /// Nodes whose `Arc` differs from `before` (new or edited).
 pub fn changed_nodes(doc: &Document, before: &Document) -> Vec<NodeId> {
-    doc.ids()
-        .filter(|id| match (doc.node_arc(*id), before.node_arc(*id)) {
-            (Some(a), Some(b)) => !Arc::ptr_eq(a, b),
-            _ => true,
-        })
-        .collect()
+    // One walk through both in id order (each is sorted by id), not a lookup in `before` per
+    // layer: every command an AI agent runs asks (where it works, `sharing::agent`), and the
+    // lookups cost a quarter of a small edit (PF1).
+    let mut old = before.node_arcs().peekable();
+    let mut out = Vec::new();
+    for (id, a) in doc.node_arcs() {
+        while old.next_if(|(o, _)| *o < id).is_some() {}
+        match old.next_if(|(o, _)| *o == id) {
+            Some((_, b)) if Arc::ptr_eq(a, b) => {}
+            _ => out.push(id),
+        }
+    }
+    out
 }
 
 #[cfg(test)]

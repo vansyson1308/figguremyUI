@@ -6,7 +6,7 @@ use base64::Engine as _;
 use figcraft_engine::params::normalize_paint;
 use serde_json::{Map, Value, json};
 
-use crate::backend::{Backend, decode_data, error_detail, page_children};
+use crate::backend::{Backend, OpenDocument, decode_data, error_detail, page_children};
 
 /// The result of `tools/call`: MCP content blocks plus the `isError` flag.
 #[derive(Clone, Debug, PartialEq)]
@@ -57,11 +57,17 @@ impl ToolResult {
         }
     }
     pub fn to_value(&self) -> Value {
-        let mut v = json!({"content": self.content, "isError": self.is_error});
-        if let Some(s) = &self.structured {
-            v["structuredContent"] = s.clone();
+        self.clone().into_value()
+    }
+    /// [`Self::to_value`], moving the blocks instead of copying them (a server answers once).
+    pub fn into_value(self) -> Value {
+        let mut v = Map::new();
+        v.insert("content".into(), Value::Array(self.content));
+        v.insert("isError".into(), Value::Bool(self.is_error));
+        if let Some(s) = self.structured {
+            v.insert("structuredContent".into(), s);
         }
-        v
+        Value::Object(v)
     }
     /// The first text block (tests and the CLI).
     pub fn first_text(&self) -> &str {
@@ -580,6 +586,10 @@ impl Backend for InDocument<'_> {
         self.inner.take_revision()
     }
 
+    fn documents(&mut self) -> Option<Vec<OpenDocument>> {
+        self.inner.documents()
+    }
+
     fn app_info(&mut self) -> Option<Value> {
         self.inner.app_info()
     }
@@ -817,25 +827,13 @@ impl ToolState {
     }
 }
 
-/// One open document, as `doc.list` gives it.
-#[derive(Clone, Debug)]
-struct Open {
-    id: u64,
-    /// Its tab's place among the open documents (`doc.list`'s `index`).
-    index: Option<u64>,
-    name: String,
-    /// `None` from an app that doesn't count revisions yet.
-    revision: Option<u64>,
-    front: bool,
-}
-
 /// A document's name as results carry it: one line, short enough that naming the document never
 /// pushes a response that fitted its size limit over it.
 fn short_name(name: &str) -> String {
     name.chars().filter(|c| !c.is_control()).take(48).collect()
 }
 
-impl Open {
+impl OpenDocument {
     /// `{id, name, revision, front}`: what every result says about the document it is about.
     fn identity(&self) -> Value {
         self.identity_at(self.revision)
@@ -856,7 +854,7 @@ impl Open {
 /// never one read afterwards, which could take in somebody else's change made in between and so
 /// let a later `ifRevision` through over it. `d.revision` (read after) only for a document the
 /// call itself made.
-fn revision_for(d: &Open, changed: Option<(u64, u64)>, before: Option<&[Open]>) -> Option<u64> {
+fn revision_for(d: &OpenDocument, changed: Option<(u64, u64)>, before: Option<&[OpenDocument]>) -> Option<u64> {
     if let Some((_, rev)) = changed.filter(|(id, _)| *id == d.id) {
         return Some(rev);
     }
@@ -867,28 +865,17 @@ fn revision_for(d: &Open, changed: Option<(u64, u64)>, before: Option<&[Open]>) 
 }
 
 /// The open documents. Asked without `document`, so `front` is the tab the user sees in front.
-fn open_documents(b: &mut dyn Backend) -> Result<Vec<Open>, String> {
+/// Read without a command where the backend can ([`Backend::documents`]), else with `doc.list`.
+fn open_documents(b: &mut dyn Backend) -> Result<Vec<OpenDocument>, String> {
+    if let Some(docs) = b.documents() {
+        return Ok(docs);
+    }
     let list = exec(b, "doc.list", json!({}))?;
-    Ok(list
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|d| {
-                    Some(Open {
-                        id: d.get("id")?.as_u64()?,
-                        index: d.get("index").and_then(Value::as_u64),
-                        name: d.get("name").and_then(Value::as_str).unwrap_or_default().to_string(),
-                        revision: d.get("revision").and_then(Value::as_u64),
-                        front: d.get("active").and_then(Value::as_bool).unwrap_or(false),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default())
+    Ok(list.as_array().map(|a| a.iter().filter_map(OpenDocument::from_listed).collect()).unwrap_or_default())
 }
 
 /// "Name" (id 3), "Other" (id 5): the open documents in an error message.
-fn listed(docs: &[Open]) -> String {
+fn listed(docs: &[OpenDocument]) -> String {
     match docs {
         [] => "none".into(),
         docs => docs.iter().map(|d| format!("\"{}\" (id {})", short_name(&d.name), d.id)).collect::<Vec<_>>().join(", "),
@@ -992,7 +979,7 @@ pub fn call_tool_in(state: &mut ToolState, b: &mut dyn Backend, name: &str, args
     about_document(state, b, outcome, target, explicit.as_ref(), before.as_deref(), &ctx)
 }
 
-fn run_tool(b: &mut dyn Backend, name: &str, a: &Map<String, Value>, ctx: &mut Ctx, before: Option<&[Open]>) -> Outcome {
+fn run_tool(b: &mut dyn Backend, name: &str, a: &Map<String, Value>, ctx: &mut Ctx, before: Option<&[OpenDocument]>) -> Outcome {
     match name {
         "list_commands" => list_commands(b, a),
         "run_command" => run_command(b, a, ctx, before),
@@ -1051,8 +1038,8 @@ fn closed_or(
     mut detail: Value,
     target: Option<u64>,
     explicit: Option<&Value>,
-    docs: Option<Vec<Open>>,
-    before: Option<&[Open]>,
+    docs: Option<Vec<OpenDocument>>,
+    before: Option<&[OpenDocument]>,
 ) -> ToolResult {
     let restarted = detail.get("restarted").and_then(Value::as_bool) == Some(true);
     if restarted {
@@ -1089,7 +1076,7 @@ fn closed_or(
     if !document.is_null() {
         detail["document"] = document;
     }
-    detail["documents"] = Value::Array(docs.iter().map(Open::identity).collect());
+    detail["documents"] = Value::Array(docs.iter().map(OpenDocument::identity).collect());
     ToolResult::failed(&message, detail)
 }
 
@@ -1102,7 +1089,7 @@ fn about_document(
     outcome: Outcome,
     target: Option<u64>,
     explicit: Option<&Value>,
-    before: Option<&[Open]>,
+    before: Option<&[OpenDocument]>,
     ctx: &Ctx,
 ) -> ToolResult {
     // The backend's word on a failure, before the next call to it replaces it.
@@ -1121,7 +1108,7 @@ fn about_document(
     if let Some(d) = &open {
         state.working = Some(Working { id: d.id, name: d.name.clone() });
     }
-    let identity = |d: &Open| d.identity_at(revision_for(d, ctx.changed, before));
+    let identity = |d: &OpenDocument| d.identity_at(revision_for(d, ctx.changed, before));
     match outcome {
         Ok(mut result) => {
             // Another tab the command acted on (`file.close {index}`, `doc.switch {index}`): the
@@ -1190,7 +1177,8 @@ fn use_document(state: &mut ToolState, b: &mut dyn Backend, a: &Map<String, Valu
         return Ok(closed_or(state, b, f.message, detail, wanted, Some(asked), Some(docs), None));
     };
     state.working = Some(Working { id: doc.id, name: doc.name.clone() });
-    let mut result = ToolResult::json(&json!({"workingDocument": doc.identity(), "documents": docs.iter().map(Open::identity).collect::<Vec<_>>()}));
+    let mut result =
+        ToolResult::json(&json!({"workingDocument": doc.identity(), "documents": docs.iter().map(OpenDocument::identity).collect::<Vec<_>>()}));
     result.attach(json!({"document": doc.identity()}));
     Ok(result)
 }
@@ -1212,7 +1200,7 @@ fn get_capabilities(state: &mut ToolState, b: &mut dyn Backend) -> Outcome {
     {
         state.working = Some(Working { id: front.id, name: front.name.clone() });
     }
-    let working = state.working.as_ref().and_then(|w| docs.iter().find(|d| d.id == w.id)).map(Open::identity);
+    let working = state.working.as_ref().and_then(|w| docs.iter().find(|d| d.id == w.id)).map(OpenDocument::identity);
     // The design check rules this build runs (none without the design commands).
     let checks: Vec<Value> = match has("design.check.rules") {
         true => exec(b, "design.check.rules", json!({}))
@@ -1241,7 +1229,7 @@ fn get_capabilities(state: &mut ToolState, b: &mut dyn Backend) -> Outcome {
         "app": app,
         "roots": roots,
         "workingDocument": working,
-        "documents": docs.iter().map(Open::identity).collect::<Vec<_>>(),
+        "documents": docs.iter().map(OpenDocument::identity).collect::<Vec<_>>(),
         "commands": commands.len(),
         "features": {
             "prototypeSimulator": has("proto.simulate"),
@@ -1335,7 +1323,7 @@ fn list_commands(b: &mut dyn Backend, a: &Map<String, Value>) -> Outcome {
 /// with (`id`) is the working document from here on, as with open_file (review R2-11).
 const OPENS: &[&str] = &["file.new", "file.newBoard", "file.open", "file.openRecent", "file.duplicate", "file.revert"];
 
-fn run_command(b: &mut dyn Backend, a: &Map<String, Value>, ctx: &mut Ctx, before: Option<&[Open]>) -> Outcome {
+fn run_command(b: &mut dyn Backend, a: &Map<String, Value>, ctx: &mut Ctx, before: Option<&[OpenDocument]>) -> Outcome {
     let cmd = req_s(a, "command")?;
     let params = match a.get("params") {
         None | Some(Value::Null) => json!({}),

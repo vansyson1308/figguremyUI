@@ -25,19 +25,24 @@ pub use onpath::OnPath;
 
 use figcraft_doc::{Node, NodeKind, TextAlignV, TextAutoResize};
 
-/// One cached layout: the exact text and box it was made for.
-struct Cached {
+/// One cached result (a layout, or only its height): the exact text and box it was made for.
+struct Cached<T> {
     text: figcraft_doc::TextData,
     w: Option<u64>,
     h: Option<u64>,
-    layout: std::sync::Arc<TextLayout>,
+    value: T,
 }
 
-/// Cached layouts by a cheap fingerprint; entries are confirmed with `TextData`'s full equality.
-#[derive(Default)]
-struct LayoutCache {
-    buckets: std::collections::HashMap<u64, Vec<Cached>>,
+/// Cached results by a cheap fingerprint; entries are confirmed with `TextData`'s full equality.
+struct LayoutCache<T> {
+    buckets: std::collections::HashMap<u64, Vec<Cached<T>>>,
     len: usize,
+}
+
+impl<T> Default for LayoutCache<T> {
+    fn default() -> Self {
+        Self { buckets: Default::default(), len: 0 }
+    }
 }
 
 /// Layouts kept before the cache starts over (a page of distinct texts stays cached while it
@@ -46,16 +51,24 @@ const LAYOUT_CACHE_MAX: usize = 4_096;
 /// Entries per fingerprint (texts that compare unequal to themselves, e.g. NaN sizes, can't pile up).
 const BUCKET_MAX: usize = 8;
 
-fn layout_cache() -> &'static std::sync::Mutex<LayoutCache> {
-    static C: std::sync::OnceLock<std::sync::Mutex<LayoutCache>> = std::sync::OnceLock::new();
+fn layout_cache() -> &'static std::sync::Mutex<LayoutCache<std::sync::Arc<TextLayout>>> {
+    static C: std::sync::OnceLock<std::sync::Mutex<LayoutCache<std::sync::Arc<TextLayout>>>> = std::sync::OnceLock::new();
+    C.get_or_init(Default::default)
+}
+
+/// The heights auto layout measures texts at ([`height_cached`]): kept apart from the layouts, so
+/// the many widths a layout tries don't push out what the renderer draws from.
+fn height_cache() -> &'static std::sync::Mutex<LayoutCache<f64>> {
+    static C: std::sync::OnceLock<std::sync::Mutex<LayoutCache<f64>>> = std::sync::OnceLock::new();
     C.get_or_init(Default::default)
 }
 
 static LAYOUT_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// Forget cached layouts (after fonts were added). Bumps [`layout_generation`].
+/// Forget cached layouts and heights (after fonts were added). Bumps [`layout_generation`].
 pub fn clear_layout_cache() {
     *layout_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner) = LayoutCache::default();
+    *height_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner) = LayoutCache::default();
     LAYOUT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
@@ -78,25 +91,29 @@ fn fingerprint(t: &figcraft_doc::TextData, w: Option<u64>, h: Option<u64>) -> u6
     hs.finish()
 }
 
-/// Layout with a process-wide cache keyed by the text content/style and box size.
-pub fn layout_cached(t: &figcraft_doc::TextData, w: Option<f64>, h: Option<f64>) -> std::sync::Arc<TextLayout> {
+/// What `cache` holds for `t` in the box `w` × `h`, else `make()`, kept for next time.
+fn cached<T: Clone>(
+    cache: &std::sync::Mutex<LayoutCache<T>>,
+    t: &figcraft_doc::TextData,
+    w: Option<f64>,
+    h: Option<f64>,
+    make: impl FnOnce() -> T,
+) -> T {
     let (wb, hb) = (w.map(f64::to_bits), h.map(f64::to_bits));
     let key = fingerprint(t, wb, hb);
-    let hit = |c: &Cached| c.w == wb && c.h == hb && c.text == *t;
-    if let Some(l) =
-        layout_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner).buckets.get(&key).and_then(|b| b.iter().find(|c| hit(c)))
-    {
-        return l.layout.clone();
+    let hit = |c: &Cached<T>| c.w == wb && c.h == hb && c.text == *t;
+    if let Some(v) = cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner).buckets.get(&key).and_then(|b| b.iter().find(|c| hit(c))) {
+        return v.value.clone();
     }
-    let l = std::sync::Arc::new(layout(t, w, h));
-    let mut c = layout_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let v = make();
+    let mut c = cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if c.len >= LAYOUT_CACHE_MAX {
         *c = LayoutCache::default();
     }
     let bucket = c.buckets.entry(key).or_default();
     if bucket.iter().any(hit) {
         // Another thread laid it out meanwhile.
-        return l;
+        return v;
     }
     let dropped = if bucket.len() >= BUCKET_MAX {
         bucket.remove(0);
@@ -104,9 +121,20 @@ pub fn layout_cached(t: &figcraft_doc::TextData, w: Option<f64>, h: Option<f64>)
     } else {
         0
     };
-    bucket.push(Cached { text: t.clone(), w: wb, h: hb, layout: l.clone() });
+    bucket.push(Cached { text: t.clone(), w: wb, h: hb, value: v.clone() });
     c.len = c.len + 1 - dropped;
-    l
+    v
+}
+
+/// Layout with a process-wide cache keyed by the text content/style and box size.
+pub fn layout_cached(t: &figcraft_doc::TextData, w: Option<f64>, h: Option<f64>) -> std::sync::Arc<TextLayout> {
+    cached(layout_cache(), t, w, h, || std::sync::Arc::new(layout(t, w, h)))
+}
+
+/// `layout(t, Some(width), None).height`, from a process-wide cache of heights: what auto layout
+/// asks of a text at each width it tries, again for every unchanged text each time a layout runs.
+pub fn height_cached(t: &figcraft_doc::TextData, width: f64) -> f64 {
+    cached(height_cache(), t, Some(width), None, || layout(t, Some(width), None).height)
 }
 
 /// Lay out a text node at its current box, returning the (shared, cached) layout and the vertical

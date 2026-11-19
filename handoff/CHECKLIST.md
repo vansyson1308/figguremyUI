@@ -16,7 +16,7 @@ screenshot someone looked at).
 
 | What | Where |
 |---|---|
-| Unfinished code, **not built or tested** | `handoff/wip/perf-in-progress.patch` (performance work: engine, MCP, text crates), `handoff/wip/qc-fixes-in-progress.patch` (Design context panel fixes). Both apply cleanly to `040ed89e` (`git apply --check` passed). |
+| Unfinished code, **not built or tested** | `handoff/wip/qc-fixes-in-progress.patch` (Design context panel fixes; applies cleanly to `040ed89e`). The performance patch was finished and removed (B1). |
 | The command contract the features were built to (v1 → v1.3) | `handoff/notes/command-contract.md` |
 | Review findings and how each was decided | `handoff/notes/review-R1-engine.md` (engine; all fixed), `handoff/notes/review-R2-mcp-ui.md` (MCP/UI; all fixed), `handoff/notes/qc-round1.md` (visual QC; **open**) |
 | The baseline audit of the starting commit `011f08e5` | `handoff/notes/baseline-011f08e5.md` |
@@ -37,14 +37,14 @@ screenshot someone looked at).
 ## B. Finish the in-flight work
 
 ### B1. Performance (two budgets missed; `docs/benchmarks.md`)
-- [ ] `git apply handoff/wip/perf-in-progress.patch`, build, and see what state it is in. It was mid-change: replacing a private `Open` struct in `crates/mcp/src/tools.rs` with `OpenDocument`; it adds `crates/engine/src/modes_cache_tests.rs` and `crates/mcp/tests/it/call_cost.rs`. Treat it as a draft: keep what is sound, throw away what isn't.
-- [ ] Profile and confirm the cause before optimising (the cause is suspected, not proven):
-  - [ ] **PF1** `set_properties` +22% mean / +27% p95 and `undo` +34% / +39% (0.02–0.11 ms). Suspected: extra backend requests per tool call for document identity and revision (`about_document` → `doc.list`, the "revision before the first request" read), and author bookkeeping in history.
-  - [ ] **PF2** `proto.check` p95 53 / 104 / 129 ms on the three examples, budget 50 ms. Suspected: the scenario rules re-run every stored scenario inside `proto.check`, and each simulated step re-applies bindings over the whole document.
-- [ ] Fix without weakening the safety features (atomic revision, document identity in every result, conflict detection, authors) and without changing behaviour (all tests, the simulator/player parity suite and the examples' tests unchanged).
-- [ ] **PF6** not measured yet: save/reopen of each new example against the same file with its design context removed.
-- [ ] Re-measure on a quiet machine with `bench.py` (baseline and new interleaved), update `docs/benchmarks.md`. Do not lower a budget or change the workload to pass; if one still can't be met, write down why with the profile.
-
+- [x] `git apply handoff/wip/perf-in-progress.patch`, build, and see what state it is in. Built and tested; kept: the text height cache, `ModesCache`, the per-pass resolve cache, `changed_nodes` in one walk, `others_change_since` in place, `Backend::documents` with `OpenDocument` (the `Open` swap finished), the moved responses and both test files (`modes_cache_tests.rs` became `shortcuts_tests.rs` and `changed_nodes_tests.rs`). Dropped: clearing the modes cache after every bound component property (it emptied the cache a dozen times a pass). The patch is removed.
+- [x] Profile and confirm the cause before optimising (`docs/benchmarks.md`, "What was slow, and why"):
+  - [x] **PF1** `set_properties` / `undo`: the two `doc.list` commands per tool call (13% / 19%), the undo's copy of the change log (13%) and the agent's changed-layer lookup (10–18%). History author bookkeeping did not stand out in the profiles. Fixed (M11.44, M11.45); met in every n = 100 run.
+  - [x] **PF2** `proto.check`: scenarios run once per call (no re-run); the cost was 100 settles per call shaping text again (44%) and 200 binding passes (32%). Fixed (M11.41–M11.43): p95 34 / 40 / 55 ms. **`bike-repair-booking` still misses at p95**: its first call in each process (font indexing and first shaping, ~63 ms) is the p95; later calls 44 ms p95.
+- [x] Fix without weakening the safety features and without changing behaviour: all tests, the simulator/player parity suite (29) and the examples' tests (7) pass.
+- [x] **PF6** measured (`handoff/tools/pf6.py`): saving within budget; reopening `signup-flow` +18% / +32% (0.23 ms), not profiled.
+- [x] Re-measured interleaved, `docs/benchmarks.md` updated (n = 100: n = 30 can't resolve these differences on the shared machine).
+- [ ] Open: PF2 p95 for `bike-repair-booking` (first call); PF1 `save_file` / `open_file` p95 (+13–17% in the deciding run, −3% to +59% across runs; `save_file` p95 +12% for `4501b37b` too in a focused run); PF6 reopen of `signup-flow`. Re-measure on a quiet machine before deciding.
 ### B2. Visual QC round 1 fixes (`handoff/notes/qc-round1.md`)
 - [x] `git apply handoff/wip/qc-fixes-in-progress.patch` (panel files only, unfinished: it had started on QC-01) and continue.
 - [x] **QC-01 (P1)**: the Design context panel shows another file's check results, scenario results, flow check and comparison after a tab switch or opening a file (a never-run scenario showed "Passed"). Results must be kept per document. Test: run in file A, switch to B → nothing from A.

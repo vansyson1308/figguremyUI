@@ -260,6 +260,8 @@ mod brush_tests;
 #[cfg(test)]
 mod canvas_fixes_tests;
 #[cfg(test)]
+mod changed_nodes_tests;
+#[cfg(test)]
 mod code_connect_tests;
 #[cfg(test)]
 mod collab_ids_tests;
@@ -583,6 +585,8 @@ mod shapebuilder_tests;
 mod shapes_behaviour_tests;
 #[cfg(test)]
 mod shortcut_parity_tests;
+#[cfg(test)]
+mod shortcuts_tests;
 #[cfg(test)]
 mod sketch_import_tests;
 #[cfg(test)]

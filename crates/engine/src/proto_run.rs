@@ -3,14 +3,14 @@
 //! navigating to a section goes, which instance "Change to" changes, the interactions instances
 //! play (interactive components), and the hotspots a screen offers.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use figcraft_doc::proto::{Action, ConditionalBlock, Expr, Interaction};
-use figcraft_doc::{Document, NodeId, NodeKind, VariableType, VariableValue};
+use figcraft_doc::{Document, NodeId, NodeKind, VariableType, VariableValue, Variables};
 use figcraft_geom::Rect;
 use serde_json::Value;
 
-use crate::cmd::styles::apply_bindings;
+use crate::cmd::styles::{apply_bindings, apply_bindings_to};
 use crate::params::{color_of, f64_of};
 
 /// A JSON value as a value of a `kind` variable (`None` when it doesn't fit).
@@ -43,8 +43,16 @@ pub(crate) fn fit(kind: VariableType, v: VariableValue) -> Option<VariableValue>
 }
 
 /// Set stored variable id `variable` to `value`, or to `expr` evaluated in the modes of `node`
-/// (the layer whose interaction runs), in every mode, and re-apply bindings. False when nothing
-/// could be set.
+/// (the layer whose interaction runs), in every mode, and re-apply the bindings that read it. False
+/// when nothing could be set.
+///
+/// Re-applied are the layers bound to the variable or to one that reads it (an alias, a colour
+/// calculation), and those with bound component properties (they choose the variants the others
+/// resolve in), in the order a pass over every binding takes them. A binding nothing here changed
+/// that was out of date already stays so until the edit is normalised, which applies every binding
+/// again: both callers (the prototype player and the simulator) settle the copy right after, as
+/// they did when this applied every binding itself (a run sets variables after nearly every action,
+/// performance budget PF2).
 pub fn set_variable(doc: &mut Document, node: NodeId, variable: &str, value: &Value, expr: Option<&Expr>) -> bool {
     let Some(var) = doc.variables.get_by_id(variable) else { return false };
     let (id, kind) = (var.id.clone(), var.kind);
@@ -57,9 +65,33 @@ pub fn set_variable(doc: &mut Document, node: NodeId, variable: &str, value: &Va
     for val in slot.values.values_mut() {
         *val = v.clone();
     }
-    apply_bindings(doc);
+    let readers = readers_of(&doc.variables, &id);
+    let reading: BTreeSet<NodeId> = doc
+        .nodes()
+        .filter(|n| n.bound.iter().any(|(field, var)| readers.contains(var.as_str()) || field.starts_with(crate::components::PROP_BINDING)))
+        .map(|n| n.id)
+        .collect();
+    apply_bindings_to(doc, Some(&reading));
     crate::style_vars::refresh(doc, None, None);
     true
+}
+
+/// `id` and every variable whose value reads it, directly or through others (aliases and colour
+/// calculations): the variables that can resolve differently once `id` changes.
+fn readers_of<'a>(vars: &'a Variables, id: &'a str) -> BTreeSet<&'a str> {
+    let mut out = BTreeSet::from([id]);
+    // Each round adds at least one variable or ends.
+    loop {
+        let known = out.len();
+        for v in &vars.variables {
+            if !out.contains(v.id.as_str()) && v.values.values().any(|x| x.references().iter().any(|r| out.contains(r.as_str()))) {
+                out.insert(v.id.as_str());
+            }
+        }
+        if out.len() == known {
+            return out;
+        }
+    }
 }
 
 /// Switch `collection` to `mode` (ids or names) for the prototype `frame` is in: on its page, and

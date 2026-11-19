@@ -425,11 +425,17 @@ impl DocState {
     /// step: what bringing back a snapshot from `revision` would take back for good. A change the
     /// log no longer remembers counts as the user's.
     pub(crate) fn others_change_since(&self, revision: u64, agent: &str) -> Option<Change> {
-        let since = self.changes_since(revision);
-        if let Some(c) = since.iter().rev().find(|c| !c.stepped && c.author.as_deref() != Some(agent)) {
+        // What `changes_since` lists, read in place: every undo and redo of an agent asks, and a
+        // copy of the whole log each time cost more than the undo itself (PF1). A change nothing
+        // recorded yet comes last in that list, has no undo step and no agent: it is the newest.
+        if self.unrecorded_change() {
+            return Some(Change { revision: self.doc_rev + 1, label: "Edit".into(), author: None, stepped: false });
+        }
+        let mut since = self.changes.iter().filter(|c| c.revision > revision);
+        if let Some(c) = since.clone().rev().find(|c| !c.stepped && c.author.as_deref() != Some(agent)) {
             return Some(c.clone());
         }
-        let forgotten = since.first().map_or(self.doc_rev > revision, |c| c.revision > revision + 1);
+        let forgotten = since.next().map_or(self.doc_rev > revision, |c| c.revision > revision + 1);
         forgotten.then(|| Change { revision: revision + 1, label: "a change no longer remembered".into(), author: None, stepped: false })
     }
 
