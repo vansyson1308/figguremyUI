@@ -739,12 +739,18 @@ fn the_language_preference_takes_language_codes() {
     }
 }
 
-/// QC2-07: the Save as dialog's native file type has a Vietnamese entry of its own (not the
-/// English fallback); the product name and the extension stay as they are.
+/// QC2-07 and QC2-10: the Save as dialog's native file type and the Preferences labels Vietnamese
+/// showed in English have Vietnamese entries of their own (not the English fallback); the product
+/// name and the extension stay as they are.
 #[test]
-fn vietnamese_has_the_save_as_file_type() {
+fn vietnamese_has_the_save_as_file_type_and_the_preferences_labels() {
     let vi = LANGS.iter().position(|l| l.code == "vi").expect("locales/vi.toml is baked in");
-    for (key, want) in [("Figgure My UI file (.figcraft)", "Tệp Figgure My UI (.figcraft)")] {
+    for (key, want) in [
+        ("Figgure My UI file (.figcraft)", "Tệp Figgure My UI (.figcraft)"),
+        ("Invert zoom direction", "Đảo ngược chiều thu phóng"),
+        ("Board grid", "Lưới bảng trắng"),
+        ("Graph paper", "Giấy kẻ ô"),
+    ] {
         assert!(matches!(find(LANGS[vi].ui, key), Some(Text::Plain(t)) if *t == want), "{key:?} has no Vietnamese entry {want:?}");
     }
 }
