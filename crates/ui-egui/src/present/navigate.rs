@@ -215,6 +215,12 @@ impl Presenter {
     }
 
     /// Start over at `start` with the document as the editor has it.
+    /// [`restart`](Self::restart) from `start` at the time of the last frame played (for callers
+    /// outside a frame of the player, such as `proto.present` while it is on screen).
+    pub fn restart_now(&mut self, start: NodeId) {
+        self.restart(start, self.clock);
+    }
+
     pub fn restart(&mut self, start: NodeId, now: f64) {
         self.start = start;
         self.current = start;
