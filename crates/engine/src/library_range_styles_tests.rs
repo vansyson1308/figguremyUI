@@ -47,7 +47,7 @@ fn component_place_imports_range_text_style() {
     let library = source.doc().unwrap().published.as_ref().unwrap().clone();
     assert!(library.doc.style(&range).is_some());
     let mut target = Session::new();
-    let path = "figcraft://library.test/range-styles";
+    let path = "figguremyui://library.test/range-styles";
     target.libraries.insert(path, Ok(library));
     run(&mut target, "library.add", json!({"path":path}));
     let instance = node(run(&mut target, "library.place", json!({"library":publication["id"], "component":component})));

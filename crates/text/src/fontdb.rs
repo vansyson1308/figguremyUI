@@ -551,7 +551,7 @@ fn names(f: &skrifa::FontRef) -> (Option<String>, Option<String>) {
 
 /// Families tried, in order, for characters a text's own font lacks. Every script face craft-fonts
 /// can embed (Noto Sans Arabic, Thai, Hebrew, Devanagari, Georgian) is here after the Latin faces,
-/// so a web build that embeds one (`FIGCRAFT_EMBED_SCRIPTS`, #1902) draws that script in an Inter
+/// so a web build that embeds one (`FIGGUREMYUI_EMBED_SCRIPTS`, #1902) draws that script in an Inter
 /// document: the browser has no other fonts. The symbol fonts come last: Apple Symbols (macOS),
 /// Segoe UI Symbol (Windows) and the Noto symbol and math fonts (Linux), for signs such as ⌖ and ⤒
 /// that no text face has.
@@ -1565,7 +1565,7 @@ pub fn family_style_weights(family: &str) -> Vec<(String, u16)> {
 }
 
 /// Scan system fonts into the global db (desktop; a no-op on the web, or with
-/// `FIGCRAFT_NO_SYSTEM_FONTS` set). Runs once per process: a concurrent caller waits for that scan.
+/// `FIGGUREMYUI_NO_SYSTEM_FONTS` set). Runs once per process: a concurrent caller waits for that scan.
 /// The directory walk runs without holding the database lock; results are merged in one short write.
 pub fn scan_system_fonts() {
     SCANNED.get_or_init(|| {
@@ -1585,7 +1585,7 @@ pub fn scan_system_fonts() {
 
 /// Walk the system font folders again, for fonts installed while the app runs (the first scan is
 /// once per process): the families that were unknown before, and every family that gained faces.
-/// Before the first scan this is that scan; a no-op on the web or with `FIGCRAFT_NO_SYSTEM_FONTS`.
+/// Before the first scan this is that scan; a no-op on the web or with `FIGGUREMYUI_NO_SYSTEM_FONTS`.
 pub fn rescan_system_fonts() -> Rescan {
     #[cfg(not(target_arch = "wasm32"))]
     if !system_fonts_opted_out() {
@@ -1661,14 +1661,14 @@ pub fn local_only(family: &str) -> bool {
     db().read().unwrap_or_else(std::sync::PoisonError::into_inner).local_only(family)
 }
 
-/// `FIGCRAFT_NO_SYSTEM_FONTS` is set (and not `0`), or the process opted out
+/// `FIGGUREMYUI_NO_SYSTEM_FONTS` is set (and not `0`), or the process opted out
 /// ([`opt_out_of_system_fonts`]): renders use only the embedded fonts.
 #[cfg(not(target_arch = "wasm32"))]
 fn system_fonts_opted_out() -> bool {
-    OPTED_OUT.load(Ordering::Relaxed) || std::env::var_os("FIGCRAFT_NO_SYSTEM_FONTS").is_some_and(|v| !v.is_empty() && v != "0")
+    OPTED_OUT.load(Ordering::Relaxed) || figcraft_doc::env::var_os("NO_SYSTEM_FONTS").is_some_and(|v| !v.is_empty() && v != "0")
 }
 
-/// Use only the embedded fonts for the rest of the process, as `FIGCRAFT_NO_SYSTEM_FONTS` does
+/// Use only the embedded fonts for the rest of the process, as `FIGGUREMYUI_NO_SYSTEM_FONTS` does
 /// (headless runs with `--no-system-fonts`): no call scans the system fonts after this.
 pub fn opt_out_of_system_fonts() {
     OPTED_OUT.store(true, Ordering::Relaxed);

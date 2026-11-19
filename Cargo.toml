@@ -10,7 +10,7 @@ version = "0.18.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"
-repository = "https://github.com/storytold/figcraft"
+repository = "https://github.com/vansyson1308/figguremyUI"
 
 [workspace.dependencies]
 # internal

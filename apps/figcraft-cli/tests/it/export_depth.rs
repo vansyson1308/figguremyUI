@@ -16,7 +16,7 @@ fn export_depth_cli_refuses_partial_files_and_accepts_an_inner_root() {
     let leaf = doc.create(parent, NodeKind::Rectangle, "leaf", 3.0, 5.0, 13.0, 17.0).unwrap();
     doc.get_mut(leaf).unwrap().fills = vec![Paint::solid(Color::from_hex("FF0000").unwrap())];
     let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-    let dir = std::env::temp_dir().join(format!("figcraft-cli-depth-process-{}-{stamp}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("figguremyui-cli-depth-process-{}-{stamp}", std::process::id()));
     std::fs::create_dir(&dir).unwrap();
     let input = dir.join("deep.figcraft");
     std::fs::write(&input, figcraft_format::save_bytes(&doc, None).unwrap()).unwrap();
@@ -24,7 +24,7 @@ fn export_depth_cli_refuses_partial_files_and_accepts_an_inner_root() {
         let path = dir.join(format!("previous.{ext}"));
         std::fs::write(&path, b"previous export").unwrap();
         for verb in ["convert", "export"] {
-            let mut command = Command::new(env!("CARGO_BIN_EXE_figcraft-cli"));
+            let mut command = Command::new(env!("CARGO_BIN_EXE_figguremyui-cli"));
             command.arg(verb).arg(&input);
             if verb == "export" {
                 command.arg("-o");
@@ -37,7 +37,7 @@ fn export_depth_cli_refuses_partial_files_and_accepts_an_inner_root() {
             assert_eq!(std::fs::read(&path).unwrap(), b"previous export");
         }
         let inner = dir.join(format!("inner.{ext}"));
-        let output = Command::new(env!("CARGO_BIN_EXE_figcraft-cli"))
+        let output = Command::new(env!("CARGO_BIN_EXE_figguremyui-cli"))
             .arg("export")
             .arg(&input)
             .arg("-o")

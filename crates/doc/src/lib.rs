@@ -14,6 +14,7 @@ mod board_route;
 pub mod colors;
 pub mod comments;
 pub mod design;
+pub mod env;
 pub mod facilitation;
 pub mod geometry;
 pub mod handoff;

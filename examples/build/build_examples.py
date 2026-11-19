@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Build the example prototypes from nothing, through the headless MCP server.
 
-    python3 examples/build/build_examples.py --cli target/debug/figcraft-cli --out examples
+    python3 examples/build/build_examples.py --cli target/debug/figguremyui-cli --out examples
     python3 examples/build/build_examples.py --cli ... --out /tmp/x --only pantry-dashboard
 
 Each example is one function below (`signup_flow`, `pantry_dashboard`, `bike_repair_booking`) that
-starts `figcraft-cli --no-system-fonts mcp` (built-in fonts only, so the layout is the same on
+starts `figguremyui-cli --no-system-fonts mcp` (built-in fonts only, so the layout is the same on
 every machine), builds the file with `run_command`, `batch`, `create_node` and `set_properties` as
 an AI agent would, checks it, and saves it. The same binary gives the same bytes: nothing here
 reads the clock, random numbers or the machine's fonts.
@@ -13,7 +13,7 @@ reads the clock, random numbers or the machine's fonts.
 Over MCP every command runs as the client's AI agent ("Example builder (agent)"), so the end
 states it declares and the decisions it records are *proposals* that wait for a person. The
 separate step `accept_as_maintainer()` (on by default; `--no-accept-as-maintainer` leaves the
-proposals in place) then runs `figcraft-cli run`, which acts as the user, to accept them. The
+proposals in place) then runs `figguremyui-cli run`, which acts as the user, to accept them. The
 maintainers' acceptance step stands in for a person's review of these example files; in your own
 files an agent's end states and decisions stay proposals until you accept them.
 
@@ -143,7 +143,7 @@ class Builder:
         styles = self.m.run("text.fonts", {"family": FONT})
         for _, (_, style, _) in TEXT_STYLES.items():
             if style not in styles:
-                raise BuildError("this figcraft-cli has no %s %s: build it with craft-fonts (CRAFT_FONTS_DIR), "
+                raise BuildError("this figguremyui-cli has no %s %s: build it with craft-fonts (CRAFT_FONTS_DIR), "
                                  "or the text would lay out in nothing" % (FONT, style))
         self.m.call("batch", {"label": "Theme colours", "commands": [
             {"command": "variable.createCollection", "params": {"name": "Theme", "modes": ["Light"]}}] + [
@@ -1563,7 +1563,7 @@ EXAMPLES = {
 
 def accept_as_maintainer(cli, path, end_states, decisions):
     """The maintainers' acceptance step. It stands in for a person's review of these example
-    files: `figcraft-cli run` acts as the user (not as an agent), so it may accept the end states
+    files: `figguremyui-cli run` acts as the user (not as an agent), so it may accept the end states
     and decisions the builder proposed. In your own files an agent's end states and decisions
     stay proposals until you accept them."""
     steps = [{"command": "file.open", "params": {"path": path}}]
@@ -1636,7 +1636,7 @@ def build(cli, out, name, accept=True, shots=None):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--cli", required=True, help="path to figcraft-cli")
+    ap.add_argument("--cli", required=True, help="path to figguremyui-cli")
     ap.add_argument("--out", required=True, help="folder to write the .figcraft files to")
     ap.add_argument("--only", choices=sorted(EXAMPLES), help="build one example")
     ap.add_argument("--accept-as-maintainer", dest="accept", action="store_true", default=True,

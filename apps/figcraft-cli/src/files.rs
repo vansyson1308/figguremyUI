@@ -334,7 +334,7 @@ pub fn export(file: &str, out: &str, t: &Target) -> CliResult<ExitCode> {
 fn refuse_dropping_images(input: &str, out: &str, images_left_out: usize) -> CliResult<()> {
     if images_left_out > 0 && figcraft_engine::file_access::same_file(input, out) {
         return Err(CliError::Failed(format!(
-            "{out} wasn't written: {images_left_out} of its images weren't loaded (together they pass what FigCraft reads from one file), and writing over it would delete them. Write to another path; {input} keeps them."
+            "{out} wasn't written: {images_left_out} of its images weren't loaded (together they pass what Figgure My UI reads from one file), and writing over it would delete them. Write to another path; {input} keeps them."
         )));
     }
     Ok(())
@@ -515,7 +515,7 @@ mod tests {
     /// `info` and a script's failure print what a file and its steps name, controls escaped.
     #[test]
     fn info_and_a_failed_script_print_what_they_were_given() {
-        let dir = std::env::temp_dir().join(format!("figcraft-cli-plain-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("figguremyui-cli-plain-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let (svg, script) = (dir.join("a.svg"), dir.join("s.json"));
         std::fs::write(&svg, r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>"#).unwrap();
@@ -587,7 +587,7 @@ mod tests {
         }
         doc.create(parent, figcraft_doc::NodeKind::Rectangle, "leaf", 0.0, 0.0, 8.0, 8.0).unwrap();
         let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let dir = std::env::temp_dir().join(format!("figcraft-cli-export-depth-{}-{stamp}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("figguremyui-cli-export-depth-{}-{stamp}", std::process::id()));
         std::fs::create_dir(&dir).unwrap();
         for ext in ["svg", "pdf"] {
             let path = dir.join(format!("previous.{ext}"));
@@ -605,7 +605,7 @@ mod tests {
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {
         let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let dir = std::env::temp_dir().join(format!("figcraft-cli-{tag}-{}-{stamp}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("figguremyui-cli-{tag}-{}-{stamp}", std::process::id()));
         std::fs::create_dir(&dir).unwrap();
         dir
     }

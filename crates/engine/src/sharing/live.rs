@@ -71,9 +71,9 @@ pub(crate) use host::{clean_shared, share_answer};
 pub(crate) use join::start_join;
 pub use join::{can_remove_people, specs};
 pub use types::{
-    Bind, DEFAULT_SERVER, Event, HostOptions, LiveLink, MAX_NAME, MAX_PEERS, MAX_SELECTION, NO_HOSTING, NO_SESSION, NetReply, NetRequest, ONLINE_OFF,
-    PEOPLE, PageInfo, PublishOptions, Published, Role, SessionId, SessionInfo, Share, Shared, SharedLink, Status, TOO_LARGE_TO_JOIN, Via, WayIn,
-    join_target, parse_color,
+    BUILD_DEFAULT_SERVER, Bind, DEFAULT_SERVER, Event, HostOptions, LiveLink, MAX_NAME, MAX_PEERS, MAX_SELECTION, NO_HOSTING, NO_SESSION, NetReply,
+    NetRequest, ONLINE_OFF, PEOPLE, PageInfo, PublishOptions, Published, Role, SessionId, SessionInfo, Share, Shared, SharedLink, Status,
+    TOO_LARGE_TO_JOIN, Via, WayIn, join_target, parse_color,
 };
 
 /// The view a follow last applied: any other view means the user moved.
@@ -256,7 +256,7 @@ pub struct Lives {
     last: SessionId,
     /// What a document that isn't in a session shows.
     off: Live,
-    /// Registers the app as the opener of `figcraft://` invite links (the desktop app on Windows
+    /// Registers the app as the opener of `figguremyui://` invite links (the desktop app on Windows
     /// installs one; see [`crate::invite_links`]).
     pub links: Option<Box<dyn crate::invite_links::LinkRegistrar>>,
     /// The recorded online files or your team libraries changed since the app last saved the

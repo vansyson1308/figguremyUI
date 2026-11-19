@@ -105,7 +105,7 @@ impl LiveLink for Link {
 fn links(file: &str, n: usize) -> Shared {
     let link = |what: &str, code: String| SharedLink {
         id: format!("{what}{n}"),
-        link: format!("figcraft://join?server={SERVER}&file={file}&token=Shared{what}Shared{what}0{n}"),
+        link: format!("figguremyui://join?server={SERVER}&file={file}&token=Shared{what}Shared{what}0{n}"),
         code: Some(code),
     };
     Shared { edit: link("edit", format!("NEWED1T0{n}")), view: Some(link("view", format!("NEWV1EW0{n}"))), comment: None }
@@ -133,7 +133,7 @@ fn err(s: &mut Session, cmd: &str, p: Value) -> String {
 }
 
 fn edit_link(server: &str, file: &str) -> String {
-    format!("figcraft://join?server={server}&file={file}&token={EDIT_TOKEN}")
+    format!("figguremyui://join?server={server}&file={file}&token={EDIT_TOKEN}")
 }
 
 /// A session you are in as `role` under `name`, invited with `link`.
@@ -164,7 +164,7 @@ fn shared_online(s: &mut Session, script: &Arc<Mutex<Script>>, file: &str) {
         file: file.into(),
         name: "Homepage".into(),
         edit: edit_link(SERVER, file),
-        view: format!("figcraft://join?server={SERVER}&file={file}&token=ViewSecretViewSecret00"),
+        view: format!("figguremyui://join?server={SERVER}&file={file}&token=ViewSecretViewSecret00"),
         owner: Some(OWNER.into()),
         expires: Some(1_900_000_000),
     };

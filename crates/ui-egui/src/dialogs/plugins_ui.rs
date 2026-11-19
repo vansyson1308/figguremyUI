@@ -385,7 +385,7 @@ fn browse_tab(app: &mut FigApp, ui: &mut Ui, t: &Tokens) -> Option<Manage> {
     }
     let Some(listing) = app.session.plugins.directory.as_ref() else {
         ui.add_space(8.0);
-        widgets::label(ui, tr("Enter the address of a figcraft-server and press Browse to see the plugins it offers."), t.text_secondary);
+        widgets::label(ui, tr("Enter the address of a figguremyui-server and press Browse to see the plugins it offers."), t.text_secondary);
         return asked;
     };
     ui.add_space(8.0);
@@ -497,7 +497,7 @@ fn confirm_window(app: &mut FigApp, ctx: &Context, t: &Tokens) {
         ui.add_space(8.0);
         widgets::label(
             ui,
-            tr("Plugins run in FigCraft's sandbox, without files, network or clock. Install only plugins you trust."),
+            tr("Plugins run in Figgure My UI's sandbox, without files, network or clock. Install only plugins you trust."),
             t.text_secondary,
         );
         ui.add_space(4.0);

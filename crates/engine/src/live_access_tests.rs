@@ -86,7 +86,7 @@ fn publishing_makes_the_open_tab_the_server_file() {
 fn a_view_link_makes_the_file_read_only() {
     let (mut s, script) = session();
     s.execute("tool.set", &json!({"tool": "rectangle"})).unwrap();
-    s.execute("collab.join", &json!({"link": "figcraft://join?host=a:1&file=f&token=t"})).unwrap();
+    s.execute("collab.join", &json!({"link": "figguremyui://join?host=a:1&file=f&token=t"})).unwrap();
     let mut doc = figcraft_doc::Document::new("Shared");
     let page = doc.first_page().unwrap();
     let card = doc.create(page, figcraft_doc::NodeKind::Rectangle, "Card", 0.0, 0.0, 10.0, 10.0).unwrap();

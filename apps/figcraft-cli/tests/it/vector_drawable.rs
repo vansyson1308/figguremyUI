@@ -3,12 +3,12 @@
 use std::process::Command;
 
 fn bin() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_figcraft-cli"))
+    Command::new(env!("CARGO_BIN_EXE_figguremyui-cli"))
 }
 
 #[test]
 fn xml_export_writes_a_drawable_and_prints_its_notes() {
-    let d = std::env::temp_dir().join(format!("figcraft-cli-vd-{}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("figguremyui-cli-vd-{}", std::process::id()));
     std::fs::create_dir_all(&d).unwrap();
     let script = d.join("s.jsonl");
     std::fs::write(

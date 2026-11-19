@@ -57,7 +57,7 @@ fn info(role: Role, name: &str) -> SessionInfo {
         color: "#14AE5C".into(),
         file_name: name.into(),
         pages: vec![],
-        link: "figcraft://join?host=192.168.1.20:47900&file=f&token=AbCdEfGhIjKlMnOpQrStUv".into(),
+        link: "figguremyui://join?host=192.168.1.20:47900&file=f&token=AbCdEfGhIjKlMnOpQrStUv".into(),
         url: String::new(),
         address: "192.168.1.20:47900".into(),
         network: true,
@@ -70,7 +70,7 @@ fn info(role: Role, name: &str) -> SessionInfo {
 fn links(file: &str, n: usize) -> SharedLinks {
     let link = |what: &str, code: String| SharedLink {
         id: format!("{what}{n}"),
-        link: format!("figcraft://join?server={SERVER}&file={file}&token=Shared{what}Shared{what}0{n}"),
+        link: format!("figguremyui://join?server={SERVER}&file={file}&token=Shared{what}Shared{what}0{n}"),
         code: Some(code),
     };
     SharedLinks { edit: link("edit", format!("NEWED1T0{n}")), view: Some(link("view", format!("NEWV1EW0{n}"))), comment: None }
@@ -154,7 +154,7 @@ impl crate::Services for Clipboard {
 }
 
 fn edit_link(server: &str, file: &str) -> String {
-    format!("figcraft://join?server={server}&file={file}&token={EDIT_TOKEN}")
+    format!("figguremyui://join?server={server}&file={file}&token={EDIT_TOKEN}")
 }
 
 /// A record as the preferences file holds it: `File <id>`, shared with a code or not.
@@ -472,13 +472,13 @@ fn the_team_list_of_the_preferences_server_shows_and_a_row_joins_its_file() {
     click(&mut h, &shapes, "Copy link");
     let shapes = menu(&mut h, "Pricing");
     click(&mut h, &shapes, "Copy browser link");
-    let link = format!("figcraft://join?server={SERVER}&file=t2&team=1");
-    let browser = format!("{web}#join=figcraft%3A%2F%2Fjoin%3Fserver%3Dwss%3A%2F%2Fshare.example%2F%26file%3Dt2%26team%3D1");
+    let link = format!("figguremyui://join?server={SERVER}&file=t2&team=1");
+    let browser = format!("{web}#join=figguremyui%3A%2F%2Fjoin%3Fserver%3Dwss%3A%2F%2Fshare.example%2F%26file%3Dt2%26team%3D1");
     assert_eq!(script.lock().unwrap().copied, [link, browser]);
     // A click joins the file by its team list link.
     let shapes = h.frames(1);
     click(&mut h, &shapes, "Homepage");
-    assert_eq!(script.lock().unwrap().joined, [format!("figcraft://join?server={SERVER}&file=t1&team=1")]);
+    assert_eq!(script.lock().unwrap().joined, [format!("figguremyui://join?server={SERVER}&file=t1&team=1")]);
 }
 
 #[test]

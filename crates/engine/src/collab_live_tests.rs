@@ -18,7 +18,7 @@ use crate::collab_tests::{base, random_command};
 use crate::live::{Event, Role, Status};
 use crate::live_tests::{Mock, Script, info};
 
-const LINK: &str = "figcraft://join?host=127.0.0.1:47900&file=f&token=t";
+const LINK: &str = "figguremyui://join?host=127.0.0.1:47900&file=f&token=t";
 
 /// One person: an engine session with a scripted link, what it sent that the server hasn't had
 /// yet, and what the server sent that it hasn't taken in yet.

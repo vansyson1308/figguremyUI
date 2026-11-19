@@ -1,7 +1,8 @@
-# FigCraft app icon
+# Figgure My UI app icon
 
-A **chameleon**: an engraving portrait in profile with a curled tail, in the Crafting Apps'
-owl-template framing (full-bleed field, head and body filling the tile, body running off the edges).
+A **screen card with a check**: a cream outline card with two text lines (the interface being
+designed) and an orange card with a check mark over its corner (the design verified), on a navy
+tile. "Design and verify", in four simple shapes.
 
 ## Palette
 
@@ -9,9 +10,12 @@ Exactly three colours:
 
 | Colour | Hex | Used for |
 |---|---|---|
-| Ink | `#0b0b0c` | line work and contours |
-| Paper | `#efe9dc` | the figure |
-| FigCraft green (app colour) | `#02da96` | the full-bleed field |
+| Navy | `#1d2440` | the full-bleed field, and the check mark |
+| Cream | `#f3eee3` | the screen card and its text lines |
+| Figgure orange (brand colour) | `#ff7a4d` | the check card; also the app's brand colour in its interface (`BRAND` in `crates/ui-egui/src/theme.rs`) |
+
+Navy on the orange reaches 5.8:1, so the check mark (and any text the app draws on the brand
+colour) passes WCAG AA's 4.5:1.
 
 ## Geometry
 
@@ -21,21 +25,23 @@ its rounded corners, like the other Crafting Apps.
 
 ## Provenance
 
-The owner's original engraving-style drawing (1500 px, keyed to the palette), supplied for
-FigCraft and vectorised. The source
-image is not kept in this repo. License: see `LICENSE.txt`.
+Original work made for Figgure My UI from simple geometric shapes; no third-party material, no
+other product's icon. License: see `LICENSE.txt`. It replaces the chameleon icon of FigCraft, which
+this app is a fork of (that drawing stays in the repository history only).
 
 ## Files
 
-- `figcraft.svg`: canonical master (traced at 1500 px, the source's size).
-- `figcraft-small.svg`: lighter trace (traced at 1024 px); also the hicolor scalable icon.
-- `figcraft-<size>.png` (16–1024): renders on the macOS grid; `packaging/macos/package.sh` builds
-  the `.icns` from them.
-- `figcraft.ico`: Windows icon, 16–256 px, embedded in the `.exe` by `apps/figcraft/build.rs`.
-- `hicolor/<size>/apps/ai.storyteller.figcraft.png` (16–512) and `hicolor/scalable/...svg`:
-  Linux icon theme; the 256 px one is also the runtime window icon off macOS.
+- `figguremyui.svg`: canonical master.
+- `figguremyui-small.svg`: the same drawing with heavier strokes, for small sizes; also the
+  hicolor scalable icon.
+- `figguremyui-<size>.png` (16–1024): renders on the macOS grid; `packaging/macos/package.sh`
+  builds the `.icns` from them.
+- `figguremyui.ico`: Windows icon, 16–256 px, embedded in the `.exe` by `apps/figcraft/build.rs`.
+- `hicolor/<size>/apps/io.github.vansyson1308.figguremyui.png` (16–512) and
+  `hicolor/scalable/...svg`: Linux icon theme; the 256 px one is also the runtime window icon off
+  macOS, the 128 px one the update prompt's.
 
 ## Regenerate
 
-Replace `figcraft.svg` (and `figcraft-small.svg`), then run `cargo xtask icon`. It needs `resvg`
-(`cargo install resvg`).
+Replace `figguremyui.svg` (and `figguremyui-small.svg`), then run `cargo xtask icon`. It needs
+`resvg` (`cargo install resvg`).

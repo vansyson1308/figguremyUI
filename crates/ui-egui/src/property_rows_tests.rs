@@ -156,7 +156,7 @@ fn an_effect_row_copies_and_pastes_its_effect() {
     click_row(&mut u, "Layer blur");
     assert_eq!(u.app.ui.property_row.as_ref().map(|h| (h.kind, h.index)), Some((PropertyKind::Effect, 0)));
     copy(&mut u);
-    assert_eq!(clip.borrow().as_deref(), Some("figcraft://clipboard/effect"), "an effect has no text: a marker of our copy");
+    assert_eq!(clip.borrow().as_deref(), Some("figguremyui://clipboard/effect"), "an effect has no text: a marker of our copy");
     select(&mut u, b);
     paste(&mut u, &clip);
     let doc = u.app.session.doc().unwrap();

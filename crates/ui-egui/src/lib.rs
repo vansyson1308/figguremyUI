@@ -1,4 +1,4 @@
-//! The FigCraft egui frontend.
+//! The Figgure My UI egui frontend.
 //!
 //! A thin shell over [`figcraft_engine::Session`]: panels read engine state and act by running
 //! commands; the canvas forwards pointer events to the engine's tools and draws overlays. Nothing
@@ -9,17 +9,26 @@
 /// not FigCraft's own build, so help, About and updates point here, never at the upstream project.
 pub const FORK_URL: &str = "https://github.com/vansyson1308/figguremyUI";
 
-/// FigCraft as craft-update knows it, with its 128 px icon and accent colour: the update
+/// The app id (the desktop entry, AppStream, Flatpak and macOS bundle id).
+pub const APP_ID: &str = "io.github.vansyson1308.figguremyui";
+
+/// Figgure My UI as craft-update knows it, with its 128 px icon and accent colour: the update
 /// prompt shows both, and an AppImage's menu entry gets the icon. The updater looks for this
-/// fork's releases only (`repo`), so a build of the fork is never replaced by an upstream FigCraft
-/// release, and it is not presented as made by the upstream team.
+/// fork's releases only (`repo`) under its own name, with no former names, so a build of the fork
+/// is never replaced by an upstream FigCraft release and never downloads upstream's files; it is
+/// not presented as made by the upstream team.
 #[cfg(not(target_arch = "wasm32"))]
 pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
-    icon_png: Some(include_bytes!("../../../assets/app-icon/hicolor/128x128/apps/ai.storyteller.figcraft.png")),
-    accent: Some([0x02, 0xda, 0x96]),
+    id: "figguremyui",
+    name: "Figgure My UI",
+    tagline: "Design and verify interactive prototypes",
     repo: "vansyson1308/figguremyUI",
-    developer: "the fork's contributors",
-    ..craft_update::suite::FIGCRAFT
+    former_ids: &[],
+    former_names: &[],
+    icon_png: Some(include_bytes!("../../../assets/app-icon/hicolor/128x128/apps/io.github.vansyson1308.figguremyui.png")),
+    accent: Some([0xFF, 0x7A, 0x4D]),
+    developer: "Figgure My UI contributors",
+    bundle_id_override: Some(APP_ID),
 };
 
 pub mod a11y;
@@ -52,6 +61,8 @@ mod board_line_tests;
 mod board_picker_tests;
 #[cfg(test)]
 mod board_ui_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod brand_tests;
 #[cfg(test)]
 mod theme_startup_tests;
 

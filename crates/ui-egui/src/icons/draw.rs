@@ -1085,16 +1085,13 @@ fn draw(p: &P, icon: Icon) {
             p.poly(&[(10.5, 5.5), (13.0, 8.0), (10.5, 10.5)], false);
         }
         Logo => {
-            // FigCraft's own mark: the curled tail of the chameleon on the app icon. One bold
-            // stroke: a shaft along the bottom, then three half turns, each tighter than the last.
-            let mut tail = vec![(13.75, 13.0)];
-            tail.extend(arc_pts(7.25, 8.0, 5.0, FRAC_PI_2, 3.0 * FRAC_PI_2));
-            tail.extend(arc_pts(7.25, 6.5, 3.5, 3.0 * FRAC_PI_2, 5.0 * FRAC_PI_2));
-            tail.extend(arc_pts(7.25, 8.25, 1.75, FRAC_PI_2, 3.0 * FRAC_PI_2));
-            let v: Vec<Pos2> = tail.iter().map(|&(x, y)| p.raw(x, y)).collect();
-            p.painter.add(Shape::line(v, Stroke::new(1.7 * p.s, p.color)));
-            p.dot(13.75, 13.0, 0.85);
-            p.dot(7.25, 6.5, 0.85);
+            // Figgure My UI's mark, the app icon in one colour: a screen card with two text
+            // lines, and a bold check over its lower right corner ("design and verify").
+            p.rect(1.5, 1.5, 10.0, 12.0, 2.0);
+            p.line(4.0, 4.75, 7.5, 4.75);
+            p.line(4.0, 7.5, 5.75, 7.5);
+            let check: Vec<Pos2> = [(7.75, 11.0), (10.0, 13.25), (14.5, 8.0)].iter().map(|&(x, y)| p.raw(x, y)).collect();
+            p.painter.add(Shape::line(check, Stroke::new(2.0 * p.s, p.color)));
         }
     }
 }

@@ -1,26 +1,26 @@
-# Flatpak manifest for FigCraft, ready for a Flathub submission.
+# Flatpak manifest for Figgure My UI, ready for a Flathub submission.
 #
 # Flatpak builds run offline, so the crate sources must be vendored first. From the repo root:
 #
 #   curl -fsSLO https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
 #   python3 flatpak-cargo-generator.py Cargo.lock -o packaging/linux/flatpak/cargo-sources.json
-#   flatpak-builder --user --install --force-clean build-flatpak packaging/linux/flatpak/ai.storyteller.figcraft.yml
-#   flatpak run ai.storyteller.figcraft
+#   flatpak-builder --user --install --force-clean build-flatpak packaging/linux/flatpak/io.github.vansyson1308.figguremyui.yml
+#   flatpak run io.github.vansyson1308.figguremyui
 #
 # For Flathub, replace the `dir` source with a `git` source pinned to a release tag and commit.
-# The single-file .flatpak attached to each release comes from ai.storyteller.figcraft.bundle.yml,
+# The single-file .flatpak attached to each release comes from io.github.vansyson1308.figguremyui.bundle.yml,
 # which repackages the prebuilt release binaries. Keep runtime-version and finish-args identical.
 #
 # Official release binaries embed craft-fonts (storytold/craft-fonts, OFL fonts); this from-source
 # build doesn't (add it as a git source and set CRAFT_FONTS_DIR to include it), so it uses the
 # runtime's system fonts.
-id: ai.storyteller.figcraft
+id: io.github.vansyson1308.figguremyui
 runtime: org.freedesktop.Platform
 runtime-version: '26.08'
 sdk: org.freedesktop.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
-command: figcraft
+command: figguremyui
 finish-args:
   # The shared updater inspects and updates this installation via flatpak-spawn --host.
   - --talk-name=org.freedesktop.Flatpak
@@ -44,27 +44,27 @@ finish-args:
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
 modules:
-  - name: figcraft
+  - name: figguremyui
     buildsystem: simple
     build-options:
       env:
-        CARGO_HOME: /run/build/figcraft/cargo
+        CARGO_HOME: /run/build/figguremyui/cargo
         CARGO_NET_OFFLINE: 'true'
         # .cargo/config.toml points CRAFT_FONTS_DIR at ../craft-fonts for local builds; there is
         # none here, so build without it (a warning, not an error).
         CRAFT_FONTS_DIR: /nonexistent
     build-commands:
       - cargo --offline build --release --locked -p figcraft
-      - install -Dm755 target/release/figcraft /app/bin/figcraft
-      - install -Dm644 NOTICE /app/share/doc/figcraft/NOTICE
-      - install -Dm644 packaging/linux/ai.storyteller.figcraft.desktop /app/share/applications/ai.storyteller.figcraft.desktop
-      - install -Dm644 packaging/linux/ai.storyteller.figcraft.mime.xml /app/share/mime/packages/ai.storyteller.figcraft.xml
+      - install -Dm755 target/release/figguremyui /app/bin/figguremyui
+      - install -Dm644 NOTICE /app/share/doc/figguremyui/NOTICE
+      - install -Dm644 packaging/linux/io.github.vansyson1308.figguremyui.desktop /app/share/applications/io.github.vansyson1308.figguremyui.desktop
+      - install -Dm644 packaging/linux/io.github.vansyson1308.figguremyui.mime.xml /app/share/mime/packages/io.github.vansyson1308.figguremyui.xml
       - mkdir -p /app/share/icons && cp -R assets/app-icon/hicolor /app/share/icons/
       - >-
         version=$(awk '/^\[/{p=($0=="[workspace.package]");next} p&&$1=="version"{gsub(/[" ]/,"",$3);print $3;exit}' Cargo.toml);
         install -d /app/share/metainfo;
         sed -e "s/@VERSION@/$version/" -e "s/@DATE@/$(date -u +%Y-%m-%d)/"
-        packaging/linux/ai.storyteller.figcraft.metainfo.xml.in > /app/share/metainfo/ai.storyteller.figcraft.metainfo.xml
+        packaging/linux/io.github.vansyson1308.figguremyui.metainfo.xml.in > /app/share/metainfo/io.github.vansyson1308.figguremyui.metainfo.xml
     sources:
       - type: dir
         path: ../../..

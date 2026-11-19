@@ -7,7 +7,7 @@ use serde_json::json;
 
 use crate::live_tests::{Harness, has_text, text_center};
 
-const LINK: &str = "figcraft://join?host=127.0.0.1:47900&file=f&token=t";
+const LINK: &str = "figguremyui://join?host=127.0.0.1:47900&file=f&token=t";
 
 /// Join from the Join dialog with the invite link: the session it started.
 fn join(h: &mut Harness) -> u64 {

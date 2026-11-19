@@ -19,7 +19,7 @@ fn typed_codes_are_normalised() {
         ("K7M-2QU-9TD", Err("no U")),
         ("K7M/2QX", Err("only letters and digits")),
         ("K7M2QX9T€", Err("only letters and digits")),
-        ("figcraft://join?host=1.2.3.4:5&file=f&token=t", Err("only letters and digits")),
+        ("figguremyui://join?host=1.2.3.4:5&file=f&token=t", Err("only letters and digits")),
     ];
     for (typed, want) in table {
         match (normalize(typed), want) {
@@ -33,7 +33,7 @@ fn typed_codes_are_normalised() {
 
 #[test]
 fn errors_never_echo_what_was_typed() {
-    for typed in ["s3cr3t!!", "SECRETSECRETSECRETSECRE", "figcraft://join?token=hunter2hunter2hunter2"] {
+    for typed in ["s3cr3t!!", "SECRETSECRETSECRETSECRE", "figguremyui://join?token=hunter2hunter2hunter2"] {
         let e = parse(typed).unwrap_err();
         assert!(!e.to_lowercase().contains(&typed.to_lowercase()[..6]), "{e}");
     }
@@ -65,9 +65,11 @@ fn local_codes_round_trip() {
         assert_eq!(parse(&shown.to_lowercase().replace('-', " ")), Ok(Code::Local(local)));
         // The link a joiner connects with names the same session, and gives the code back.
         let link = local.link();
-        assert_eq!(link, format!("figcraft://join?host={}:{port}&file=local&token={}", Ipv4Addr::from(ip), local.token()));
+        assert_eq!(link, format!("figguremyui://join?host={}:{port}&file=local&token={}", Ipv4Addr::from(ip), local.token()));
         assert_eq!(local.token().len(), 17);
         assert_eq!(Local::from_link(&link), Some(local));
+        // FigCraft's form of the same link names the same session.
+        assert_eq!(Local::from_link(&link.replacen("figguremyui://", "figcraft://", 1)), Some(local));
     }
 }
 
@@ -99,13 +101,13 @@ fn tampered_local_codes_are_caught() {
 #[test]
 fn only_local_session_links_have_a_code() {
     for link in [
-        "figcraft://join?host=192.168.1.20:47900&file=abc&token=local-0123456789a",
-        "figcraft://join?host=192.168.1.20:47900&file=local&token=AbCdEfGhIjKlMnOpQrStUv",
-        "figcraft://join?host=[::1]:47900&file=local&token=local-0123456789a",
-        "figcraft://join?host=192.168.1.20:0&file=local&token=local-0123456789a",
-        "figcraft://join?host=192.168.1.20:47900&file=local&token=local-0123456789az",
-        "figcraft://join?host=10.0.0.1:47900&file=local&token=local-+0000000001",
-        "figcraft://join?server=wss://example.org/&file=local&token=local-0123456789a",
+        "figguremyui://join?host=192.168.1.20:47900&file=abc&token=local-0123456789a",
+        "figguremyui://join?host=192.168.1.20:47900&file=local&token=AbCdEfGhIjKlMnOpQrStUv",
+        "figguremyui://join?host=[::1]:47900&file=local&token=local-0123456789a",
+        "figguremyui://join?host=192.168.1.20:0&file=local&token=local-0123456789a",
+        "figguremyui://join?host=192.168.1.20:47900&file=local&token=local-0123456789az",
+        "figguremyui://join?host=10.0.0.1:47900&file=local&token=local-+0000000001",
+        "figguremyui://join?server=wss://example.org/&file=local&token=local-0123456789a",
         "ws://192.168.1.20:47900/?file=local&token=local-0123456789a",
         "",
     ] {

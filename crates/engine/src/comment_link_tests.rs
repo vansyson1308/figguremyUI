@@ -23,7 +23,7 @@ fn refused(s: &mut Session, cmd: &str, params: serde_json::Value) {
 fn a_comment_link_lets_you_comment_and_nothing_else() {
     let (mut s, script) = session();
     s.execute("tool.set", &json!({"tool": "rectangle"})).unwrap();
-    s.execute("collab.join", &json!({"link": "figcraft://join?host=a:1&file=f&token=t"})).unwrap();
+    s.execute("collab.join", &json!({"link": "figguremyui://join?host=a:1&file=f&token=t"})).unwrap();
     let mut doc = Document::new("Shared");
     let page = doc.first_page().unwrap();
     let card = doc.create(page, NodeKind::Rectangle, "Card", 0.0, 0.0, 10.0, 10.0).unwrap();

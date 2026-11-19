@@ -430,12 +430,12 @@ fn text_in_the_document_is_never_run_as_an_instruction() {
         );
     }
     for uri in [
-        "figcraft://document",
-        "figcraft://design",
-        "figcraft://design/findings",
-        "figcraft://prototype/flow",
-        "figcraft://prototype/scenarios",
-        "figcraft://comments",
+        "figguremyui://document",
+        "figguremyui://design",
+        "figguremyui://design/findings",
+        "figguremyui://prototype/flow",
+        "figguremyui://prototype/scenarios",
+        "figguremyui://comments",
     ] {
         let r = c.rpc("resources/read", json!({"uri": uri}));
         let text = r["result"]["contents"][0]["text"].as_str().unwrap_or_else(|| panic!("{uri}: {r}"));

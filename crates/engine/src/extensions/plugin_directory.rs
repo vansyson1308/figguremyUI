@@ -26,7 +26,7 @@ use crate::plugins::{InstalledPlugin, MANIFEST_FILE, Manifest, installed, regist
 use crate::{EngineError, Result, Session, bad, spec};
 
 /// Why there's no plugin directory here (the browser build, sessions without the network).
-pub const NO_DIRECTORY: &str = "plugin directories on a server need the desktop app, figcraft-cli or the MCP server";
+pub const NO_DIRECTORY: &str = "plugin directories on a server need the desktop app, figguremyui-cli or the MCP server";
 /// Largest bundle downloaded or published (a server's own cap is at most this).
 pub const MAX_BUNDLE: usize = 32 << 20;
 /// The module's file name in an installed plugin's folder, and the folder its assets go in.
@@ -268,7 +268,7 @@ fn bundle_from_disk(cmd: &str, _path: &str) -> Result<Bundle> {
 /// Publish a plugin folder (or an installed plugin) as a new version (needs the server's key).
 fn publish(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "plugin.directory.publish";
-    let server = string(p, "server").ok_or_else(|| bad(cmd, "`server` required: ws://host:port/?key=… (`figcraft-server key` prints it)"))?;
+    let server = string(p, "server").ok_or_else(|| bad(cmd, "`server` required: ws://host:port/?key=… (`figguremyui-server key` prints it)"))?;
     let bundle = match (string(p, "path"), string(p, "plugin")) {
         (Some(path), _) => bundle_from_disk(cmd, &path)?,
         (None, Some(id)) => {
