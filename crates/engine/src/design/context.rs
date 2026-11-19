@@ -116,7 +116,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
         spec!(
             "design.decision.accept",
             "Accept decision",
-            "{id}  a person stands behind it as the brief is now (it takes the current briefRevision); refused to an AI agent. Accepting the decision of an AI agent's proposed choice among alternatives makes that choice (see design.alternative.choose) → {decision, chose?: [{set, node}]}",
+            "{id}  a person stands behind it as the brief is now (it takes the current briefRevision); an AI agent's decision then records who accepted it as acceptedBy; refused to an AI agent. Accepting the decision of an AI agent's proposed choice among alternatives makes that choice (see design.alternative.choose) → {decision, chose?: [{set, node}]}",
             true,
             decision_accept
         ),
@@ -395,6 +395,7 @@ fn decision_set(s: &mut Session, p: &Value) -> Result<Value> {
             // What the person accepted is the decision as it read then.
             if by_agent {
                 d.status = DecisionStatus::Proposed;
+                d.accepted_by.clear();
             }
         }
         Ok(json!({"decision": d}))
@@ -446,11 +447,14 @@ fn decision_accept(s: &mut Session, p: &Value) -> Result<Value> {
     if agent(s).is_some() {
         return Err(bad(cmd, format!("a person accepts a decision: {id} stays proposed until the user accepts it ({} can't)", actor(s))));
     }
+    let who = actor(s);
     edit(s, |ctx, _| {
         let revision = ctx.brief_revision;
         let d = ctx.decisions.iter_mut().find(|d| d.id == id).ok_or_else(|| bad(cmd, format!("`id`: no decision {id}")))?;
         d.status = DecisionStatus::Accepted;
         d.brief_revision = revision;
+        // Who accepted it, when that isn't who wrote it: an agent's proposal says so (`acceptedBy`).
+        d.accepted_by = if who == d.author { String::new() } else { who };
         let mut out = json!({"decision": d});
         // The decision of a choice an agent proposed: accepting it makes the choice.
         let mut chose = Vec::new();

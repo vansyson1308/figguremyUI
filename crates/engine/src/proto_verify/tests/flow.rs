@@ -107,8 +107,10 @@ fn an_overlay_that_cannot_be_closed_traps_the_viewer() {
     assert_eq!(trapped.len(), 1, "{v}");
     assert_eq!((&trapped[0]["severity"], &trapped[0]["nodes"]), (&json!("major"), &json!([menu, opener])));
     assert!(trapped[0]["evidence"].as_str().unwrap().contains(&format!("`Open` ({opener}) opens it with close-on-outside-click off")));
-    // The overlay is a frame of the page that is shown as an overlay, not a screen nobody reaches.
-    assert_eq!((&screen(&v, menu)["overlay"], &screen(&v, menu)["reachable"]), (&json!(true), &json!(false)));
+    // The overlay is a frame of the page that is shown as an overlay, not a screen nobody
+    // reaches: the start opens it, so it is reachable (QC-10), and not a dead end.
+    assert_eq!((&screen(&v, menu)["overlay"], &screen(&v, menu)["reachable"]), (&json!(true), &json!(true)));
+    assert_eq!(screen(&v, menu)["deadEnd"], json!(false));
     assert!(problems(&v, "flow.unreachable").is_empty(), "{v}");
     // Near misses: a click outside closes it, or something in it does.
     assert!(problems(&overlay(true, None).0, "flow.trappedOverlay").is_empty());
@@ -337,7 +339,24 @@ fn every_branch_of_a_conditional_counts_and_overlays_lead_on() {
     for (id, name) in [(b, "B"), (c, "C"), (d, "D")] {
         assert_eq!(screen(&v, id)["reachable"], json!(true), "{name}: {v}");
     }
-    assert_eq!((&screen(&v, menu)["reachable"], &screen(&v, menu)["overlay"]), (&json!(false), &json!(true)));
+    // B, which is reached, opens it (QC-10).
+    assert_eq!((&screen(&v, menu)["reachable"], &screen(&v, menu)["overlay"]), (&json!(true), &json!(true)));
+}
+
+/// QC-10: an overlay is reachable when something reachable opens it, and only then.
+#[test]
+fn an_overlay_is_reachable_when_a_reachable_screen_opens_it() {
+    let mut s = Session::new();
+    let (a, menu, lone, orphan) =
+        (frame(&mut s, "A", 0.0), frame(&mut s, "Menu", 400.0), frame(&mut s, "Lone", 800.0), frame(&mut s, "Orphan menu", 1200.0));
+    button(&mut s, "Open", a, 20.0, json!({"type": "openOverlay", "dest": menu, "closeOnOutside": true}));
+    button(&mut s, "Open", lone, 20.0, json!({"type": "openOverlay", "dest": orphan, "closeOnOutside": true}));
+    flow(&mut s, a);
+    let v = check(&mut s);
+    assert_eq!((&screen(&v, menu)["reachable"], &screen(&v, menu)["deadEnd"]), (&json!(true), &json!(false)), "{v}");
+    // Lone is no start and nothing leads there, so the overlay it opens isn't reached either.
+    assert_eq!((&screen(&v, lone)["reachable"], &screen(&v, orphan)["reachable"]), (&json!(false), &json!(false)), "{v}");
+    assert!(problems(&v, "flow.unreachable").iter().all(|p| p["nodes"] != json!([orphan])), "an overlay isn't listed as an unreachable screen: {v}");
 }
 
 #[test]
