@@ -42,6 +42,7 @@ pub enum Command {
     Run(RunArgs),
     Commands(CommandsArgs),
     Mcp(McpArgs),
+    Doctor(DoctorArgs),
     /// Publish plugins to a server's plugin directory
     Plugin {
         #[command(subcommand)]
@@ -220,6 +221,26 @@ pub struct McpArgs {
     pub timeout: Option<u64>,
     #[command(flatten)]
     pub roots: RootArgs,
+}
+
+/// Check this install and print how to connect an AI agent
+///
+/// Prints the version and this binary's path, runs an MCP self-test in this process (initialize,
+/// tools/list, get_capabilities, then a small prototype built, rendered, flow-checked and its
+/// scenario run), reports the fonts text can use, and prints ready-to-paste setup lines for Claude
+/// Code, Codex and an mcpServers JSON, headless and attached. It writes no files and uses no
+/// network. Exit code 0 when every check passes, 1 when one fails (each failure says what to do).
+#[derive(Args)]
+pub struct DoctorArgs {
+    /// Print one JSON object (stable keys; see docs/cli.md)
+    #[arg(long)]
+    pub json: bool,
+    /// Also open this document and run its stored scenarios and the flow check
+    #[arg(long, value_name = "FILE")]
+    pub example: Option<String>,
+    /// The control port the attached-mode lines use (`figguremyui --control PORT`)
+    #[arg(long, value_name = "PORT", default_value = "7979", value_parser = clap::value_parser!(u16).range(1..))]
+    pub port: u16,
 }
 
 #[derive(Subcommand)]
