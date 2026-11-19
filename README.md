@@ -81,13 +81,13 @@ played by hand.
   <p align="center"><sub><b>Real states, reached by real clicks</b>: the sign-up form's validation error in the player</sub></p>
 </td>
 <td width="50%" valign="top">
-  <img src="docs/images/m11-panel-findings.png" alt="The Design context panel's Findings section after running the checks: the stage chooser, the rules that ran and those not run at this stage, and stored findings, each showing whether it is a measured check, a judgement or a person's feedback, the rule, what was measured and what would help" width="100%">
+  <img src="docs/images/m11-panel-findings.png" alt="The Design context panel's Findings section after running the checks: the stage chooser, the rules that ran and those not run at this stage, and two stored findings, a reviewer's judgement and a measured check, each marked with its kind and showing what was found and what would help" width="100%">
   <p align="center"><sub><b>Findings with evidence</b>: what was measured, by which rule, and which rules didn't run at this stage</sub></p>
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
-  <img src="docs/images/m11-dashboard-1440.png" alt="The pantry dashboard frame at 1440 pixels wide: a header with actions, four KPI cards in one row, the low-stock list and a side panel beside it" width="100%">
+  <img src="docs/images/m11-dashboard-1440.png" alt="The pantry dashboard frame at 1440 pixels wide, in the loading state it opens in: a header with actions, four KPI cards in one row showing placeholders, the low-stock list and a side panel beside it" width="100%">
   <p align="center"><sub><b>Responsive by constraints and auto layout</b>: the dashboard at 1440 px …</sub></p>
 </td>
 <td width="50%" valign="top">
