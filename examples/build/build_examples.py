@@ -487,6 +487,14 @@ CONSENT = (
     "Tôi đồng ý để lớp bơi liên lạc với tôi qua số điện thoại hoặc email ở trên về lịch học, và tôi đã đọc "
     "nội quy an toàn của bể bơi cộng đồng."
 )
+# The hint under "Tiếp tục", before and after the consent box is ticked (it stays, so the button
+# doesn't move), and what the error summary says.
+CONSENT_HINT = "Hãy đánh dấu ô đồng ý để bật nút Tiếp tục."
+CONSENT_HINT_DONE = "Đã đồng ý. Bấm Tiếp tục để nhận mã xác nhận."
+CONSENT_ERROR = "Hãy đánh dấu ô đồng ý ở phía trên trước khi tiếp tục."
+MISSING_BOTH = "Còn thiếu họ tên và cách liên lạc. Hãy điền hai ô được đánh dấu đỏ."
+MISSING_NAME = "Còn thiếu họ và tên người học."
+MISSING_CONTACT = "Còn thiếu số điện thoại hoặc email."
 
 
 def signup_flow(b):
@@ -501,6 +509,10 @@ def signup_flow(b):
         ("attempts", "number", 0),
         ("error_message", "string", ""),
         ("show_error", "boolean", False),
+        # What the error summary is about: "consent" (the greyed button was tapped) or "fields"
+        # (Continue found empty fields). A fix updates or hides it.
+        ("error_kind", "string", ""),
+        ("consent_hint", "string", CONSENT_HINT),
         ("name_state", "string", "Empty"),
         ("contact_state", "string", "Empty"),
         ("code_filled", "boolean", False),
@@ -597,10 +609,10 @@ def signup_flow(b):
     ffoot = column(form, "Footer", gap=8)
     cont_off = btn(ffoot, "Tiếp tục", "Continue (disabled)", state="Disabled")
     cont = btn(ffoot, "Tiếp tục", "Continue")
-    hint = b.text(ffoot, "Hãy đánh dấu ô đồng ý để bật nút Tiếp tục.", "Caption", "muted", name="Consent hint",
-                  fill_width=True, align="center")
+    # The hint stays (its words change once the box is ticked), so "Tiếp tục" doesn't move.
+    hint = b.text(ffoot, CONSENT_HINT, "Caption", "muted", name="Consent hint", fill_width=True, align="center")
+    b.bind(hint, "characters", "consent_hint")
     b.bind(cont_off, "visible", "needs_consent")
-    b.bind(hint, "visible", "needs_consent")
     b.bind(cont, "visible", "consent")
 
     # -- Verify code
@@ -636,27 +648,39 @@ def signup_flow(b):
     # -- Interactions
     b.on(start, "onClick", nav(form))
     b.on(form_back, "onClick", back())
-    b.on(name_f, "onClick", [set_var("name_filled", True), set_var("name_state", "Filled")])
-    b.on(contact_f, "onClick", [set_var("contact_filled", True), set_var("contact_state", "Filled")])
+    # A fix (a field filled, the box ticked) updates the error summary to what is still missing,
+    # or hides it once nothing is.
+    hide_error = [set_var("show_error", False), set_var("error_kind", "")]
+    refresh_error = when(
+        ('show_error and error_kind == "consent" and consent', hide_error),
+        ('show_error and error_kind == "fields" and name_filled and contact_filled', hide_error),
+        ('show_error and error_kind == "fields" and not name_filled and not contact_filled', [set_var("error_message", MISSING_BOTH)]),
+        ('show_error and error_kind == "fields" and not name_filled', [set_var("error_message", MISSING_NAME)]),
+        ('show_error and error_kind == "fields" and not contact_filled', [set_var("error_message", MISSING_CONTACT)]),
+    )
+    b.on(name_f, "onClick", [set_var("name_filled", True), set_var("name_state", "Filled"), refresh_error])
+    b.on(contact_f, "onClick", [set_var("contact_filled", True), set_var("contact_state", "Filled"), refresh_error])
     b.on(box, "onClick", when(
-        ("consent", [set_var("consent", False), set_var("needs_consent", True), set_var("consent_box", "No")]),
-        (None, [set_var("consent", True), set_var("needs_consent", False), set_var("consent_box", "Yes")]),
+        ("consent", [set_var("consent", False), set_var("needs_consent", True), set_var("consent_box", "No"),
+                     set_var("consent_hint", CONSENT_HINT)]),
+        (None, [set_var("consent", True), set_var("needs_consent", False), set_var("consent_box", "Yes"),
+                set_var("consent_hint", CONSENT_HINT_DONE), refresh_error]),
     ))
-    b.on(cont_off, "onClick", [set_var("show_error", True),
-                               set_var("error_message", "Hãy đánh dấu ô đồng ý ở cuối trang trước khi tiếp tục.")])
+    b.on(cont_off, "onClick", [set_var("show_error", True), set_var("error_kind", "consent"),
+                               set_var("error_message", CONSENT_ERROR)])
     b.on(cont, "onClick", [
         when(("not name_filled", [set_var("name_state", "Error")])),
         when(("not contact_filled", [set_var("contact_state", "Error")])),
         when(
-            ("name_filled and contact_filled", [set_var("show_error", False), nav(verify)]),
+            ("name_filled and contact_filled", hide_error + [nav(verify)]),
             (None, [
                 set_expr("attempts", "attempts + 1"),
                 set_var("show_error", True),
+                set_var("error_kind", "fields"),
                 when(
-                    ("not name_filled and not contact_filled",
-                     [set_var("error_message", "Còn thiếu họ tên và cách liên lạc. Hãy điền hai ô được đánh dấu đỏ.")]),
-                    ("not name_filled", [set_var("error_message", "Còn thiếu họ và tên người học.")]),
-                    (None, [set_var("error_message", "Còn thiếu số điện thoại hoặc email.")]),
+                    ("not name_filled and not contact_filled", [set_var("error_message", MISSING_BOTH)]),
+                    ("not name_filled", [set_var("error_message", MISSING_NAME)]),
+                    (None, [set_var("error_message", MISSING_CONTACT)]),
                 ),
             ]),
         ),
@@ -664,7 +688,8 @@ def signup_flow(b):
     b.on(verify_back, "onClick", back())
     b.on(code_f, "onClick", [set_var("code_filled", True), set_var("code_state", "Filled")])
     b.on(confirm, "onClick", when(("code_filled", [nav(done)]), (None, [set_var("code_state", "Error")])))
-    b.on(resend, "onClick", {"type": "openOverlay", "dest": toast, "position": "bottomCenter", "close_on_outside": True})
+    # Right under the link that asked for it (a manual position with no offset): it covers no button.
+    b.on(resend, "onClick", {"type": "openOverlay", "dest": toast, "position": "manual", "close_on_outside": True})
     b.on(toast, {"type": "afterDelay", "ms": 2500}, {"type": "closeOverlay"})
     m.run("proto.flow.add", {"start": welcome, "name": "Đăng ký lớp bơi"})
     b.end_state(done, "The sign-up is complete: the class contacts the person, so there is nothing left to do here "
@@ -684,8 +709,9 @@ def signup_flow(b):
                    fill_name, fill_name_state, fill_contact, fill_contact_state,
                    click(segs[0][0], "Keeps the age group 6–11.", {"variables": {"age_group": "6–11 tuổi"},
                                                                     "variants": [{"instance": segs[0][0], "variant": "Yes"}]}),
-                   click(box, "Ticks the consent box.", {"variables": {"consent": True}, "visible": [cont],
-                                                         "hidden": [cont_off, hint]}),
+                   click(box, "Ticks the consent box.", {"variables": {"consent": True}, "visible": [cont, hint],
+                                                         "hidden": [cont_off],
+                                                         "text": [{"node": hint, "equals": CONSENT_HINT_DONE}]}),
                    click(cont, "Taps “Tiếp tục”.", {"screen": verify, "variables": {"attempts": 0}}),
                    typing("code_filled", True, "Types the 6-digit code from the text message (a text input in the real app)."),
                    typing("code_state", "Filled", "The code field shows the code."),
@@ -740,9 +766,29 @@ def signup_flow(b):
                    click(contact_f, "Taps the contact field."),
                    click(cont_off, "Taps the greyed-out “Tiếp tục”.", {
                        "screen": form, "visible": [err_text, hint],
-                       "text": [{"node": err_text, "equals": "Hãy đánh dấu ô đồng ý ở cuối trang trước khi tiếp tục."}],
+                       "text": [{"node": err_text, "equals": CONSENT_ERROR}, {"node": hint, "equals": CONSENT_HINT}],
                    }),
-                   click(box, "Ticks the consent box.", {"visible": [cont], "hidden": [cont_off, hint]}),
+                   click(box, "Ticks the consent box: the error goes, as it is fixed.", {
+                       "visible": [cont, hint], "hidden": [cont_off, banner],
+                       "variables": {"show_error": False}, "text": [{"node": hint, "equals": CONSENT_HINT_DONE}]}),
+                   click(cont, "Taps “Tiếp tục”.", {"screen": verify}),
+               ],
+               {"screen": verify})
+    b.scenario("Fixing the form updates the error", form,
+               "Someone told what is missing fills it in and sees the message change to what is left, then go away.",
+               [
+                   click(box, "Ticks the consent box."),
+                   click(cont, "Taps “Tiếp tục” with both fields empty.", {
+                       "screen": form, "visible": [err_text],
+                       "text": [{"node": err_text, "equals": MISSING_BOTH}],
+                       "variants": [{"instance": name_f, "variant": "Error"}, {"instance": contact_f, "variant": "Error"}]}),
+                   click(name_f, "Fills in the name: the message names only the contact now.", {
+                       "screen": form, "visible": [err_text],
+                       "text": [{"node": err_text, "equals": MISSING_CONTACT}],
+                       "variants": [{"instance": name_f, "variant": "Filled"}, {"instance": contact_f, "variant": "Error"}]}),
+                   click(contact_f, "Fills in the contact: nothing is missing, so the summary goes.", {
+                       "screen": form, "hidden": [banner], "variables": {"show_error": False},
+                       "variants": [{"instance": contact_f, "variant": "Filled"}]}),
                    click(cont, "Taps “Tiếp tục”.", {"screen": verify}),
                ],
                {"screen": verify})
@@ -814,6 +860,12 @@ KPIS = [
     ("Families served this week", "138", "up 9 on last week"),
     ("Volunteers on shift today", "6", "2 more needed at 4 pm"),
 ]
+# What a headline number shows while the count loads.
+KPI_LOADING = "—"
+# Where the dashboard's components sit: right of the dashboard and below its overlays (the
+# dashboard grows tall at phone width; frames read top to bottom, so it stays first).
+COMPONENTS_X = 2060
+COMPONENTS_Y = 520
 
 
 def pantry_dashboard(b):
@@ -836,12 +888,12 @@ def pantry_dashboard(b):
         ("detail_left", "string", LOW_STOCK[0][2]),
         ("detail_usual", "string", LOW_STOCK[0][3]),
         ("detail_next", "string", LOW_STOCK[0][4]),
-    ])
+    ] + [("kpi_%d" % n, "string", KPI_LOADING) for n in range(1, len(KPIS) + 1)])
     m.run("proto.settings", {"device": "Desktop"})
 
     # Components, under the dashboard.
-    button, _ = make_button(b, 0, 1400, hug=True)
-    chip, _ = make_chip(b, 600, 1400, name="FilterChip", width=170)
+    button, _ = make_button(b, COMPONENTS_X, COMPONENTS_Y, hug=True)
+    chip, _ = make_chip(b, COMPONENTS_X + 600, COMPONENTS_Y, name="FilterChip", width=170)
 
     def toggle(on):
         def build(vname, cx, cy):
@@ -854,17 +906,17 @@ def pantry_dashboard(b):
             return f
         return build
 
-    switch, _ = b.variant_set("Toggle", 1100, 1400, [("On=No", toggle(False)), ("On=Yes", toggle(True))])
+    switch, _ = b.variant_set("Toggle", COMPONENTS_X + 1100, COMPONENTS_Y, [("On=No", toggle(False)), ("On=Yes", toggle(True))])
 
     kpi_main = b.frame(name="KpiCard", layout="vertical", gap=4, padding=[20, 20, 20, 20], fill="surface", stroke="divider",
-                       radius=12, w=240, h=120, x=0, y=1560, sizing=("fixed", "hug"))
+                       radius=12, w=240, h=120, x=COMPONENTS_X, y=COMPONENTS_Y + 160, sizing=("fixed", "hug"))
     b.text(kpi_main, "Label", "Caption", "muted", name="label", fill_width=True)
     b.text(kpi_main, "0", "Display", "text", name="value", fill_width=True)
     b.text(kpi_main, "Note", "Caption", "muted", name="note", fill_width=True)
     kpi = m.run("component.create", {"ids": [kpi_main]})["id"]
 
     row_main = b.frame(name="StockRow", layout="horizontal", gap=12, padding=[12, 12, 12, 12], fill="surface", radius=8,
-                       w=640, h=48, x=320, y=1560, cross="center", wrap=True, cross_gap=4, sizing=("fixed", "hug"),
+                       w=640, h=48, x=COMPONENTS_X + 320, y=COMPONENTS_Y + 160, cross="center", wrap=True, cross_gap=4, sizing=("fixed", "hug"),
                        extra={"minHeight": 48})
     b.text(row_main, "Item", "Body", "text", name="name", fill_width=True, extra={"minWidth": 160})
     status = b.frame(row_main, "Status", layout="horizontal", gap=8, cross="center", sizing=("hug", "hug"))
@@ -908,12 +960,17 @@ def pantry_dashboard(b):
     b.bind(banner, "visible", "is_error")
 
     kpis = b.frame(dash, "KPIs", layout="horizontal", gap=16, wrap=True, cross_gap=16, sizing=("fill", "hug"))
-    for label, value, note in KPIS:
+    kpi_values = []
+    for n, (label, value, note) in enumerate(KPIS, start=1):
         i = b.instance(kpi, kpis, name="KPI " + label, sizing=("fill", "hug"))
         b.set(i, {"minWidth": 240})
         b.override(i, "label", label)
         b.override(i, "value", value)
         b.override(i, "note", note)
+        # A placeholder while the count loads, the number once it has.
+        v = b.child(i, "value")
+        b.bind(v, "characters", "kpi_%d" % n)
+        kpi_values.append(v)
 
     main = b.frame(dash, "Main", layout="horizontal", gap=24, wrap=True, cross_gap=24, sizing=("fill", "hug"))
     content = b.frame(main, "Low stock", layout="vertical", gap=12, padding=[20, 20, 20, 20], fill="surface", radius=12,
@@ -978,6 +1035,9 @@ def pantry_dashboard(b):
                 set_var("is_empty", empty_), set_var("is_error", error), set_var("show_list", show)]
         if updated:
             acts.append(set_var("updated_text", updated))
+        # The headline numbers: placeholders while loading, the count after (a failed sync keeps
+        # the last good one).
+        acts += [set_var("kpi_%d" % n, KPI_LOADING if loading else value) for n, (_, value, _) in enumerate(KPIS, start=1)]
         return acts
 
     finish = when(
@@ -986,12 +1046,22 @@ def pantry_dashboard(b):
         ("filter_on", state("empty", empty_=True, updated="Updated just now (simulated)")),
         (None, state("ready", ready=True, show=True, updated="Updated just now (simulated)")),
     )
-    start_sync = state("loading", loading=True, updated="Syncing with the stock sheet…") + [
-        {"type": "openOverlay", "dest": toast, "position": "bottomCenter", "close_on_outside": False}]
+    def size(node):
+        n = m.call("get_node", {"id": node, "depth": 0, "fields": ["width", "height"]})
+        return n["width"], n["height"]
+
+    def start_sync(button):
+        # Right under the button that started it, aligned to its right edge: over the page's
+        # content, never over an action, and clear of the presenter's bar at the window's bottom
+        # (where a bottom-centred toast was hidden without the device frame).
+        (bw, bh), (tw, _) = size(button), size(toast)
+        return state("loading", loading=True, updated="Syncing with the stock sheet…") + [
+            {"type": "openOverlay", "dest": toast, "position": "manual", "offset": [bw - tw, bh + 8],
+             "close_on_outside": False}]
     b.on(dash, {"type": "afterDelay", "ms": 1200}, [finish])
     b.on(toast, {"type": "afterDelay", "ms": 1200}, [finish, {"type": "closeOverlay"}])
-    b.on(refresh, "onClick", start_sync)
-    b.on(retry, "onClick", start_sync)
+    b.on(refresh, "onClick", start_sync(refresh))
+    b.on(retry, "onClick", start_sync(retry))
     b.on(fail, "onClick", when(("fail_next", [set_var("fail_next", False), set_var("fail_switch", "No")]),
                                (None, [set_var("fail_next", True), set_var("fail_switch", "Yes")])))
     b.on(filt, "onClick", when(
@@ -1010,7 +1080,8 @@ def pantry_dashboard(b):
     m.run("proto.flow.add", {"start": dash, "name": "Pantry stock"})
 
     # -- Scenarios
-    load = wait("Waits while the count loads.", {"visible": [listing], "hidden": [skeleton], "variables": {"status": "ready"}})
+    load = wait("Waits while the count loads.", {"visible": [listing], "hidden": [skeleton], "variables": {"status": "ready"},
+                                                 "text": [{"node": kpi_values[0], "equals": KPIS[0][1]}]})
     b.scenario("Load, then ready", dash,
                "A volunteer opening the dashboard at the start of a shift sees a loading state, then the low-stock list.",
                [load],
@@ -1031,15 +1102,17 @@ def pantry_dashboard(b):
                    load,
                    click(fail, "Turns on “Simulate a failed sync” (stands in for the network failing).",
                          {"variants": [{"instance": fail, "variant": "Yes"}]}),
-                   click(refresh, "Taps “Refresh”.", {"overlays": [toast], "visible": [skeleton],
-                                                      "variables": {"status": "loading"}}),
+                   click(refresh, "Taps “Refresh”: placeholders while it loads.", {
+                       "overlays": [toast], "visible": [skeleton], "variables": {"status": "loading"},
+                       "text": [{"node": v, "equals": KPI_LOADING} for v in kpi_values]}),
                    wait("The sync fails.", {"overlays": [], "visible": [banner, listing],
                                             "variables": {"status": "error", "fail_next": False},
                                             "variants": [{"instance": fail, "variant": "No"}]}),
                    click(retry, "Taps “Retry” on the banner.", {"overlays": [toast], "variables": {"status": "loading"}}),
                    wait("The retry goes through."),
                ],
-               {"overlays": [], "variables": {"status": "ready", "is_error": False}, "hidden": [banner], "visible": [listing]})
+               {"overlays": [], "variables": {"status": "ready", "is_error": False}, "hidden": [banner], "visible": [listing],
+                "text": [{"node": v, "equals": value} for v, (_, value, _) in zip(kpi_values, KPIS)]})
     b.scenario("Row detail closes on an outside click", dash,
                "A volunteer checks when oats are next delivered, then clicks beside the panel to get back to the list.",
                [
@@ -1342,11 +1415,13 @@ def bike_repair_booking(b):
         b.on(card_ids[key], "onClick", acts)
     b.on(choose_off, "onClick", set_var("choose_hint", "Bạn chưa chọn dịch vụ: chạm vào một thẻ ở trên."))
     b.on(choose_next, "onClick", nav(details))
-    b.on(details_back, "onClick", back())
+    # Back goes to the step before, in step order: after "Đổi" on Confirm the history is
+    # Confirm → Details, and a history back would go to step 3.
+    b.on(details_back, "onClick", nav(choose))
     b.on(notes, "onClick", [set_var("notes_state", "Filled"), set_var("notes_text", "Phanh sau kêu khi xuống dốc.")])
     b.on(details_off, "onClick", set_var("details_hint", "Hãy chọn cả ngày và giờ ở trên."))
     b.on(details_next, "onClick", [set_expr("slot", 'day + ", " + time'), nav(confirm)])
-    b.on(confirm_back, "onClick", back())
+    b.on(confirm_back, "onClick", nav(details))
     b.on(change_service, "onClick", nav(choose))
     b.on(change_slot, "onClick", nav(details))
     b.on(book, "onClick", nav(booked))
@@ -1423,6 +1498,14 @@ def bike_repair_booking(b):
                        "text": [{"node": details_hint, "equals": "Hãy chọn cả ngày và giờ ở trên."}]}),
                ],
                {"screen": details})
+    b.scenario("Back after changing the time goes to step 1", choose,
+               "Someone who changes the time from the summary, then taps “‹ Quay lại” on step 2, goes to step 1, "
+               "not back to the summary.",
+               to_confirm + [
+                   click(change_slot, "Taps “Đổi” next to the time.", {"screen": details}),
+                   click(details_back, "Taps “‹ Quay lại”.", {"screen": choose}),
+               ],
+               {"screen": choose, "variants": [{"instance": card_ids["tune"], "variant": "Yes"}]})
 
     # -- Design context
     m.run("design.brief.set", {

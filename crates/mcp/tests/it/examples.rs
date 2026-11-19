@@ -39,13 +39,15 @@ const EXAMPLES: [Example; 3] = [
             ("S3", "Back keeps what was typed"),
             ("S4", "Resend toast closes by itself"),
             ("S5", "Continue explains itself while consent is off"),
+            ("S6", "Fixing the form updates the error"),
         ],
         screens: &[
             ("Welcome", true, false),
             ("Sign-up form", true, false),
             ("Verify code", true, false),
             ("Done", true, true),
-            ("Toast: code sent again", false, false),
+            // Reachable as an overlay: Verify code opens it (QC-10).
+            ("Toast: code sent again", true, false),
             ("Button", false, false),
             ("Text button", false, false),
             ("Field", false, false),
@@ -65,8 +67,8 @@ const EXAMPLES: [Example; 3] = [
         ],
         screens: &[
             ("Pantry dashboard", true, false),
-            ("Sync toast", false, false),
-            ("Item detail", false, false),
+            ("Sync toast", true, false),
+            ("Item detail", true, false),
             ("Button", false, false),
             ("FilterChip", false, false),
             ("Toggle", false, false),
@@ -83,6 +85,7 @@ const EXAMPLES: [Example; 3] = [
             ("S3", "Back from Details keeps the service highlighted"),
             ("S4", "Booked is where the flow ends"),
             ("S5", "Continue waits for a day and a time"),
+            ("S6", "Back after changing the time goes to step 1"),
         ],
         screens: &[
             ("Choose service", true, false),
@@ -195,9 +198,14 @@ fn check_example(c: &mut Client, e: &Example) {
         .as_array()
         .unwrap()
         .iter()
-        .map(|s| (s["name"].as_str().unwrap().to_string(), s["status"].as_str().unwrap().to_string(), s["author"].as_str().unwrap().to_string()))
+        .map(|s| {
+            let who = format!("{} · accepted by {}", s["author"].as_str().unwrap(), s["acceptedBy"].as_str().unwrap_or("nobody"));
+            (s["name"].as_str().unwrap().to_string(), s["status"].as_str().unwrap().to_string(), who)
+        })
         .collect();
-    let want: Vec<(String, String, String)> = e.end_states.iter().map(|n| (n.to_string(), "accepted".to_string(), BUILDER.to_string())).collect();
+    // The builder proposed them; the maintainers' acceptance step, as the user, accepted them.
+    let want: Vec<(String, String, String)> =
+        e.end_states.iter().map(|n| (n.to_string(), "accepted".to_string(), format!("{BUILDER} · accepted by user"))).collect();
     assert_eq!(ends, want, "{}: end states", e.file);
 }
 
@@ -223,10 +231,13 @@ fn each_example_passes_its_flow_check_scenarios_and_design_check() {
             .as_array()
             .unwrap()
             .iter()
-            .map(|d| (d["id"].as_str().unwrap().to_string(), d["status"].as_str().unwrap().to_string(), d["author"].as_str().unwrap().to_string()))
+            .map(|d| {
+                let who = format!("{} · accepted by {}", d["author"].as_str().unwrap(), d["acceptedBy"].as_str().unwrap_or("nobody"));
+                (d["id"].as_str().unwrap().to_string(), d["status"].as_str().unwrap().to_string(), who)
+            })
             .collect();
         let want: Vec<(String, String, String)> =
-            ["D1", "D2", "D3"].iter().map(|d| (d.to_string(), "accepted".to_string(), BUILDER.to_string())).collect();
+            ["D1", "D2", "D3"].iter().map(|d| (d.to_string(), "accepted".to_string(), format!("{BUILDER} · accepted by user"))).collect();
         assert_eq!(decisions, want, "{}: decisions", e.file);
         let assumptions: Vec<(String, String)> = ctx["assumptions"]
             .as_array()
@@ -414,4 +425,74 @@ fn without_the_maintainers_acceptance_an_agents_end_state_stays_a_proposal() {
     assert_eq!(list[0], ("S1".to_string(), "Happy path".to_string(), false), "the happy path expects an end state");
     as_user(&mut c, "proto.endState.accept", json!({"id": done}));
     assert_eq!(c.ok("check_prototype", json!({}))["ok"], true);
+}
+
+/// QC-02: in the sign-up form, fixing what the error summary names updates it, and it goes once
+/// nothing is missing; ticking the box clears the consent message. Played step by step on the
+/// simulator, as a person taps.
+#[test]
+fn the_sign_up_error_summary_follows_the_fixes() {
+    let mut c = open("signup-flow");
+    let summary = named(&mut c, "Error summary");
+    let message = named(&mut c, "Error message");
+    let form = named(&mut c, "Sign-up form");
+    let (name, contact, cont, cont_off, boxed) = (
+        named(&mut c, "Name field"),
+        named(&mut c, "Contact field"),
+        named(&mut c, "Continue"),
+        named(&mut c, "Continue (disabled)"),
+        named(&mut c, "Consent checkbox"),
+    );
+    let click = |n: &Value| json!({"click": n});
+    // Both fields empty: the summary names both; the name filled: only the contact; both: gone.
+    let r = c.run(
+        "proto.simulate",
+        json!({"start": form, "steps": [click(&boxed), click(&cont)], "expect": {"visible": [summary], "text": [{"node": message, "equals": "Còn thiếu họ tên và cách liên lạc. Hãy điền hai ô được đánh dấu đỏ."}]}}),
+    );
+    assert_eq!(r["passed"], true, "{r}");
+    let r = c.run(
+        "proto.simulate",
+        json!({"start": form, "steps": [click(&boxed), click(&cont), click(&name)], "expect": {"visible": [summary], "text": [{"node": message, "equals": "Còn thiếu số điện thoại hoặc email."}]}}),
+    );
+    assert_eq!(r["passed"], true, "{r}");
+    let r = c.run(
+        "proto.simulate",
+        json!({"start": form, "steps": [click(&boxed), click(&cont), click(&name), click(&contact)], "expect": {"hidden": [summary]}}),
+    );
+    assert_eq!(r["passed"], true, "{r}");
+    // The consent message goes when the box is ticked.
+    let r =
+        c.run("proto.simulate", json!({"start": form, "steps": [click(&name), click(&contact), click(&cont_off)], "expect": {"visible": [summary]}}));
+    assert_eq!(r["passed"], true, "the greyed button's tap shows the summary: {r}");
+    let r = c.run(
+        "proto.simulate",
+        json!({"start": form, "steps": [click(&name), click(&contact), click(&cont_off), click(&boxed)], "expect": {"hidden": [summary]}}),
+    );
+    assert_eq!(r["passed"], true, "{r}");
+    // And the stored scenario says so.
+    let list = c.run("proto.scenario.list", json!({}));
+    let s6 = list["scenarios"].as_array().unwrap().iter().find(|s| s["id"] == "S6").unwrap().clone();
+    assert_eq!(s6["name"], "Fixing the form updates the error");
+    assert_eq!(c.run("proto.scenario.run", json!({"id": "S6"}))["passed"], true);
+}
+
+/// QC-03: in the bike booking, Back on step 2 goes to step 1 also after "Đổi" on the summary
+/// (a history back went to step 3).
+#[test]
+fn the_bike_booking_back_goes_one_step_back_after_a_change() {
+    let mut c = open("bike-repair-booking");
+    let list = c.run("proto.scenario.list", json!({}));
+    let s6 = list["scenarios"].as_array().unwrap().iter().find(|s| s["id"] == "S6").unwrap().clone();
+    assert_eq!(s6["name"], "Back after changing the time goes to step 1");
+    let choose = named(&mut c, "Choose service");
+    let details = named(&mut c, "Details");
+    let confirm = named(&mut c, "Confirm");
+    let r = c.run("proto.scenario.run", json!({"id": "S6"}));
+    assert_eq!(r["passed"], true, "{r}");
+    let screens: Vec<Value> = r["results"][0]["steps"].as_array().unwrap().iter().map(|s| s["state"]["screen"].clone()).collect();
+    let n = screens.len();
+    assert_eq!(&screens[n - 3..], &[confirm, details, choose.clone()], "Confirm, Đổi to Details, Back to Choose service");
+    // The same Back from a straight walk still goes to Choose service.
+    let r = c.run("proto.scenario.run", json!({"id": "S3"}));
+    assert_eq!(r["passed"], true, "{r}");
 }

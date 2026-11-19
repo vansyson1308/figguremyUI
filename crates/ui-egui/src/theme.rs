@@ -68,7 +68,28 @@ const CANVAS_ACCENT: &str = "figcraft-canvas-accent";
 /// whichever green contrasts more with it: the bright one on a dark page, the darker on a light one.
 pub fn set_canvas_page(ctx: &Context, page: Color32) {
     let pick = if c(BRAND).contrast(c(page)) > c(ACCENT).contrast(c(page)) { BRAND } else { ACCENT };
-    ctx.data_mut(|d| d.insert_temp(egui::Id::unique(CANVAS_ACCENT), pick));
+    ctx.data_mut(|d| {
+        d.insert_temp(egui::Id::unique(CANVAS_ACCENT), pick);
+        d.insert_temp(egui::Id::unique(CANVAS_PAGE), page);
+    });
+}
+
+/// Id of the page colour the canvas shows this frame ([`set_canvas_page`]).
+const CANVAS_PAGE: &str = "figcraft-canvas-page";
+
+/// The page colour the canvas shows ([`set_canvas_page`]); `None` before a page shows.
+pub fn canvas_page(ctx: &Context) -> Option<Color32> {
+    ctx.data(|d| d.get_temp(egui::Id::unique(CANVAS_PAGE)))
+}
+
+/// The grey for names drawn on the page (frame labels): `preferred` (the theme's secondary text)
+/// when it reads at 4.5:1 (WCAG AA for text) on `page`, else the other theme's secondary grey
+/// when that does, else black or white, whichever contrasts more. The page is the file's colour,
+/// not the theme's: a light page in the dark theme gets the darker grey, and the other way round.
+pub fn label_on(page: Color32, preferred: Color32) -> Color32 {
+    let reads = |x: Color32| c(x).contrast(c(page)) >= 4.5;
+    let greys = [preferred, Tokens::light().text_secondary, Tokens::dark().text_secondary];
+    greys.into_iter().find(|g| reads(*g)).unwrap_or(if c(page).is_dark() { Color32::WHITE } else { Color32::BLACK })
 }
 
 /// `x` (opaque) as a document colour, for its contrast with another.
@@ -480,6 +501,27 @@ pub fn doc_c32(ctx: &Context, c: figcraft_color::Color) -> Color32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QC-05: frame names on the page read at 4.5:1 whatever the page's colour, in both themes
+    /// (the dark theme's grey on a light page was 1.92:1).
+    #[test]
+    fn frame_names_read_on_any_page_colour_in_both_themes() {
+        let pages = [0xF5F5F5, 0xFFFFFF, 0x1E1E1E, 0x2C2C2C, 0x000000, 0x808080, 0x777777, 0x0B6E8A, 0xFFF1DC];
+        for t in [Tokens::light(), Tokens::dark()] {
+            for hex in pages {
+                let page = Color32::from_rgb((hex >> 16) as u8, (hex >> 8) as u8, hex as u8);
+                let label = label_on(page, t.text_secondary);
+                let ratio = c(label).contrast(c(page));
+                assert!(ratio >= 4.5, "{label:?} on #{hex:06X} (dark theme: {}): {ratio:.2}:1", t.dark);
+            }
+        }
+        // The theme's own grey where it reads: nothing changes on the theme's own page.
+        let (light, dark) = (Tokens::light(), Tokens::dark());
+        assert_eq!(label_on(light.canvas, light.text_secondary), light.text_secondary);
+        assert_eq!(label_on(dark.canvas, dark.text_secondary), dark.text_secondary);
+        let page = Color32::from_rgb(0xF5, 0xF5, 0xF5);
+        assert_ne!(label_on(page, dark.text_secondary), dark.text_secondary, "the case QC-05 saw");
+    }
 
     #[test]
     fn canvas_overlays_take_the_green_that_stands_out_on_the_page() {

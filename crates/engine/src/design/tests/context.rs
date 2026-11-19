@@ -243,6 +243,17 @@ fn decisions_record_who_made_them_and_whether_a_person_accepted() {
     ex(&mut s, "design.brief.set", json!({"job": "Hand over"}));
     let r = ex_undoable(&mut s, "design.decision.accept", json!({"id": "D2"}));
     assert_eq!((r["decision"]["status"].as_str(), r["decision"]["briefRevision"].as_u64()), (Some("accepted"), Some(2)));
+    // QC-15: it says who accepted it, beside who proposed it, and the file keeps that.
+    assert_eq!((&r["decision"]["author"], &r["decision"]["acceptedBy"]), (&json!(AGENT_NAME), &json!("user")), "{r}");
+    assert_eq!(reopened(&s).design.decisions[1].accepted_by, "user");
+    // The user's own decision names nobody else as having accepted it.
+    let r = ex(&mut s, "design.decision.accept", json!({"id": "D1"}));
+    assert!(r["decision"].get("acceptedBy").is_none(), "{r}");
+    // An agent's change makes it a proposal again: nobody accepted the new text.
+    let r = as_agent(&mut s, "design.decision.set", json!({"id": "D2", "rationale": "Read at arm's length, also on the bus"}));
+    assert_eq!((&r["decision"]["status"], r["decision"].get("acceptedBy")), (&json!("proposed"), None), "{r}");
+    ex(&mut s, "design.decision.accept", json!({"id": "D2"}));
+    ex(&mut s, "design.decision.set", json!({"id": "D2", "rationale": "Read at arm's length"}));
 
     // An agent's change to an accepted decision makes it a proposal again; the author stays, and
     // the decision says who edited it.

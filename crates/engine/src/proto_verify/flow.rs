@@ -94,7 +94,8 @@ pub(super) struct Start {
 pub(super) struct Screen {
     pub id: NodeId,
     pub edges: Vec<Edge>,
-    /// A start, or a navigate action on something reachable leads here.
+    /// A start, or a navigate action on something reachable leads here; or, for an overlay, an
+    /// open or swap overlay action on something reachable shows it.
     pub reachable: bool,
     /// A person declared or accepted it as a place a flow may end.
     pub end_state: bool,
@@ -358,6 +359,8 @@ pub(super) fn graph(facts: &Facts<'_>, page: NodeId) -> Graph {
     // What the starts reach: screens through navigate, and the overlays those screens open (an
     // overlay's own actions run too, but it isn't a screen for that).
     let mut reached: BTreeSet<NodeId> = starts.iter().map(|s| s.frame).collect();
+    // The overlays something reachable opens (or swaps in): reachable too, as overlays.
+    let mut shown: BTreeSet<NodeId> = BTreeSet::new();
     let mut seen = reached.clone();
     let mut queue: VecDeque<NodeId> = reached.iter().copied().collect();
     while let Some(root) = queue.pop_front() {
@@ -368,7 +371,10 @@ pub(super) fn graph(facts: &Facts<'_>, page: NodeId) -> Graph {
                     reached.insert(to);
                     true
                 }
-                "openOverlay" | "swapOverlay" => true,
+                "openOverlay" | "swapOverlay" => {
+                    shown.insert(to);
+                    true
+                }
                 _ => false,
             };
             if follows && seen.insert(to) {
@@ -391,7 +397,7 @@ pub(super) fn graph(facts: &Facts<'_>, page: NodeId) -> Graph {
         .map(|id| {
             let own = edges.remove(id).unwrap_or_default();
             let component = is_component(doc, *id);
-            let reachable = reached.contains(id);
+            let reachable = reached.contains(id) || shown.contains(id);
             let declared = file.design.end_states.iter().find(|e| e.node == *id);
             let end_state = declared.is_some_and(|e| e.status == EndStateStatus::Accepted);
             let proposed_end = declared.filter(|e| e.status == EndStateStatus::Proposed).map(|e| e.author.clone());
@@ -400,8 +406,14 @@ pub(super) fn graph(facts: &Facts<'_>, page: NodeId) -> Graph {
             let starts_here = starts.iter().any(|s| s.frame == *id && s.source != StartSource::OtherPage);
             let came_from_elsewhere = entries.contains(id);
             let elsewhere_to_go = came_from_elsewhere || frames.iter().any(|f| f != id && counts(*f));
-            let dead_end =
-                !component && reachable && !end_state && (screen_moves || came_from_elsewhere) && elsewhere_to_go && !leaves(&own, *id, starts_here);
+            // Only a screen the viewer navigates to can be a dead end; an overlay is left by
+            // closing it (traps covers the overlays that can't be).
+            let dead_end = !component
+                && reached.contains(id)
+                && !end_state
+                && (screen_moves || came_from_elsewhere)
+                && elsewhere_to_go
+                && !leaves(&own, *id, starts_here);
             Screen { id: *id, edges: own, reachable, end_state, proposed_end, dead_end, overlay: opened.contains(id), component }
         })
         .collect();

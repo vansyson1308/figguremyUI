@@ -36,6 +36,9 @@ fn answer(id: NodeId, state: Option<&EndState>) -> Value {
             if let (Some(o), false) = (v.as_object_mut(), accepted) {
                 o.insert("note".into(), json!("proposed: flow.deadEnd still reports the frame until a person accepts it with proto.endState.accept"));
             }
+            if let (Some(o), false) = (v.as_object_mut(), e.accepted_by.is_empty()) {
+                o.insert("acceptedBy".into(), json!(e.accepted_by));
+            }
             v
         }
         None => json!({"id": id, "endState": false, "status": null, "reason": null}),
@@ -104,7 +107,7 @@ pub(super) fn set(s: &mut Session, p: &Value) -> Result<Value> {
                 // and leaves it one (proto.endState.accept accepts it).
                 let reworded = reason.is_some() && said_on.is_none();
                 if me.is_none() && !reworded {
-                    e.status = EndStateStatus::Accepted;
+                    accept_as_user(e);
                 }
             }
         }
@@ -115,8 +118,8 @@ pub(super) fn set(s: &mut Session, p: &Value) -> Result<Value> {
             let reason = reason.clone().unwrap_or_default();
             states.push(match &me {
                 Some(_) if reason.is_empty() => return Err(needs_reason()),
-                Some(me) => EndState { node: id, reason, author: me.clone(), status: EndStateStatus::Proposed },
-                None => EndState { node: id, reason, author: USER.into(), status: EndStateStatus::Accepted },
+                Some(me) => EndState { node: id, reason, author: me.clone(), status: EndStateStatus::Proposed, accepted_by: String::new() },
+                None => EndState { node: id, reason, author: USER.into(), status: EndStateStatus::Accepted, accepted_by: String::new() },
             });
         }
     }
@@ -126,6 +129,17 @@ pub(super) fn set(s: &mut Session, p: &Value) -> Result<Value> {
         Arc::make_mut(&mut s.doc_mut()?.design).end_states = states;
     }
     Ok(out)
+}
+
+/// A person stands behind `e`: it is accepted, and when an AI agent proposed it, the person is
+/// recorded as who accepted it (`acceptedBy`). Accepting what is accepted already changes nothing.
+fn accept_as_user(e: &mut EndState) {
+    if e.status == EndStateStatus::Proposed {
+        e.status = EndStateStatus::Accepted;
+        if author_name(&e.author) != USER {
+            e.accepted_by = USER.into();
+        }
+    }
 }
 
 pub(super) fn accept(s: &mut Session, p: &Value) -> Result<Value> {
@@ -145,7 +159,7 @@ pub(super) fn accept(s: &mut Session, p: &Value) -> Result<Value> {
     let Some(e) = states.iter_mut().find(|e| e.node == id) else {
         return Err(bad(cmd, format!("`id`: {} isn't declared as an end state (declare it with proto.endState.set)", label(doc, id))));
     };
-    e.status = EndStateStatus::Accepted;
+    accept_as_user(e);
     let out = answer(id, Some(e));
     // Accepting what is accepted already is no edit (and no undo step).
     if states != doc.design.end_states {
@@ -161,14 +175,19 @@ pub(super) fn list(s: &mut Session, _: &Value) -> Result<Value> {
         .end_states
         .iter()
         .map(|e| {
-            json!({
+            let mut v = json!({
                 "node": e.node,
                 "name": doc.node(e.node).map(|n| n.name.clone()),
                 "reason": e.reason,
                 "author": author_name(&e.author),
                 "status": e.status,
                 "exists": doc.contains(e.node),
-            })
+            });
+            // Said only when a person accepted an AI agent's proposal.
+            if let (Some(o), false) = (v.as_object_mut(), e.accepted_by.is_empty()) {
+                o.insert("acceptedBy".into(), json!(e.accepted_by));
+            }
+            v
         })
         .collect();
     Ok(json!({"endStates": states}))

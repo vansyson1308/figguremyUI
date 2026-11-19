@@ -255,7 +255,7 @@ pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
             RightTab::Inspect => inspect(app, ui),
         }
         ui.add_space(80.0);
-        a11y::scroll_focus(&mut app.ui.nav, ui);
+        a11y::scroll_focus(&mut app.ui.nav, ui, a11y::Region::Properties);
     });
 }
 

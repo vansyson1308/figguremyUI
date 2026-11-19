@@ -255,6 +255,11 @@ pub struct Decision {
     #[serde(skip_serializing_if = "String::is_empty")]
     pub edited_by: String,
     pub status: DecisionStatus,
+    /// The person who accepted it, when someone else proposed it (`design.decision.accept`, or a
+    /// choice among alternatives accepted). Empty when its author is the person who stands behind
+    /// it, while it is proposed, and in a file from before this was recorded.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub accepted_by: String,
     /// The brief's revision when the decision was added or last accepted.
     #[serde(skip_serializing_if = "is_zero")]
     pub brief_revision: u64,
@@ -301,6 +306,11 @@ pub struct EndState {
     /// Only an accepted end state exempts its frame from being a dead end.
     #[serde(default, skip_serializing_if = "EndStateStatus::is_accepted")]
     pub status: EndStateStatus,
+    /// The person who accepted it, when an AI agent declared it. Empty when its author is the
+    /// person who stands behind it, while it is proposed, and in a file from before this was
+    /// recorded.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub accepted_by: String,
 }
 
 /// A walk through the prototype with what should be true along the way and at the end.
@@ -831,7 +841,7 @@ impl DesignContext {
         }
         c.list(&mut self.decisions, "decisions");
         for d in &mut self.decisions {
-            for t in [&mut d.id, &mut d.title, &mut d.rationale, &mut d.author, &mut d.edited_by, &mut d.rejected] {
+            for t in [&mut d.id, &mut d.title, &mut d.rationale, &mut d.author, &mut d.edited_by, &mut d.accepted_by, &mut d.rejected] {
                 c.text(t);
             }
             c.texts(&mut d.assumptions, "decision assumptions");
@@ -861,6 +871,7 @@ impl DesignContext {
         for e in &mut self.end_states {
             c.text(&mut e.reason);
             c.text(&mut e.author);
+            c.text(&mut e.accepted_by);
         }
         c.list(&mut self.findings, "findings");
         for f in &mut self.findings {
@@ -997,17 +1008,45 @@ mod tests {
         let ctx: DesignContext = serde_json::from_value(stored.clone()).unwrap();
         assert_eq!(
             ctx.end_states[0],
-            EndState { node: NodeId(9), reason: "The order is placed".into(), author: String::new(), status: EndStateStatus::Accepted }
+            EndState {
+                node: NodeId(9),
+                reason: "The order is placed".into(),
+                author: String::new(),
+                status: EndStateStatus::Accepted,
+                accepted_by: String::new()
+            }
         );
         assert_eq!((ctx.end_states[1].status, ctx.end_states[1].author.as_str()), (EndStateStatus::Accepted, ""));
         assert_eq!(ctx.scenarios[0].author, "");
         assert_eq!((ctx.findings[0].subject.as_str(), ctx.findings[0].recorded_by.as_str()), ("", ""));
         assert_eq!(serde_json::to_value(&ctx).unwrap(), stored, "an old context is written back as it was");
         // The new fields are written only when they say something.
-        let proposed = EndState { node: NodeId(9), reason: "r".into(), author: "Claude (agent)".into(), status: EndStateStatus::Proposed };
+        let proposed = EndState {
+            node: NodeId(9),
+            reason: "r".into(),
+            author: "Claude (agent)".into(),
+            status: EndStateStatus::Proposed,
+            accepted_by: String::new(),
+        };
         assert_eq!(serde_json::to_value(&proposed).unwrap(), json!({"node": 9, "reason": "r", "author": "Claude (agent)", "status": "proposed"}));
         let back: EndState = serde_json::from_value(serde_json::to_value(&proposed).unwrap()).unwrap();
         assert_eq!(back, proposed);
+        // Who accepted an agent's end state or decision is kept, and read back (QC-15).
+        let accepted = EndState { status: EndStateStatus::Accepted, accepted_by: "user".into(), ..proposed.clone() };
+        assert_eq!(serde_json::to_value(&accepted).unwrap(), json!({"node": 9, "reason": "r", "author": "Claude (agent)", "acceptedBy": "user"}));
+        assert_eq!(serde_json::from_value::<EndState>(serde_json::to_value(&accepted).unwrap()).unwrap(), accepted);
+        let decision = Decision {
+            id: "D1".into(),
+            author: "Claude (agent)".into(),
+            status: DecisionStatus::Accepted,
+            accepted_by: "user".into(),
+            ..Decision::default()
+        };
+        let v = serde_json::to_value(&decision).unwrap();
+        assert_eq!((&v["author"], &v["acceptedBy"]), (&json!("Claude (agent)"), &json!("user")));
+        assert_eq!(serde_json::from_value::<Decision>(v).unwrap(), decision);
+        let old: Decision = serde_json::from_value(json!({"id": "D2", "title": "t", "rationale": "r", "status": "accepted"})).unwrap();
+        assert_eq!(old.accepted_by, "", "a file from before reads with nobody named");
         let finding = Finding {
             id: "F2".into(),
             rule: "scenario.fails".into(),

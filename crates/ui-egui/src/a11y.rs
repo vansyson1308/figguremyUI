@@ -122,7 +122,10 @@ pub struct Nav {
     refocus: u8,
     /// The control that opened the popup the keyboard went into, and the popup's layer.
     opener: Option<(Id, LayerId)>,
-    /// A control the keyboard moved to: the properties panel scrolls it into view.
+    /// The name of the control with the keyboard when the last frame ended (`ui.inspect`).
+    pub focused_name: String,
+    /// A control the keyboard moved to: the panel that scrolls (the properties, the design
+    /// context in the left panel's place) scrolls it into view.
     scroll_to: Option<Id>,
 }
 
@@ -221,15 +224,18 @@ pub fn layer_row(nav: &mut Nav, resp: &Response) {
     }
 }
 
-/// The properties panel's scroll area: scroll the control the keyboard just moved to into view.
-/// Call at the end of the scroll area's contents.
-pub fn scroll_focus(nav: &mut Nav, ui: &Ui) {
-    if let Some(id) = nav.scroll_to.take()
+/// A panel's scroll area in `region` (the properties panel; the design context, which takes the
+/// layers' place): scroll the control the keyboard just moved to into view. Call at the end of
+/// the scroll area's contents.
+pub fn scroll_focus(nav: &mut Nav, ui: &Ui, region: Region) {
+    if let Some(id) = nav.scroll_to
         && let Some(r) = ui.ctx().read_response(id)
-        && nav.region_at(r.rect.center()) == Some(Region::Properties)
-        && !ui.clip_rect().contains_rect(r.rect)
+        && nav.region_at(r.rect.center()) == Some(region)
     {
-        r.scroll_to_me(None);
+        nav.scroll_to = None;
+        if !ui.clip_rect().contains_rect(r.rect) {
+            r.scroll_to_me(None);
+        }
     }
 }
 
@@ -249,8 +255,11 @@ struct Shared {
     /// The focused widget's ring goes round this rectangle (clipped to the second) instead of the
     /// widget: a control made of several widgets, a row whose visible part is inset.
     ring_rect: Option<(Id, Rect, Rect)>,
-    /// The focused control's name (`ui.inspect` › `focus.control`).
+    /// The focused control's name (`ui.inspect` › `focus.control`), with the control it names:
+    /// it stands while that control has the keyboard, so a request answered between frames (the
+    /// desktop app's control channel) reads it as the last frame drew it.
     name: String,
+    name_of: Option<Id>,
 }
 
 /// Run `f` on the per-context temporary `Shared` accessibility state keyed by
@@ -268,10 +277,8 @@ pub fn field_focused(ctx: &Context) -> bool {
 
 /// The name of the control with the keyboard (empty when unnamed or nothing has it).
 pub fn focused_name(ctx: &Context) -> String {
-    if ctx.memory(|m| m.focused()).is_none() {
-        return String::new();
-    }
-    shared(ctx, |s| s.name.clone())
+    let Some(focused) = ctx.memory(|m| m.focused()) else { return String::new() };
+    shared(ctx, |s| if s.name_of == Some(focused) { s.name.clone() } else { String::new() })
 }
 
 /// Whether a screen reader reads the tree this frame: spelled-out values (colours, zoom) are only
@@ -292,6 +299,9 @@ pub fn keyboard(ctx: &Context) -> bool {
 /// keys (F6, Tab, arrows, Escape), which are taken out of the input when they move the keyboard.
 pub fn begin(app: &mut FigApp, ctx: &Context, root_scope: Id) {
     app.ui.nav.last = std::mem::take(&mut app.ui.nav.next);
+    // A scroll into view is for the frame the keyboard moved in: the panel that draws the
+    // control does it then, or nobody does.
+    app.ui.nav.scroll_to = None;
     // Before the keys: a panel edge derived from the root scope must already be excluded.
     shared(ctx, |s| s.root_scope = Some(root_scope));
     keys(app, ctx);
@@ -300,8 +310,6 @@ pub fn begin(app: &mut FigApp, ctx: &Context, root_scope: Id) {
         s.keyboard = keyboard;
         s.ring = None;
         s.ring_rect = None;
-        // Written again by the focused control as it draws.
-        s.name.clear();
     });
 }
 
@@ -532,6 +540,8 @@ pub fn end(app: &mut FigApp, ctx: &Context) {
     if nav.keyboard {
         ring(ctx);
     }
+    // What the frame ends with, for `ui.inspect` answered before the next one draws.
+    nav.focused_name = focused_name(ctx);
 }
 
 /// Dialogs, the palette, the presenter and the home screen have no regions.
@@ -613,7 +623,7 @@ fn drop_focus(ctx: &Context) {
 
 fn focus(app: &mut FigApp, ctx: &Context, id: Id) {
     ctx.memory_mut(|m| m.request_focus(id));
-    if app.ui.nav.region == Region::Properties {
+    if matches!(app.ui.nav.region, Region::Properties | Region::Layers) {
         app.ui.nav.scroll_to = Some(id);
     }
     ctx.request_repaint();
@@ -758,7 +768,9 @@ fn paint_ring(painter: &egui::Painter, rect: Rect) {
 /// The focus ring goes round `rect` (inside `ui`'s clip) while `resp` has the keyboard: a control
 /// made of several widgets (a number field's label and value), a row whose visible part is inset.
 pub fn ring_around(ui: &Ui, rect: Rect, resp: &Response) {
-    if resp.has_focus() {
+    // As egui keeps the keyboard's owner (`ring` paints for it also when the window isn't the
+    // system's focused one).
+    if resp.ctx.memory(|m| m.has_focus(resp.id)) {
         let clip = ui.clip_rect().expand(4.0);
         shared(&resp.ctx, |s| s.ring_rect = Some((resp.id, rect, clip)));
     }
@@ -766,7 +778,7 @@ pub fn ring_around(ui: &Ui, rect: Rect, resp: &Response) {
 
 /// `resp` shows its focus itself (a highlighted menu row): no ring around it.
 pub fn own_focus(resp: &Response) {
-    if resp.has_focus() {
+    if resp.ctx.memory(|m| m.has_focus(resp.id)) {
         shared(&resp.ctx, |s| s.ring = Some(resp.id));
     }
 }
@@ -797,8 +809,12 @@ fn node(resp: &Response, label: &str, fill: impl FnOnce(&mut accesskit::Node)) {
 
 /// Keep the focused control's name for `ui.inspect`.
 fn remember(resp: &Response, name: &str) {
-    if resp.has_focus() && !name.is_empty() {
+    // The keyboard's owner as egui keeps it, also while the window itself isn't the system's
+    // focused window (`Response::has_focus` is false then): an agent drives a window in the
+    // background, and `ui.inspect` names the control all the same.
+    if resp.ctx.memory(|m| m.has_focus(resp.id)) && !name.is_empty() {
         shared(&resp.ctx, |s| {
+            s.name_of = Some(resp.id);
             if s.name != name {
                 s.name.clear();
                 s.name.push_str(name);

@@ -323,7 +323,8 @@ panel reads the file every frame, so what a command changes shows on the next on
 `textPreview` is true while a live text preview shows on the canvas (a hovered text style or named
 instance, a dragged axis slider; see `text.preview` in [mcp.md](mcp.md)).
 `focus` is keyboard navigation's state: the `region` with the keyboard (`toolbar`, `layers`,
-`canvas` or `properties`), whether `keyboard` mode is on (F6 or Tab moved the focus since the last
+`canvas` or `properties`; `designContext` while the Design context panel shows in the layers'
+place, with the `entry` (`D1`, `S2`…) the focused control belongs to, or null), whether `keyboard` mode is on (F6 or Tab moved the focus since the last
 pointer press, so the focus ring shows) and the name of the `control` with the keyboard (what a
 screen reader announces; empty when nothing has it). `reduceMotion` is true when the preference or
 the system's accessibility setting turns the interface's animations off. `uiScale` is the interface

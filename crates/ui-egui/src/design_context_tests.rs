@@ -888,3 +888,235 @@ fn a_decision_says_who_changed_it_and_a_finding_who_stored_it() {
     assert!(w.says("Ana, ward 4") && w.says("Relayed by Claude (agent)"), "{:?}", w.texts());
     assert_eq!(w.design().findings[0].recorded_by, "Claude (agent)");
 }
+
+/// QC-01: what the panel shows is the file's own. Results of scenario runs, the flow check and
+/// the checks run in one file never show in another one (a tab switch, a new file), and coming
+/// back shows the first file's own again.
+#[test]
+fn each_file_shows_its_own_results_after_a_tab_switch() {
+    let (mut s, home, done, go) = two_screens();
+    ex(&mut s, "proto.flow.add", json!({"start": home}));
+    ex(&mut s, "proto.scenario.add", json!({"name": "Continue reaches Done", "start": home, "steps": [{"click": go, "expect": {"screen": done}}]}));
+    ex(&mut s, "design.stage.set", json!({"stage": "converging"}));
+    let mut w = Win::new(s);
+    let first = w.uid();
+    w.open(Section::Flow);
+    w.button("Run all");
+    w.button("Check the flow");
+    assert_eq!(w.shown()["scenarioRun"]["passed"], json!(true));
+    assert!(w.says("Passed") && w.says("screens can be reached"), "{:?}", w.texts());
+    w.open(Section::Findings);
+    w.button("Run the checks");
+    assert!(w.shown()["checks"].is_object());
+    // A second file with a scenario of the same id, never run.
+    w.run("file.new", json!({}));
+    assert_ne!(w.uid(), first);
+    let other = idv(&w.run("frame.create", json!({"x": 0, "y": 0, "width": 300, "height": 400, "name": "Start"})));
+    let next = idv(&w.run("frame.create", json!({"x": 400, "y": 0, "width": 300, "height": 400, "name": "Next"})));
+    let tap = idv(&w.run("shape.rectangle", json!({"x": 20, "y": 20, "width": 120, "height": 48, "parent": other, "props": {"name": "Tap"}})));
+    w.run("proto.interaction.add", json!({"id": tap, "trigger": {"type": "onClick"}, "action": {"type": "navigate", "dest": next}}));
+    w.run("proto.scenario.add", json!({"name": "Tap reaches Next", "start": other, "steps": [{"click": tap}]}));
+    w.open(Section::Findings);
+    let shown = w.shown();
+    for key in ["scenarioRun", "flowCheck", "checks", "recorded", "compare"] {
+        assert_eq!(shown[key], Value::Null, "{key} of the first file shows in the second: {shown}");
+    }
+    assert!(!w.says("Rules run:"), "{:?}", w.texts());
+    w.open(Section::Flow);
+    assert!(w.says("Tap reaches Next"));
+    assert!(!w.says("Passed") && !w.says("screens can be reached"), "nothing was run in this file: {:?}", w.texts());
+    // Run in the second file, then go back: the first file's own results, and not the second's.
+    w.button("Run all");
+    assert_eq!(w.shown()["scenarioRun"]["total"], json!(1));
+    w.run("doc.switch", json!({"index": 0}));
+    assert_eq!(w.uid(), first);
+    w.open(Section::Flow);
+    let run = w.shown()["scenarioRun"].clone();
+    assert_eq!((run["results"][0]["id"].clone(), run["passed"].clone(), run["stale"].clone()), (json!("S1"), json!(true), json!(false)), "{run}");
+    assert!(w.says("Continue reaches Done") && !w.says("Tap reaches Next"));
+    assert!(w.shown()["flowCheck"].is_object() && w.shown()["checks"].is_object());
+    // A closed file's results go with it.
+    w.run("doc.switch", json!({"index": 1}));
+    let second = w.uid();
+    assert!(w.app.ui.context.results(second).is_some());
+    w.run("file.close", json!({"force": true}));
+    w.open(Section::Flow);
+    assert!(w.app.ui.context.results(second).is_none());
+}
+
+/// QC-01: a form being filled in stays with its file.
+#[test]
+fn a_form_stays_with_its_file() {
+    let (s, ..) = two_screens();
+    let mut w = Win::new(s);
+    w.open(Section::Assumptions);
+    w.button("Add an assumption");
+    assert_eq!(w.shown()["form"], json!("assumption"));
+    w.run("file.new", json!({}));
+    w.open(Section::Assumptions);
+    assert_eq!(w.shown()["form"], Value::Null, "the other file's form doesn't show here");
+    w.run("doc.switch", json!({"index": 0}));
+    w.open(Section::Assumptions);
+    assert_eq!(w.shown()["form"], json!("assumption"), "it comes back with its file");
+}
+
+/// QC-08: storing what the checks found is the panel's own edit; it leaves the results it
+/// stored current. Any other edit makes them old.
+#[test]
+fn storing_the_findings_leaves_the_checks_current() {
+    let (mut s, home, ..) = two_screens();
+    let tiny = idv(&ex(&mut s, "shape.rectangle", json!({"x": 200, "y": 20, "width": 10, "height": 10, "parent": home, "props": {"name": "Tiny"}})));
+    ex(&mut s, "proto.interaction.add", json!({"id": tiny, "trigger": {"type": "onClick"}, "action": {"type": "back"}}));
+    ex(&mut s, "design.stage.set", json!({"stage": "converging"}));
+    let mut w = Win::new(s);
+    w.open(Section::Findings);
+    w.button("Run the checks");
+    w.button("Store what they find");
+    assert!(!w.design().findings.is_empty());
+    assert_eq!(w.shown()["checks"]["stale"], json!(false), "{}", w.shown()["checks"]);
+    assert!(!w.says("The file has changed since the checks ran"), "{:?}", w.texts());
+    w.run("node.set", json!({"id": tiny, "props": {"name": "Small"}}));
+    assert_eq!(w.shown()["checks"]["stale"], json!(true));
+}
+
+/// QC-04: Tab through the panel never leaves the keyboard on a control scrolled out of sight:
+/// the panel scrolls the focused control into view, down and back up again.
+#[test]
+fn tab_through_the_panel_keeps_the_focused_control_in_view() {
+    let (s, ..) = two_screens();
+    let mut w = Win::sized(s, vec2(1100.0, 560.0));
+    w.open(Section::Brief);
+    // The keyboard goes into the panel's first field.
+    let question = w.label_rect("Who is it for?");
+    w.click(pos2(question.min.x + 40.0, question.max.y + 18.0));
+    let focused = |w: &Win| {
+        let id = w.ctx.memory(|m| m.focused()).expect("a control has the keyboard");
+        w.ctx.read_response(id).expect("it was drawn").rect
+    };
+    let body = w.app.ui.context.body.expect("the panel scrolls");
+    let mut moved = 0;
+    for step in 0..40 {
+        let before = w.ctx.memory(|m| m.focused());
+        w.key(Key::Tab);
+        // The scroll is animated: let it finish.
+        w.frames(30);
+        let r = focused(&w);
+        if w.ctx.memory(|m| m.focused()) != before {
+            moved += 1;
+        }
+        if !w.panel().x_range().contains(r.center().x) {
+            continue;
+        }
+        // Past the panel's last control the keyboard wraps to its header (above the part that scrolls).
+        if moved > 1 && r.max.y <= body.min.y {
+            break;
+        }
+        assert!(body.expand(1.0).contains_rect(r), "Tab {step}: the focused control {r:?} is outside the visible part {body:?}");
+    }
+    assert!(moved > 10, "Tab moved through the panel's controls ({moved})");
+    // Back up with Shift+Tab: the same holds.
+    for step in 0..40 {
+        let k = |pressed| Event::Key { key: Key::Tab, physical_key: None, pressed, repeat: false, modifiers: Modifiers::SHIFT };
+        w.frame(vec![k(true), k(false)]);
+        w.frames(30);
+        let r = focused(&w);
+        // The header's controls (title bar, sections) sit above the part that scrolls.
+        if w.panel().x_range().contains(r.center().x) && r.min.y >= body.min.y - 1.0 {
+            assert!(body.expand(1.0).contains_rect(r), "Shift+Tab {step}: {r:?} outside {body:?}");
+        }
+    }
+}
+
+/// QC-16: `ui.inspect` says the keyboard is in the Design context panel, on which control and in
+/// which entry.
+#[test]
+fn ui_inspect_reports_the_focus_in_the_panel() {
+    let (s, ..) = two_screens();
+    let mut w = Win::new(s);
+    w.open(Section::Decisions);
+    w.run("design.decision.add", json!({"title": "One action", "rationale": "The brief names one job."}));
+    // The keyboard on the decision's Edit button.
+    let edit = w.controls("Edit")[0];
+    let id = w.ctx.viewport(|v| v.prev_pass.widgets.get_layer(egui::LayerId::background()).find(|r| r.rect == edit).map(|r| r.id)).unwrap();
+    w.ctx.memory_mut(|m| m.request_focus(id));
+    w.app.ui.nav.keyboard = true;
+    w.frames(3);
+    let ctx = w.ctx.clone();
+    let v = crate::control::handle(&mut w.app, &ctx, "ui.inspect", &json!({})).unwrap();
+    let focus = &v["focus"];
+    assert_eq!((&focus["region"], &focus["control"], &focus["entry"]), (&json!("designContext"), &json!("Edit"), &json!("D1")), "{focus}");
+    assert_eq!(v["designContext"]["focusEntry"], json!("D1"));
+    // Tab, as a person presses it, moves on: the control with the keyboard is named again.
+    w.key(Key::Tab);
+    w.frames(2);
+    let v = crate::control::handle(&mut w.app, &ctx, "ui.inspect", &json!({})).unwrap();
+    assert_eq!((&v["focus"]["region"], &v["focus"]["control"]), (&json!("designContext"), &json!("Remove")), "{}", v["focus"]);
+    // Also while the window isn't the system's focused one (an agent drives it in the background,
+    // as under a virtual display): egui still knows which control has the keyboard.
+    for _ in 0..2 {
+        w.time += 1.0 / 60.0;
+        let input = RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, w.size)), time: Some(w.time), focused: false, ..Default::default() };
+        let app = &mut w.app;
+        let mut out = w.ctx.run_ui(input, |ui| app.ui(ui));
+        out.textures_delta.clear();
+    }
+    let v = crate::control::handle(&mut w.app, &ctx, "ui.inspect", &json!({})).unwrap();
+    assert_eq!(v["focus"]["control"], json!("Remove"), "{}", v["focus"]);
+    // Closed, the left panel is the layers again.
+    w.run("view.designContext", json!({"on": false}));
+    let v = crate::control::handle(&mut w.app, &ctx, "ui.inspect", &json!({})).unwrap();
+    assert_ne!(v["focus"]["region"], json!("designContext"));
+}
+
+/// QC-06: a rail label too long for the rail (the Vietnamese "Tài nguyên") wraps onto a second
+/// line, whole, instead of being cut; a short one stays on one line.
+#[test]
+fn a_rail_label_too_long_for_one_line_wraps_whole() {
+    let mut w = Win::new(Session::new());
+    let max = crate::layers::RAIL_WIDTH - 6.0;
+    let mut out: Vec<(Vec<String>, Vec<f32>, f32)> = Vec::new();
+    let input = RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, w.size)), ..Default::default() };
+    let mut output = w.ctx.run_ui(input, |ui| {
+        for label in ["Tài nguyên", "File", "Bối cảnh"] {
+            let lines = crate::layers::rail_label_lines(ui, label, max);
+            let widths =
+                lines.iter().map(|l| ui.painter().layout_no_wrap(l.clone(), crate::theme::regular(10.0), egui::Color32::WHITE).size().x).collect();
+            let whole = ui.painter().layout_no_wrap(label.to_string(), crate::theme::regular(10.0), egui::Color32::WHITE).size().x;
+            out.push((lines, widths, whole));
+        }
+    });
+    output.textures_delta.clear();
+    let (lines, widths, whole) = &out[0];
+    assert!(*whole > max, "the case QC-06 saw: one line doesn't hold it ({whole} > {max})");
+    assert_eq!(lines, &vec!["Tài".to_string(), "nguyên".to_string()], "two lines, nothing cut");
+    assert!(widths.iter().all(|x| *x <= max), "{widths:?}");
+    assert_eq!(out[1].0, vec!["File".to_string()]);
+    for (lines, widths, _) in &out {
+        assert!(lines.len() <= 2 && widths.iter().all(|x| *x <= max) && lines.iter().all(|l| !l.contains('…')), "{lines:?} {widths:?}");
+    }
+    w.frames(1);
+}
+
+/// QC-15: an accepted proposal says who proposed it and who accepted it, so it never reads as
+/// if the agent accepted it.
+#[test]
+fn an_accepted_proposal_says_who_proposed_and_who_accepted_it() {
+    let (s, _, done, _) = two_screens();
+    let mut w = Win::new(s);
+    w.open(Section::Decisions);
+    w.agent("design.decision.add", json!({"title": "One action", "rationale": "The brief names one job."})).unwrap();
+    assert!(w.says("proposed by Claude (agent)") && !w.says("accepted by"), "{:?}", w.texts());
+    w.button("Accept");
+    assert_eq!(w.design().decisions[0].accepted_by, "user");
+    assert!(w.says("proposed by Claude (agent)") && w.says("accepted by you"), "{:?}", w.texts());
+    // The person's own decision is theirs: "by you", no "proposed by", nobody else accepting it.
+    w.run("design.decision.add", json!({"title": "Mine", "rationale": "Mine"}));
+    assert!(w.says("by you") && !w.says("proposed by you") && !w.says("accepted by Claude"), "{:?}", w.texts());
+    assert_eq!(w.design().decisions[1].accepted_by, "");
+    // An end of the flow the agent declared, accepted by the person.
+    w.open(Section::Flow);
+    w.agent("proto.endState.set", json!({"id": done, "reason": "The handover is recorded here"})).unwrap();
+    w.button("Accept");
+    assert_eq!(w.design().end_states[0].accepted_by, "user");
+    assert!(w.says("proposed by Claude (agent)") && w.says("accepted by you"), "{:?}", w.texts());
+}

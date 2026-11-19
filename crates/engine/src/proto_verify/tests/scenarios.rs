@@ -451,6 +451,7 @@ fn a_persons_edit_of_a_proposals_reason_leaves_it_proposed() {
     // Saying `on: true` is declaring it: that accepts, as proto.endState.accept does.
     let r = ex(&mut s, "proto.endState.set", json!({"id": b, "on": true}));
     assert_eq!((&r["status"], &r["endState"], &r["author"]), (&json!("accepted"), &json!(true), &json!(AGENT_NAME)), "{r}");
+    assert_eq!(r["acceptedBy"], json!("user"), "{r}");
 }
 
 #[test]
@@ -467,6 +468,10 @@ fn a_person_accepts_an_agents_end_state_and_from_then_on_it_is_theirs() {
     let before = file(&s);
     let r = ex(&mut s, "proto.endState.accept", json!({"id": b}));
     assert_eq!((&r["endState"], &r["status"], &r["author"]), (&json!(true), &json!("accepted"), &json!(AGENT_NAME)));
+    // QC-15: who accepted it is recorded beside who proposed it.
+    assert_eq!(r["acceptedBy"], json!("user"), "{r}");
+    assert_eq!(s.doc().unwrap().design.end_states[0].accepted_by, "user");
+    assert_eq!(ex(&mut s, "proto.endState.list", json!({}))["endStates"][0]["acceptedBy"], json!("user"));
     let after = file(&s);
     assert!(s.undo().unwrap());
     assert_eq!(file(&s), before);

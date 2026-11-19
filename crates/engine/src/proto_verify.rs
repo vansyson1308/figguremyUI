@@ -59,21 +59,21 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "proto.endState.set",
             "Mark as end of flow",
-            "{id (a top-level frame), reason? (why the flow may end here; required from an AI agent), on? (default true; false takes the declaration back)}  declares a frame where a flow may end on purpose, so flow.deadEnd doesn't report it. The user's declaration stands at once; on a frame an AI agent proposed, the user's call with `on: true` or with the frame alone accepts the proposal, while one that only gives a new `reason` leaves it proposed. An AI agent's is a proposal: the frame stays a dead end until a person accepts it (proto.endState.accept); an agent changes and takes back only its own proposals → {id, endState (declared and accepted), status: proposed|accepted|null, author, reason, note? (when proposed)}",
+            "{id (a top-level frame), reason? (why the flow may end here; required from an AI agent), on? (default true; false takes the declaration back)}  declares a frame where a flow may end on purpose, so flow.deadEnd doesn't report it. The user's declaration stands at once; on a frame an AI agent proposed, the user's call with `on: true` or with the frame alone accepts the proposal, while one that only gives a new `reason` leaves it proposed. An AI agent's is a proposal: the frame stays a dead end until a person accepts it (proto.endState.accept); an agent changes and takes back only its own proposals → {id, endState (declared and accepted), status: proposed|accepted|null, author, reason, acceptedBy? (the person who accepted an AI agent's proposal), note? (when proposed)}",
             true,
             end_state::set
         ),
         spec!(
             "proto.endState.accept",
             "Accept end of flow",
-            "{id (a frame declared as an end state)}  a person stands behind an end state an AI agent proposed: from then on flow.deadEnd doesn't report the frame; refused to an AI agent → {id, endState, status, author, reason}",
+            "{id (a frame declared as an end state)}  a person stands behind an end state an AI agent proposed: from then on flow.deadEnd doesn't report the frame; refused to an AI agent; the person is recorded as acceptedBy → {id, endState, status, author, reason, acceptedBy?}",
             true,
             end_state::accept
         ),
         spec!(
             "proto.endState.list",
             "List ends of flows",
-            "{}  → {endStates: [{node, name, reason, author, status: proposed|accepted, exists}]}",
+            "{}  → {endStates: [{node, name, reason, author, status: proposed|accepted, acceptedBy? (who accepted an AI agent's proposal), exists}]}",
             false,
             end_state::list
         ),

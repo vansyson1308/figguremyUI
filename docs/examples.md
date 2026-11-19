@@ -12,10 +12,12 @@ nothing is sent anywhere.
 | `examples/pantry-dashboard.figcraft` | "Community pantry stock", a responsive stock dashboard for a neighbourhood food pantry (English, desktop frame designed at 1440×900) | Pantry dashboard, with the Sync toast and Item detail overlays |
 | `examples/bike-repair-booking.figcraft` | "Đặt lịch sửa xe đạp", booking a bike repair (Vietnamese titles, English secondary lines, phone, 390×844) | Choose service → Details → Confirm → Booked |
 
-Each file also holds its components (below the screens), a `Theme` variable collection (colours
-whose text pairs pass WCAG AA), text styles, a collection of prototype state variables, one flow
-start, five stored scenarios, three untested assumptions and three decisions with the options
-they rejected, at stage `converging`.
+Each file also holds its components (below the screens; beside them in the dashboard, which grows
+tall at phone width), a `Theme` variable collection (colours whose text pairs pass WCAG AA), text
+styles, a collection of prototype state variables, one flow start, five or six stored scenarios,
+three untested assumptions and three decisions with the options they rejected, at stage
+`converging`. The end states and decisions the builder proposed record who accepted them
+(`acceptedBy`, see below).
 
 ## Running the scenarios headless
 
@@ -58,14 +60,18 @@ out in `notModelled`). A pass says the prototype reaches that state, not that a 
 A parent or an adult signs up for a beginners' swimming class from a QR code on the pool's
 poster. Variables `name_filled`, `contact_filled`, `consent` (booleans), `attempts` (number) and
 `error_message` (string, bound to the form's error summary), plus the fields' states.
-"Tiếp tục" is a greyed instance (State=Disabled) with a hint while consent is off; a tap on it
-names the box. With consent, it checks the fields: missing ones go to `State=Error` with a message
-under them and in the summary, `attempts` goes up, and the form stays; otherwise it goes to Verify.
-Verify's "Gửi lại mã" opens a toast that closes itself, and "‹ Quay lại" returns to the form with
-everything kept. Done is a declared end state.
+"Tiếp tục" is a greyed instance (State=Disabled) while consent is off; a tap on it names the box
+above it. The hint under it stays (its words change once the box is ticked), so the button doesn't
+move. With consent, it checks the fields: missing ones go to `State=Error` with a message under them
+and in the summary, `attempts` goes up, and the form stays; otherwise it goes to Verify. The
+summary follows the fixes (`error_kind` says what it is about): filling one field changes it to
+what is still missing, and it goes once nothing is (ticking the box clears the consent message).
+Verify's "Gửi lại mã" opens a toast right under the link, over no button, that closes itself, and
+"‹ Quay lại" returns to the form with everything kept. Done is a declared end state.
 
 Scenarios: S1 Happy path · S2 Missing contact shows an error · S3 Back keeps what was typed ·
-S4 Resend toast closes by itself · S5 Continue explains itself while consent is off.
+S4 Resend toast closes by itself · S5 Continue explains itself while consent is off · S6 Fixing
+the form updates the error.
 
 ### Pantry dashboard (`pantry-dashboard.figcraft`)
 
@@ -78,7 +84,9 @@ moves under the list when the frame is narrower than 648 px (the test checks 360
 state and the error banner. The dashboard loads after a delay; Refresh and Retry show a syncing
 toast that finishes after a delay; "Only out of stock" leads to the empty state (nothing is out
 of stock) with "Clear filter"; with "Simulate a failed sync" on, the next sync fails and the
-banner keeps the last numbers with Retry. Each row opens an item detail overlay that closes on
+banner keeps the last numbers with Retry. While a count loads, the headline numbers show
+placeholders (—). The syncing toast opens at the top, where the presenter's bar never covers it.
+Each row opens an item detail overlay that closes on
 an outside click or with Close.
 
 Scenarios: S1 Load, then ready · S2 Filter to empty and clear · S3 Error, retry, ready ·
@@ -89,12 +97,13 @@ S4 Row detail closes on an outside click · S5 Row detail closes with its button
 Three service cards (one selected at a time), then a day and a time as chips with an optional
 note, then a summary whose texts are bound to the chosen service, slot, price and note, with
 "Đổi" links back to the step that owns each choice, then Booked (a declared end state). A Steps
-component shows where the viewer is; Details and Confirm have Back. Choose service is the flow
-start and has no Back.
+component shows where the viewer is; Details and Confirm have Back, which goes to the step before
+in step order (not back through the history, which after "Đổi" would lead to Confirm). Choose
+service is the flow start and has no Back.
 
 Scenarios: S1 Book a tune-up · S2 Change the service from Confirm · S3 Back from Details keeps
 the service highlighted · S4 Booked is where the flow ends · S5 Continue waits for a day and a
-time.
+time · S6 Back after changing the time goes to step 1.
 
 ## Rebuilding them
 
@@ -116,7 +125,9 @@ Because the builder is an AI agent, the end states it declares and the decisions
 proposals. The script's separate step `accept_as_maintainer()` (on by default;
 `--no-accept-as-maintainer` skips it) then accepts them with `figcraft-cli run`, which acts as the
 user. The maintainers' acceptance step stands in for a person's review of these example files; in
-your own files an agent's end states and decisions stay proposals until you accept them.
+your own files an agent's end states and decisions stay proposals until you accept them. An
+accepted proposal keeps its author (the builder) and records who accepted it (`acceptedBy: user`),
+and the Design context panel shows both ("proposed by Example builder (agent) · accepted by you").
 
 `crates/mcp/tests/it/examples.rs` keeps them working: flow check, scenarios, design check, save
 and reopen, the dashboard at four widths, a missing font, and an end state that stays a proposal

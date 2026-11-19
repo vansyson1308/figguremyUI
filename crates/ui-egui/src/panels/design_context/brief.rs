@@ -54,7 +54,7 @@ pub(super) fn show(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
         ui.add_space(10.0);
         pad(ui, |ui| strong(ui, tr(question)));
         ui.add_space(2.0);
-        if let Some(text) = widgets::multiline_field(ui, cx.id(("brief", field)), answer(brief, field), "", 2) {
+        if let Some(text) = widgets::multiline_field_named(ui, cx.id(("brief", field)), answer(brief, field), "", 2, tr(question)) {
             act(app, "brief", "design.brief.set", json!({field: text}));
         }
     }
@@ -66,7 +66,7 @@ pub(super) fn show(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
         // Each entry is a field of its own; emptying one takes it off the list.
         let mut changed: Option<Vec<String>> = None;
         for (i, item) in items.iter().enumerate() {
-            if let Some(text) = widgets::multiline_field(ui, cx.id(("brief", field, i, items.len())), item, "", 1) {
+            if let Some(text) = widgets::multiline_field_named(ui, cx.id(("brief", field, i, items.len())), item, "", 1, tr(question)) {
                 let mut next = items.to_vec();
                 match (text.trim().is_empty(), next.get_mut(i)) {
                     (true, _) => {

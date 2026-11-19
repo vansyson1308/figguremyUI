@@ -10,7 +10,7 @@
 //! what was asked. Nothing here grades the file: no score, no percentage, no mark for a brief
 //! with empty answers.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use egui::{Align2, Color32, CornerRadius, Id, Rect, Response, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
@@ -107,6 +107,34 @@ impl Ran {
     }
 }
 
+/// What the read-only commands last answered about one open file. Kept by file: another file's
+/// results are never shown (a tab switch, a file opened), and coming back to a file shows its own.
+#[derive(Default)]
+pub(crate) struct Results {
+    /// The last `proto.scenario.run`, `proto.check` and `design.check` shown.
+    pub scenario_run: Option<Ran>,
+    pub flow: Option<Ran>,
+    pub checks: Option<Ran>,
+    /// What the last `design.check.record` stored.
+    pub recorded: Option<Ran>,
+    /// The last `design.alternative.compare` shown, and its set.
+    pub compare: Option<(String, Ran)>,
+}
+
+impl Results {
+    /// The panel's own edit of the file (storing what the checks found) changed nothing the
+    /// results are about: those that were up to date before it are about `now` too, so they
+    /// aren't shown as being about an earlier state.
+    fn carry_over(&mut self, before: &Arc<Document>, now: &Arc<Document>) {
+        let rans = [self.scenario_run.as_mut(), self.flow.as_mut(), self.checks.as_mut(), self.compare.as_mut().map(|(_, r)| r)];
+        for ran in rans.into_iter().flatten() {
+            if !ran.stale(before) {
+                ran.doc = now.clone();
+            }
+        }
+    }
+}
+
 /// What an inline form is for. The texts it holds are in [`Form::text`], by the slots named in
 /// each variant.
 #[derive(Clone, Debug, PartialEq)]
@@ -174,6 +202,9 @@ pub(crate) enum FormEnd {
     Cancel,
 }
 
+/// A file's open form and refusal, put aside while another file is in front.
+type Parked = (Option<Form>, Option<(String, String)>);
+
 /// The panel's state.
 #[derive(Default)]
 pub struct ContextUi {
@@ -182,14 +213,12 @@ pub struct ContextUi {
     pub(crate) form: Option<Form>,
     /// What the engine refused outside a form, and the entry it was about (`A1`, `brief`…).
     pub(crate) error: Option<(String, String)>,
-    /// The last `proto.scenario.run`, `proto.check` and `design.check` shown.
-    pub(crate) scenario_run: Option<Ran>,
-    pub(crate) flow: Option<Ran>,
-    pub(crate) checks: Option<Ran>,
-    /// What the last `design.check.record` stored.
-    pub(crate) recorded: Option<Ran>,
-    /// The last `design.alternative.compare` shown, and its set.
-    pub(crate) compare: Option<(String, Ran)>,
+    /// What the read-only commands answered, by the file (its uid) they were run on.
+    results: BTreeMap<u64, Results>,
+    /// The file (its uid) the form and the refusal above are about: the one the panel showed last.
+    shown: Option<u64>,
+    /// The form and refusal of the other open files, put aside while another file is in front.
+    parked: BTreeMap<u64, Parked>,
     /// Scenarios whose steps are unfolded.
     pub(crate) unfolded: BTreeSet<String>,
     /// The entry to point out (a link to it was followed), and whether to scroll to it still.
@@ -200,6 +229,68 @@ pub struct ContextUi {
     /// Where the panel was last drawn (window points), and the part of it that scrolls.
     pub(crate) rect: Option<Rect>,
     pub(crate) body: Option<Rect>,
+    /// The entry (`A1`, `S2`…) whose control has the keyboard, as the last frame drew it.
+    pub(crate) focus_entry: Option<String>,
+    /// [`Self::focus_entry`] as this frame draws it.
+    focus_entry_next: Option<String>,
+}
+
+impl ContextUi {
+    /// The results shown for the file with this uid.
+    pub(crate) fn results(&self, uid: u64) -> Option<&Results> {
+        self.results.get(&uid)
+    }
+
+    pub(crate) fn results_mut(&mut self, uid: u64) -> &mut Results {
+        self.results.entry(uid).or_default()
+    }
+
+    /// The panel shows the file `uid` now: the form and the refusal of the file it showed before
+    /// are put aside with that file, and this file's own come back. What the files that are no
+    /// longer open had goes.
+    fn show_file(&mut self, uid: u64, open: &BTreeSet<u64>) {
+        if self.shown != Some(uid) {
+            if let Some(before) = self.shown {
+                let kept = (self.form.take(), self.error.take());
+                if kept.0.is_some() || kept.1.is_some() {
+                    self.parked.insert(before, kept);
+                }
+            }
+            (self.form, self.error) = self.parked.remove(&uid).unwrap_or_default();
+            // An entry pointed out, or scenarios unfolded, were the other file's (ids repeat).
+            self.highlight = None;
+            self.scroll_to = false;
+            self.unfolded.clear();
+            self.shown = Some(uid);
+        }
+        self.results.retain(|uid, _| open.contains(uid));
+        self.parked.retain(|uid, _| open.contains(uid));
+    }
+}
+
+/// The uid of the file in front, whose results the panel shows.
+pub(crate) fn front(app: &FigApp) -> Option<u64> {
+    app.session.ds().ok().map(|d| d.uid)
+}
+
+/// Keep what a read-only command answered about the file in front, in the slot `put` names.
+pub(crate) fn keep(app: &mut FigApp, result: Value, put: impl FnOnce(&mut Results, Ran)) {
+    let (Some(uid), Some(ran)) = (front(app), Ran::new(app, result)) else { return };
+    put(app.ui.context.results_mut(uid), ran);
+}
+
+/// Run a command of the panel's own that edits the file without changing what its results are
+/// about (storing what the checks found): the results up to date before stay up to date.
+pub(crate) fn act_keeping(app: &mut FigApp, target: &str, cmd: &str, params: Value) -> Option<Value> {
+    let before = app.session.ds().ok().map(|d| (d.uid, d.doc.clone()));
+    let out = act(app, target, cmd, params)?;
+    if let (Some((uid, before)), Some(now)) = (before, app.session.ds().ok().map(|d| d.doc.clone()))
+        && front(app) == Some(uid)
+        && let Some(r) = app.ui.context.results.get_mut(&uid)
+    {
+        r.carry_over(&before, &now);
+    }
+    Some(out)
 }
 
 /// What a frame of the panel reads: the document as it is now (not borrowed from the app, so
@@ -402,11 +493,14 @@ pub(crate) fn draft(ui: &mut Ui, id: Id, label: &str, text: &mut String, rows: u
         })
         .inner;
     crate::a11y::text(&r, label, text);
+    crate::a11y::ring_around(ui, r.rect.expand(6.0), &r);
     if r.has_focus() {
         ui.painter().rect_stroke(r.rect.expand(6.0), CornerRadius::same(5), Stroke::new(1.0, t.focus), StrokeKind::Inside);
     }
     if focus {
+        // A form just opened: the keyboard goes to its first field, brought into view.
         r.request_focus();
+        r.scroll_to_me(None);
     }
     ui.add_space(4.0);
     r
@@ -495,19 +589,27 @@ pub(crate) fn layer_links(app: &mut FigApp, ui: &mut Ui, cx: &Cx, layers: &[Node
     let mut gone = None;
     flow_row(ui, |ui| {
         for id in layers {
-            match cx.name(*id) {
-                Some(name) => {
-                    if link(ui, name).on_hover_text(tr("Select this layer and show it")).clicked() {
-                        go_to(app, *id);
+            let missing = trf("missing layer ({id})", &[("id", id)]);
+            let text = cx.name(*id).unwrap_or(&missing);
+            // A layer and its remove button wrap together: the button never starts a line alone.
+            let text_w = ui.painter().layout_no_wrap(text.to_string(), regular(11.0), Color32::WHITE).size().x;
+            let w = (text_w + if unlink { 22.0 } else { 0.0 } + 2.0).min(ui.max_rect().width());
+            ui.allocate_ui_with_layout(vec2(w, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                match cx.name(*id) {
+                    Some(name) => {
+                        if link(ui, name).on_hover_text(tr("Select this layer and show it")).clicked() {
+                            go_to(app, *id);
+                        }
+                    }
+                    None => {
+                        quiet(ui, &missing);
                     }
                 }
-                None => {
-                    quiet(ui, &trf("missing layer ({id})", &[("id", id)]));
+                if unlink && icons::button(ui, Icon::Close, 16.0, false, tr("Remove this link")).clicked() {
+                    gone = Some(*id);
                 }
-            }
-            if unlink && icons::button(ui, Icon::Close, 16.0, false, tr("Remove this link")).clicked() {
-                gone = Some(*id);
-            }
+            });
         }
     });
     gone
@@ -523,6 +625,11 @@ pub(crate) fn entry<R>(app: &mut FigApp, ui: &mut Ui, id: &str, add: impl FnOnce
     let r = pad(ui, |ui| ui.vertical(|ui| add(app, ui)));
     ui.add_space(8.0);
     let rect = Rect::from_min_max(pos2(ui.max_rect().min.x, r.response.rect.min.y - 8.0), pos2(ui.max_rect().max.x, r.response.rect.max.y + 8.0));
+    // The entry the keyboard is in, for `ui.inspect`.
+    let focused = ui.ctx().memory(|m| m.focused()).and_then(|f| ui.ctx().read_response(f));
+    if focused.is_some_and(|f| rect.contains(f.rect.center())) {
+        app.ui.context.focus_entry_next = Some(id.to_string());
+    }
     if pointed {
         ui.painter().set(mark, egui::Shape::rect_filled(rect, CornerRadius::ZERO, t.selected_row_child));
         if std::mem::take(&mut app.ui.context.scroll_to) {
@@ -593,6 +700,7 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let w = ui.available_width();
     app.ui.context.rect = Some(ui.max_rect());
+    app.ui.context.focus_entry_next = None;
     // Header: title and close.
     let (head, _) = ui.allocate_exact_size(vec2(w, 48.0), Sense::hover());
     ui.painter().text(pos2(head.min.x + 16.0, head.center().y), Align2::LEFT_CENTER, tr("Design context"), semibold(13.0), t.text);
@@ -609,6 +717,9 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
         return;
     };
     let cx = Cx { doc: ds.doc.clone(), design: ds.doc.design.clone(), uid: ds.uid, selection: ds.selection.clone() };
+    // Each file shows its own results, form and refusal; a closed file's go with it.
+    let open_files: BTreeSet<u64> = app.session.docs.iter().map(|d| d.uid).collect();
+    app.ui.context.show_file(cx.uid, &open_files);
 
     // The sections.
     ui.add_space(10.0);
@@ -631,6 +742,13 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
     widgets::separator(ui);
     let body = egui::ScrollArea::vertical().id_salt(("design_context", app.ui.context.section.id())).auto_shrink([false, false]).show(ui, |ui| {
         selected_layer(app, ui, &cx);
+        // The checks' and the simulator's messages come from the engine, in English (they are
+        // shared with AI agents): said once where they show, when the UI is in another language.
+        let english = crate::i18n::current().is_none_or(|l| l.code == "en");
+        if !english && matches!(app.ui.context.section, Section::Flow | Section::Findings) {
+            ui.add_space(8.0);
+            pad(ui, |ui| quiet(ui, tr("Messages from the rules and the simulator are in English.")));
+        }
         match app.ui.context.section {
             Section::Brief => brief::show(app, ui, &cx),
             Section::Assumptions => records::assumptions(app, ui, &cx),
@@ -640,8 +758,11 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
             Section::Alternatives => alternatives::show(app, ui, &cx),
         }
         ui.add_space(24.0);
+        // Tab moved the keyboard to a control scrolled out of sight: bring it into view.
+        crate::a11y::scroll_focus(&mut app.ui.nav, ui, crate::a11y::Region::Layers);
     });
     app.ui.context.body = Some(body.inner_rect);
+    app.ui.context.focus_entry = app.ui.context.focus_entry_next.take();
 }
 
 /// What AI agents proposed that waits for a person, said once above the sections, each kind a
@@ -731,6 +852,10 @@ pub fn inspect(app: &FigApp) -> Value {
     let ui = &app.ui.context;
     let ds = app.session.ds().ok();
     let design = ds.map(|d| d.doc.design.clone());
+    // Only the file in front's own results, form and refusal.
+    let shown = ds.and_then(|d| ui.results(d.uid));
+    let front_form = ui.form.as_ref().filter(|_| ui.shown.is_some() && ui.shown == ds.map(|d| d.uid));
+    let front_error = ui.error.as_ref().filter(|_| ui.shown.is_some() && ui.shown == ds.map(|d| d.uid));
     let stale = |ran: &Ran| ds.is_none_or(|d| ran.stale(&d.doc));
     let counts = design.as_ref().map(|c| {
         let (decisions, ends) = waiting(c);
@@ -750,7 +875,7 @@ pub fn inspect(app: &FigApp) -> Value {
             "waitingForAPerson": decisions + ends,
         })
     });
-    let scenario_run = ui.scenario_run.as_ref().map(|ran| {
+    let scenario_run = shown.and_then(|r| r.scenario_run.as_ref()).map(|ran| {
         let results: Vec<Value> = ran.result["results"]
             .as_array()
             .into_iter()
@@ -766,17 +891,20 @@ pub fn inspect(app: &FigApp) -> Value {
             .map(|f| json!({"rule": f["rule"], "severity": f["severity"], "nodes": f["nodes"], "message": f["message"]}))
             .collect()
     };
-    let flow = ui.flow.as_ref().map(|ran| {
+    let flow = shown.and_then(|r| r.flow.as_ref()).map(|ran| {
         let screens = ran.result["screens"].as_array().map_or(&[][..], Vec::as_slice);
         // The frames an AI agent proposed as ends of the flow, waiting for a person.
         let proposed: Vec<&Value> = screens.iter().filter(|s| s["endStateProposedBy"].is_string()).map(|s| &s["id"]).collect();
-        json!({"problems": problems(&ran.result["problems"]), "screens": screens.len(), "prototyped": ran.result["prototyped"], "proposedEndStates": proposed, "stale": stale(ran)})
+        // As the panel counts them: components and component sets aren't screens.
+        let counted: Vec<&Value> = screens.iter().filter(|s| s["component"].as_bool() != Some(true)).collect();
+        let reached = counted.iter().filter(|s| s["reachable"].as_bool() == Some(true)).count();
+        json!({"problems": problems(&ran.result["problems"]), "screens": counted.len(), "reachable": reached, "prototyped": ran.result["prototyped"], "proposedEndStates": proposed, "stale": stale(ran)})
     });
-    let checks = ui.checks.as_ref().map(|ran| {
+    let checks = shown.and_then(|r| r.checks.as_ref()).map(|ran| {
         let skipped: Vec<&Value> = ran.result["skipped"].as_array().into_iter().flatten().map(|s| &s["id"]).collect();
         json!({"findings": problems(&ran.result["findings"]), "summary": ran.result["summary"], "skipped": skipped, "stage": ran.result["stage"], "stale": stale(ran)})
     });
-    let compare = ui.compare.as_ref().map(|(set, ran)| {
+    let compare = shown.and_then(|r| r.compare.as_ref()).map(|(set, ran)| {
         json!({"set": set, "members": ran.result["members"].as_array().map_or(0, Vec::len), "warnings": ran.result["warnings"], "stale": stale(ran)})
     });
     json!({
@@ -786,14 +914,15 @@ pub fn inspect(app: &FigApp) -> Value {
         "stage": design.as_ref().map(|c| c.stage),
         "briefRevision": design.as_ref().map(|c| c.brief_revision),
         "counts": counts,
-        "form": ui.form.as_ref().map(|f| form_name(&f.kind)),
-        "refused": ui.error.as_ref().map(|(about, message)| json!({"about": about, "message": message})).or_else(|| ui.form.as_ref().and_then(|f| f.error.as_ref()).map(|m| json!({"about": "form", "message": m}))),
+        "form": front_form.map(|f| form_name(&f.kind)),
+        "refused": front_error.map(|(about, message)| json!({"about": about, "message": message})).or_else(|| front_form.and_then(|f| f.error.as_ref()).map(|m| json!({"about": "form", "message": m}))),
         "highlight": ui.highlight,
+        "focusEntry": ui.focus_entry,
         "selected": ui.for_node.as_ref().map(|(node, ran)| json!({"node": node, "refs": ran.result})),
         "scenarioRun": scenario_run,
         "flowCheck": flow,
         "checks": checks,
-        "recorded": ui.recorded.as_ref().map(|ran| &ran.result),
+        "recorded": shown.and_then(|r| r.recorded.as_ref()).map(|ran| &ran.result),
         "compare": compare,
     })
 }
@@ -824,6 +953,18 @@ pub(crate) fn severity_label(id: &str) -> &str {
 /// nobody named in a file from before entries had authors); an AI agent by its signed name.
 pub(crate) fn author_name(author: &str) -> &str {
     if author.is_empty() || author == "user" { tr("you") } else { author }
+}
+
+/// Who an entry a person stands behind came from, in a row of quiet texts: "by you" for the
+/// person's own; an AI agent's is "proposed by" it (an agent never accepts), then "accepted by"
+/// the person who did when the file records it (`acceptedBy`).
+pub(crate) fn authorship(ui: &mut Ui, author: &str, accepted_by: &str) {
+    let by_agent = !(author.is_empty() || author == "user");
+    let key = if by_agent { tr_noop("proposed by {name}") } else { tr_noop("by {name}") };
+    quiet(ui, &trf(key, &[("name", &author_name(author))]));
+    if !accepted_by.is_empty() {
+        quiet(ui, &trf("accepted by {name}", &[("name", &author_name(accepted_by))]));
+    }
 }
 
 /// The proposals of AI agents that wait for a person: decisions (a choice among alternatives an

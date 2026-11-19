@@ -22,6 +22,7 @@ fn screen_overlays_and_end_state_say_what_was_expected_and_what_is() {
         reason: "the order is placed".into(),
         author: "user".into(),
         status: EndStateStatus::Accepted,
+        accepted_by: String::new(),
     });
     let mut p = Sim::new(&doc, a).unwrap();
     assert!(p.check(&Expect::default()).is_empty(), "nothing asked, nothing fails");

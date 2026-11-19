@@ -12,7 +12,8 @@ use serde_json::{Value, json};
 
 use super::findings::found;
 use super::{
-    Cx, Ran, act, author_name, body, button, chip, entry, flow_row, go_to, heading, link, pad, part, primary, quiet, refusal_for, steps_text, strong,
+    Cx, act, author_name, authorship, body, button, chip, entry, flow_row, go_to, heading, keep, link, pad, part, primary, quiet, refusal_for,
+    steps_text, strong,
 };
 use crate::FigApp;
 use crate::i18n::{tr, tr_noop, trf};
@@ -64,7 +65,7 @@ pub(super) fn show(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
 fn run(app: &mut FigApp, id: Option<&str>) {
     let params = id.map_or_else(|| json!({}), |id| json!({"id": id}));
     if let Some(result) = act(app, id.unwrap_or("scenarios"), "proto.scenario.run", params) {
-        app.ui.context.scenario_run = Ran::new(app, result);
+        keep(app, result, |r, ran| r.scenario_run = Some(ran));
     }
 }
 
@@ -86,7 +87,7 @@ fn scenarios(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
             run(app, None);
         }
         refusal_for(app, ui, "scenarios");
-        if let Some(ran) = &app.ui.context.scenario_run {
+        if let Some(ran) = app.ui.context.results(cx.uid).and_then(|r| r.scenario_run.as_ref()) {
             if ran.stale(&cx.doc) {
                 ui.add_space(4.0);
                 quiet(ui, tr("The file has changed since the scenarios last ran: the results below are from before."));
@@ -126,8 +127,12 @@ fn scenario(app: &mut FigApp, ui: &mut Ui, cx: &Cx, s: &Scenario) {
         }
     });
     // What the last run said about this scenario.
-    let result =
-        app.ui.context.scenario_run.as_ref().and_then(|ran| ran.result["results"].as_array()?.iter().find(|r| r["id"] == json!(s.id)).cloned());
+    let result = app
+        .ui
+        .context
+        .results(cx.uid)
+        .and_then(|r| r.scenario_run.as_ref())
+        .and_then(|ran| ran.result["results"].as_array()?.iter().find(|r| r["id"] == json!(s.id)).cloned());
     if let Some(r) = &result {
         ui.add_space(4.0);
         outcome(ui, r, s.steps.len());
@@ -174,8 +179,32 @@ pub(super) fn simulated(result: &Value) -> Option<(String, String)> {
         return None;
     }
     let left_out: Vec<&str> = result["notModelled"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
-    let short: Vec<&str> = left_out.iter().map(|s| s.split([':', '(']).next().unwrap_or(s).trim()).collect();
+    let short: Vec<&str> = left_out.iter().map(|s| not_modelled_short(s)).collect();
     Some((trf("Simulated (not modelled: {items})", &[("items", &short.join("; "))]), left_out.join("\n")))
+}
+
+/// The short forms of what the simulator leaves out (`proto_verify::NOT_MODELLED`, each up to
+/// its explanation), as the panel names them in the UI language.
+pub(crate) const NOT_MODELLED_SHORT: [&str; 8] = [
+    tr_noop("animation and timing"),
+    tr_noop("scroll position"),
+    tr_noop("drag direction"),
+    tr_noop("the device frame and responsive resizing"),
+    tr_noop("pointer hit-testing"),
+    tr_noop("a gesture step is one trigger"),
+    tr_noop("the player's own keys"),
+    tr_noop("widgets"),
+];
+
+/// One item the simulator leaves out, without the engine's explanation (what follows a bracket or
+/// a colon), translated when it is one of [`NOT_MODELLED_SHORT`]; another (an engine newer than
+/// the catalog) stays as the engine says it.
+pub(crate) fn not_modelled_short(item: &str) -> &str {
+    let short = item.split([':', '(']).next().unwrap_or(item).trim();
+    match NOT_MODELLED_SHORT.into_iter().find(|k| *k == short) {
+        Some(key) => tr(key),
+        None => short,
+    }
 }
 
 /// Whether the scenario passed in the last run, and where and why it didn't.
@@ -226,11 +255,14 @@ fn flow_check(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
         if primary(ui, tr("Check the flow"))
             && let Some(result) = act(app, "flow", "proto.check", json!({}))
         {
-            app.ui.context.flow = Ran::new(app, result);
+            keep(app, result, |r, ran| r.flow = Some(ran));
         }
         refusal_for(app, ui, "flow");
     });
-    let Some((result, stale)) = app.ui.context.flow.as_ref().map(|ran| (ran.result.clone(), ran.stale(&cx.doc))) else { return };
+    let Some((result, stale)) = app.ui.context.results(cx.uid).and_then(|r| r.flow.as_ref()).map(|ran| (ran.result.clone(), ran.stale(&cx.doc)))
+    else {
+        return;
+    };
     ui.add_space(6.0);
     pad(ui, |ui| {
         if stale {
@@ -238,10 +270,12 @@ fn flow_check(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
             ui.add_space(4.0);
         }
         let screens = result["screens"].as_array().map_or(&[][..], Vec::as_slice);
-        let reached = screens.iter().filter(|s| s["reachable"].as_bool() == Some(true)).count();
+        // Components and component sets are top-level frames but never screens of a flow.
+        let counted: Vec<&Value> = screens.iter().filter(|s| s["component"].as_bool() != Some(true)).collect();
+        let reached = counted.iter().filter(|s| s["reachable"].as_bool() == Some(true)).count();
         body(
             ui,
-            &trf("{reached} of {total} screens can be reached from where the prototype starts.", &[("reached", &reached), ("total", &screens.len())]),
+            &trf("{reached} of {total} screens can be reached from where the prototype starts.", &[("reached", &reached), ("total", &counted.len())]),
         );
         let starts: Vec<(NodeId, String)> = result["starts"]
             .as_array()
@@ -313,7 +347,7 @@ fn end_states(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
                     }
                 }
                 chip(ui, if proposed { tr("Proposed") } else { tr("Accepted") });
-                quiet(ui, &trf("by {name}", &[("name", &author_name(&e.author))]));
+                authorship(ui, &e.author, &e.accepted_by);
             });
             if proposed {
                 quiet(
@@ -369,4 +403,31 @@ fn end_states(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
         }
         refusal_for(app, ui, "ends");
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NOT_MODELLED_SHORT, not_modelled_short};
+
+    /// QC-06: every item the engine says the simulator leaves out has a short form the catalogs
+    /// translate (a new item fails here until it has one), and the Vietnamese catalog has them all.
+    #[test]
+    fn every_item_the_simulator_leaves_out_has_a_translated_short_form() {
+        for item in figcraft_engine::proto_verify::NOT_MODELLED {
+            let short = item.split([':', '(']).next().unwrap_or(item).trim();
+            assert!(NOT_MODELLED_SHORT.contains(&short), "no short form for {item:?}: add {short:?} to NOT_MODELLED_SHORT and the catalogs");
+            assert_eq!(not_modelled_short(item), short, "English shows the engine's own words");
+        }
+        let vi = crate::i18n::languages().iter().find(|l| l.code == "vi").expect("the Vietnamese catalog");
+        for key in NOT_MODELLED_SHORT.into_iter().chain([
+            "Messages from the rules and the simulator are in English.",
+            "proposed by {name}",
+            "accepted by {name}",
+        ]) {
+            let found = vi.ui.iter().find(|(k, _)| *k == key);
+            assert!(matches!(found, Some((_, crate::i18n::Text::Plain(t))) if *t != key), "{key:?} has no Vietnamese text");
+        }
+        // An item the catalogs don't know yet stays as the engine says it.
+        assert_eq!(not_modelled_short("a new limit: explained"), "a new limit");
+    }
 }
