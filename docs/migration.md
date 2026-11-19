@@ -80,9 +80,17 @@ Every variable the app, the CLI, the server or the build reads under a `FIGCRAFT
 `FIGGUREMYUI_NO_DESKTOP_INTEGRATION`, `FIGGUREMYUI_TITLEBAR`, and at build time
 `FIGGUREMYUI_DEFAULT_SERVER`, `FIGGUREMYUI_DEFAULT_FONT`, `FIGGUREMYUI_WEB_FONTS`,
 `FIGGUREMYUI_EMBED_CJK`, `FIGGUREMYUI_EMBED_SCRIPTS`, `FIGGUREMYUI_BUILD_SHA` and
-`FIGGUREMYUI_BUILD_DATE` (and the test inputs such as `FIGGUREMYUI_FIG_SAMPLES`). The new name wins.
-When it is not set, the old `FIGCRAFT_` name is still read, so existing scripts, services and
-build settings keep working; move them to the new names when you can.
+`FIGGUREMYUI_BUILD_DATE`, and in the packaging scripts `FIGGUREMYUI_VERSION`,
+`FIGGUREMYUI_MAINTAINER` and `FIGGUREMYUI_WASM_MAX_BYTES`. The new name wins. When it is not set,
+the old `FIGCRAFT_` name is still read, so existing scripts, services and build settings keep
+working; move them to the new names when you can.
+
+Two exceptions. `FIGGUREMYUI_GRAPHICS_ATTEMPT` is internal (the app sets it for itself when it
+retries graphics start-up), so only the new name is read. The inputs of the test suites and
+benchmarks keep their `FIGCRAFT_` names (`FIGCRAFT_FIG_SAMPLES`, `FIGCRAFT_PENPOT_SAMPLE`,
+`FIGCRAFT_PDF_SAMPLE`, `FIGCRAFT_SKETCH_SAMPLES`, `FIGCRAFT_SKETCHTOOL`, `FIGCRAFT_EXPORT_BENCH_*`,
+`FIGCRAFT_GLASS_PNG`, `FIGCRAFT_BENCH_LAYERS`, `FIGCRAFT_EXAMPLE_SHOTS`,
+`FIGCRAFT_TEST_PIPE_FONT_DIR`): they are read only by developers' test runs, never by the app.
 
 ## What is still accepted under the old names
 
@@ -162,9 +170,14 @@ unsigned. These are the values to change:
 | `.github/workflows/release.yml` | `app-name` | `figcraft` | `figguremyui` |
 | `.github/workflows/release.yml` | `app-title` | `FigCraft` | `Figgure My UI` |
 | `.github/workflows/windows-arm64.yml` | `app-name` | `figcraft` | `figguremyui` |
-| `.github/workflows/windows-arm64.yml` | `app-dir` | `FigCraft` | the installer's install folder name after the rename (the `INSTALLFOLDER` directory in the WiX source under `packaging/windows/`) |
-| `.github/workflows/windows-arm64.yml` | `install-relative-path` | `Programs/ArtCraft/FigCraft` | the per-user install path that WiX source gives after the rename (upstream's path has an `ArtCraft` folder in it) |
+| `.github/workflows/windows-arm64.yml` | `app-dir` | `FigCraft` | `Figgure My UI` (the `INSTALLFOLDER` directory in `packaging/windows/figguremyui.wxs`) |
+| `.github/workflows/windows-arm64.yml` | `install-relative-path` | `Programs/ArtCraft/FigCraft` | `Programs/ArtCraft/Figgure My UI` |
 
-Check the last two against the WiX source when making the change, and that the shared workflows
+The Windows installer still puts the app in a suite folder named `ArtCraft`
+(`Programs\ArtCraft\Figgure My UI` per user, `Program Files\ArtCraft\Figgure My UI` per machine),
+because `packaging/windows/check-install-policy.ps1` requires the Craft suite's folder. Choosing a
+folder of the fork's own is a decision to make before the first Windows release; if it changes,
+`install-relative-path` changes with it. Check the values against the WiX source when making the
+change, and that the shared workflows
 in `storytold/craft-common-actions` accept the new values (`app-name` names the release files, so
 they start with `figguremyui-` afterwards).
