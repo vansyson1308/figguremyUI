@@ -510,7 +510,16 @@ pub fn to_json(r: &Report) -> Value {
 pub fn human(r: &Report) -> String {
     let s = setup(r);
     let get = |p: &str| s.pointer(p).and_then(Value::as_str).unwrap_or_default().to_string();
-    let snippet = |p: &str| serde_json::to_string_pretty(s.pointer(p).unwrap_or(&Value::Null)).unwrap_or_default().replace('\n', "\n    ");
+    // One line, `command` before `args` as people write it (the object form sorts its keys).
+    let snippet = |mode: &str| {
+        let text = |p: &str| serde_json::to_string(s.pointer(&format!("/{mode}/{p}")).unwrap_or(&Value::Null)).unwrap_or_default();
+        format!(
+            r#"{{"mcpServers": {{{}: {{"command": {}, "args": {}}}}}}}"#,
+            text("name"),
+            serde_json::to_string(&s["command"]).unwrap_or_default(),
+            text("args")
+        )
+    };
     let mut o = String::new();
     let mut line = |t: &str| {
         o.push_str(t);
@@ -545,8 +554,8 @@ pub fn human(r: &Report) -> String {
     line(&format!("    {}", get("/headless/claudeCode")));
     line("  Codex:");
     line(&format!("    {}", get("/headless/codex")));
-    line("  JSON (a project's .mcp.json, claude_desktop_config.json):");
-    line(&format!("    {}", snippet("/headless/mcpServers")));
+    line("  JSON (a project's .mcp.json, claude_desktop_config.json; merge into an existing \"mcpServers\"):");
+    line(&format!("    {}", snippet("headless")));
     line("");
     line("Or attached to the running app, so a person sees every change (start the app first):");
     line(&format!("    {}", get("/attached/startApp")));
@@ -555,7 +564,7 @@ pub fn human(r: &Report) -> String {
     line("  Codex:");
     line(&format!("    {}", get("/attached/codex")));
     line("  JSON:");
-    line(&format!("    {}", snippet("/attached/mcpServers")));
+    line(&format!("    {}", snippet("attached")));
     line("");
     line("Confirm with `claude mcp list` or `codex mcp list`. doctor wrote no files and used no network.");
     line("");
@@ -624,6 +633,10 @@ mod tests {
         assert!(r.warnings.iter().any(|w| w.contains("desktop app")), "{:?}", r.warnings);
         let text = human(&r);
         assert!(text.contains("Result: all") && text.contains(&format!("codex mcp add figguremyui -- {}", quote(&path, cfg!(windows)))), "{text}");
+        // The pasteable JSON lines are the setup's `mcpServers` objects.
+        let snippets: Vec<Value> =
+            text.lines().map(str::trim).filter(|l| l.starts_with(r#"{"mcpServers""#)).map(|l| serde_json::from_str(l).unwrap()).collect();
+        assert_eq!(snippets, [v["setup"]["headless"]["mcpServers"].clone(), v["setup"]["attached"]["mcpServers"].clone()]);
     }
 
     #[test]
