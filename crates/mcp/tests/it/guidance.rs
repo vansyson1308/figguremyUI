@@ -200,9 +200,11 @@ fn every_command_tool_and_parameter_the_guidance_names_exists() {
     documented.extend(commands.iter().filter_map(|id| figcraft_engine::cmd::param_names(id)).flatten().map(|n| n.to_string()));
     let (mut named_commands, mut named_tools, mut checked_params) = (BTreeSet::new(), BTreeSet::new(), 0);
     let mut wrong = Vec::new();
+    // A check rule may be named by its id (`states.none`): it must be one design.check runs.
+    let rules: BTreeSet<&str> = figcraft_engine::design::rules().iter().map(|r| r.id).collect();
     for (place, text) in guidance(&mut c) {
         for (name, end) in dotted(&text) {
-            if NOT_COMMANDS.contains(&name.as_str()) {
+            if NOT_COMMANDS.contains(&name.as_str()) || rules.contains(name.as_str()) {
                 continue;
             }
             if !commands.contains(name.as_str()) {
@@ -439,4 +441,31 @@ fn prompts_start_from_purpose_and_end_by_running() {
     for must in ["save_file", "open_file", "untested", "waiting for a person", "skipped", "simulated", "never write that it was tested with users"] {
         assert!(hand_over.contains(must), "hand_over doesn't say `{must}`");
     }
+}
+
+/// Book-to-product chapter 9: delight is an outcome of fit, not something to add. No command id,
+/// check rule, tool description, prompt or the instructions name it; and the prompts that make
+/// screens ask for the places where time passes, error and empty included, before embellishment,
+/// and for required elements to be listed and linked.
+#[test]
+fn nothing_offers_delight_and_the_making_prompts_ask_for_states_and_required_elements_first() {
+    let mut c = Client::new();
+    for (place, text) in guidance(&mut c) {
+        assert!(!text.to_lowercase().contains("delight"), "{place} names delight");
+    }
+    for cmd in figcraft_engine::all_commands() {
+        assert!(!cmd.id.to_lowercase().contains("delight") && !cmd.label.to_lowercase().contains("delight"), "{}", cmd.id);
+    }
+    assert!(figcraft_engine::design::rules().iter().all(|r| !r.id.to_lowercase().contains("delight")));
+    for name in ["design_from_brief", "mobile_screen", "prototype_flow"] {
+        let text = rendered(&mut c, name);
+        assert!(text.contains("proto.state.set") && text.contains("before any embellishment"), "{name} asks for the states first");
+        assert!(text.contains("\"kind\""), "{name} shows a declaration");
+    }
+    for name in ["design_from_brief", "mobile_screen"] {
+        assert!(rendered(&mut c, name).contains("design.required.add"), "{name} lists required elements");
+    }
+    let brief = rendered(&mut c, "design_from_brief");
+    assert!(brief.contains("stepsTaken") && brief.contains("screenCount") && brief.contains("error and empty"), "guidance 18");
+    assert!(INSTRUCTIONS.contains("proto.state.set") && INSTRUCTIONS.contains("design.required.add"));
 }

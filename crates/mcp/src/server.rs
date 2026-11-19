@@ -32,14 +32,14 @@ pub(crate) const MAX_LINE: usize = 32 * 1024 * 1024;
 /// descriptions and the prompts carry the detail. `crates/mcp/tests/it/guidance.rs` holds it
 /// to what it must say and to the tools and commands that exist.
 pub const INSTRUCTIONS: &str = "Call get_capabilities first: it says whether this is headless (no window, no prototype player) or attached to the running app (a person sees each change live and may be editing the same file), and what this build has.\n\
-Documents. A call without `document` acts on the working document (chosen by open_file, use_document or a call naming `document`; never just the tab in front). Every result names its document and revision; pass that as `ifRevision` on every change: if somebody changed the file since, nothing changes and the error (code `conflict`) lists what was done.\n\
+Documents. A call without `document` acts on the working document (chosen by open_file, use_document or a call naming `document`; never just the tab in front). Every result names its document and revision; pass that as `ifRevision` on every change: if the file changed since, nothing changes and the error (code `conflict`) lists what was done.\n\
 Structure. Coordinates are page units (1 unit = 1 px), x right, y DOWN. create_node and set_properties take x/y RELATIVE TO THE PARENT (the page when there is none; groups don't count), and inspect_document reports them so, plus absoluteBounds. An auto-layout frame places its children: set layout, gap, padding, mainAlign, crossAlign, sizingH/sizingV. Prefer auto layout and constraints to coordinates, and never place things by coordinates to hide a layout problem. Colours are \"#RRGGBB\" or \"#RRGGBBAA\". Every menu item is a command: list_commands {filter} finds ids and params, run_command runs one, batch several as one undo step.\n\
 The loop:\n\
-1. Read the brief: design_context. If it does not say who the design is for and what they need to do, ask, or record your reading with design.assumption.add; never invent a brief silently.\n\
+1. Read the brief: design_context. If it doesn't say who the design is for and what they need, ask, or record your reading with design.assumption.add; never invent a brief silently. Declare states, error and empty first (proto.state.set), and required elements (design.required.add).\n\
 2. Look at what exists (inspect_document, screenshot) and build on it.\n\
 3. Make small undoable changes, one batch per intent.\n\
 4. Step back: screenshot, and look.\n\
-5. Verify by running, in either backend: check_prototype, run_scenarios, simulate_prototype (`image: true` adds a picture of the state). pointer and key act on the editor canvas; a playing prototype is driven by a person.\n\
+5. Verify by running: check_prototype, run_scenarios, simulate_prototype (`image: true` adds a picture). pointer and key act on the editor canvas; a playing prototype is driven by a person.\n\
 6. check_design: deterministic rules, each citing its standard; not a quality score.\n\
 7. Fix one finding, record it with design.finding.address, re-run it with design.finding.recheck. Never claim a fix without the re-check.\n\
 8. save_file, then report what is open: untested assumptions, proposals waiting for a person, failed or skipped checks, what was simulated rather than seen.\n\

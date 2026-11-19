@@ -459,3 +459,48 @@ fn the_verification_tools_answer_the_same_attached_to_an_app() {
     let run = attached.ok("run_scenarios", json!({}));
     assert_eq!((&run["passed"], &run["total"]), (&json!(true), &json!(4)), "{run}");
 }
+
+/// The states screens are declared to have and the brief's required elements come through the
+/// design and flow resources, run in check_design, and count steps and screens as facts.
+#[test]
+fn declared_states_and_required_elements_reach_the_resources_and_the_checks() {
+    let mut c = Client::new();
+    let b = build(&mut c);
+    store_scenarios(&mut c, &b);
+    let read = |c: &mut Client, uri: &str| -> Value {
+        let r = c.rpc("resources/read", json!({"uri": uri}));
+        serde_json::from_str(r["result"]["contents"][0]["text"].as_str().unwrap()).unwrap()
+    };
+    // Nothing declared: one note says that, and it is no failure.
+    let v = c.ok("check_design", json!({"rules": ["states.none"]}));
+    assert_eq!((&v["summary"]["total"], &v["findings"][0]["severity"]), (&json!(1), &json!("note")), "{v}");
+    // Over MCP every command is the client's agent's: its declarations are proposals.
+    let r = c.run("proto.state.set", json!({"frame": b.home, "kind": "error", "shownBy": {"node": b.hint}, "reason": "the code is wrong"}));
+    assert_eq!(r["state"]["status"], "proposed");
+    c.run("proto.state.set", json!({"frame": b.details, "kind": "success", "shownBy": {"node": b.done}}));
+    let r = c.run("design.required.add", json!({"text": "What to tick before going on", "screens": [b.home], "nodes": [b.hint]}));
+    assert_eq!(r, json!({"id": "R1", "status": "proposed"}));
+    let design = read(&mut c, "figguremyui://design");
+    assert_eq!(design["states"].as_array().unwrap().len(), 2, "{design}");
+    assert_eq!(design["brief"]["required"][0]["nodes"], json!([b.hint]));
+    assert_eq!((&design["counts"]["states"], &design["counts"]["requiredElements"]), (&json!(2), &json!(1)));
+    let flow = read(&mut c, "figguremyui://prototype/flow");
+    let error = flow["states"].as_array().unwrap().iter().find(|s| s["kind"] == "error").cloned().unwrap();
+    assert_eq!((&error["designed"], &error["reachable"]), (&json!(true), &json!(true)), "{error}");
+    assert!(!error["coveredBy"].as_array().unwrap().is_empty(), "the scenarios on Home show the hint: {error}");
+    let success = flow["states"].as_array().unwrap().iter().find(|s| s["kind"] == "success").cloned().unwrap();
+    assert_eq!(success["coveredBy"], json!(["S1"]), "{success}");
+    // The checks run them; nothing is missing here.
+    let v = c.ok("check_design", json!({"rules": ["states.notDesigned", "states.unreachable", "context.requiredMissing", "states.none"]}));
+    assert_eq!(v["summary"]["total"], 0, "{v}");
+    // Steps to the goal are facts in every run.
+    let r = c.ok("run_scenarios", json!({"id": "S1"}));
+    assert_eq!((&r["results"][0]["stepsTaken"], &r["results"][0]["screenCount"]), (&json!(3), &json!(3)), "{r}");
+    assert_eq!(r["results"][0]["screens"], json!([b.home, b.details, b.done]));
+    let caps = c.ok("get_capabilities", json!({}));
+    assert_eq!((&caps["features"]["declaredStates"], &caps["features"]["requiredElements"]), (&json!(true), &json!(true)));
+    let checks: Vec<&str> = caps["features"]["checks"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+    for id in ["states.none", "states.notDesigned", "states.unreachable", "states.errorEmpty", "context.requiredMissing"] {
+        assert!(checks.contains(&id), "{id}: {checks:?}");
+    }
+}
