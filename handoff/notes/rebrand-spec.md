@@ -1,5 +1,14 @@
 # Rebrand spec: FigCraft → Figgure My UI (lead's decisions)
 
+> **Status 2026-11-19:** the owner approved the rename. Already done before it (do not redo, but
+> rename what they show): the ArtCraft marks are removed (`docs/brand/` gone, commit `58559f6c`);
+> About says the build is a fork based on FigCraft and not endorsed by its makers, help and the
+> updater point at `vansyson1308/figguremyUI`, the Windows company name is the fork's, and there is no
+> default sharing server (commits `e2226b2d`, `040ed89e`). Items 9, 10 and 12 below are therefore
+> done except for renaming the strings; item 13's About text changes from "This build is a fork,
+> based on FigCraft…" to the Figgure My UI wording. Contributor credits: the owner wants to stay
+> credited as `@vansyson1308` (no `contributors/people.toml` entry).
+
 Display name, exactly: **Figgure My UI**. Machine identifier: **`figguremyui`**. Fork repository:
 `https://github.com/vansyson1308/figguremyUI`. The fork keeps upstream's history, licences, copyright
 notices and contributor credits; it removes the old brand from what a person using the new product sees.
@@ -102,3 +111,21 @@ notices and contributor credits; it removes the old brand from what a person usi
 - Open every `examples/*.figcraft` and a file saved by the baseline binary
   (`scratchpad/baseline/bin/figcraft-cli-release-011f08e5` can create one) and compare.
 - Env var alias test; settings migration test; updater shows no error with no releases.
+
+## Constraints found while preparing (2026-11-19)
+- **Workflow files are not edited in this pull request** (house rule 11: CI stays shared; no CI
+  changes in a feature PR). `.github/workflows/release.yml` (`app-name: figcraft`, `app-title:
+  FigCraft`) and `.github/workflows/windows-arm64.yml` (`app-name`, `app-dir: FigCraft`,
+  `install-relative-path: Programs/ArtCraft/FigCraft`) keep their values; they run only for releases,
+  which this fork doesn't make yet and which need upstream signing secrets. `docs/migration.md` lists
+  them as a follow-up for a separate CI pull request (with the exact new values), and says the
+  release pipeline is not usable by the fork until then.
+- `packaging/check-app-specific.sh` (a repository script the shared packaging lint calls) asserts
+  the Flatpak manifests' `id == "ai.storyteller.figcraft"` and `command == "figcraft"`, and greps
+  `packaging/` and `.github/` for other products' names (`figma` among them — "Figgure" doesn't
+  match). Update its expected id/command together with the manifests, keeping both assertions.
+  The shared lint (`storytold/craft-common-actions/.github/workflows/packaging-lint.yml`) runs it
+  when `packaging/**` or `assets/app-icon/**` change: it will run on this PR, so the packaging
+  metadata must stay valid (desktop file, AppStream metainfo, Flatpak manifests).
+- Draft icon: `/tmp/claude-0/-home-user-figguremyUI/39d89997-e289-5eb4-a16b-402a776ef6a8/scratchpad/icon/figguremyui.svg`
+  (512-unit tile, rx 112, like the current master). Previews at 256/48/16 px were legible.
