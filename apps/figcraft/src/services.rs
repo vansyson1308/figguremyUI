@@ -622,7 +622,7 @@ impl Services for Desktop {
 pub fn window_icon() -> Option<egui::IconData> {
     // macOS wants Apple's padded grid; the other platforms the rounded tile edge to edge.
     #[cfg(target_os = "macos")]
-    let bytes = include_bytes!("../../../assets/app-icon/figcraft-256.png");
+    let bytes = include_bytes!("../../../assets/app-icon/figguremyui-256.png");
     #[cfg(not(target_os = "macos"))]
     let bytes = include_bytes!("../../../assets/app-icon/hicolor/256x256/apps/io.github.vansyson1308.figguremyui.png");
     let img = image::load_from_memory(bytes).ok()?.to_rgba8();
