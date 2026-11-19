@@ -99,6 +99,28 @@ fn custom_sizes_present_as_a_bare_screen() {
     assert_eq!(size(&presenter(&u)["frameSize"]), (500.0, 700.0));
 }
 
+/// QC2-04: a new screen size from `proto.settings` while the prototype plays (an agent, a script,
+/// the Prototype tab's size fields) starts at the top, as choosing a device in the player's menu
+/// does, instead of keeping an offset past the end of the new range (a blank screen). Settings
+/// that leave the screen as it is keep the place.
+#[test]
+fn a_new_screen_size_while_playing_starts_at_the_top_as_the_device_menu_does() {
+    let (mut u, a, ..) = setup();
+    u.run("proto.settings", json!({"width": 360, "height": 800}));
+    u.run("proto.present", json!({"start": a}));
+    u.app.ui.present.as_mut().unwrap().scroll_to(0.0, 99_999.0);
+    u.frame(vec![]);
+    let p = presenter(&u);
+    assert_eq!((p["scroll"][1].clone(), p["scrollRange"][1].clone()), (json!(1200.0), json!(1200.0)), "{p}");
+    u.run("proto.settings", json!({"device": "Custom size", "width": 360, "height": 1500}));
+    let p = presenter(&u);
+    assert_eq!(p["scrollRange"][1], json!(500.0));
+    assert_eq!(p["scroll"], json!([0.0, 0.0]), "{p}");
+    u.app.ui.present.as_mut().unwrap().scroll_to(0.0, 300.0);
+    u.run("proto.settings", json!({"background": "#202020"}));
+    assert_eq!(presenter(&u)["scroll"], json!([0.0, 300.0]), "the same screen keeps its place");
+}
+
 #[test]
 fn prototype_panel_shows_colours_custom_sizes_and_responsive() {
     let (mut u, ..) = setup();

@@ -22,6 +22,7 @@ impl Presenter {
             return;
         }
         let first = self.source.is_none();
+        let screen = self.screen();
         self.source = Some(doc.clone());
         let copy = Document::clone(doc);
         self.original = Some(copy.clone());
@@ -46,11 +47,24 @@ impl Presenter {
         self.scroll_anim = None;
         self.stop_scrolling();
         self.scroll.retain(|f, _| doc.contains(*f));
+        // A new screen (another device, a rotation, a custom size), from the player's own device
+        // menu or from `proto.settings` anywhere else (the Prototype tab, an agent, an undo),
+        // starts at its top as the menu does: offsets, a pan or a drag from the old screen don't
+        // fit the new one, and the frame may reflow for it only at the next layout (QC2-04).
+        if self.screen() != screen {
+            self.reset_for_device();
+        }
         if let Some(laid) = self.doc.as_ref() {
             let clamped: Vec<(NodeId, (f64, f64))> = self.scroll.iter().map(|(f, s)| (*f, clamp_scroll(*s, self.range(laid, *f)))).collect();
             self.scroll.extend(clamped);
         }
         self.rev += 1;
+    }
+
+    /// The size of the device's screen the current frame's page presents on (None: no device).
+    fn screen(&self) -> Option<(f64, f64)> {
+        let doc = self.doc.as_ref()?;
+        page_settings(doc, self.current).device().map(|d| (d.width, d.height))
     }
 
     /// Lay the document out for the screen: `design` with the presented frame resized to `fit`
