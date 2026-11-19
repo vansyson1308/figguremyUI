@@ -381,6 +381,12 @@ impl Document {
         self.nodes.get(&id)
     }
 
+    /// Every node with its id, ascending, as the `Arc` it is shared through (two versions of a
+    /// document tell an unchanged node by pointer).
+    pub fn node_arcs(&self) -> impl Iterator<Item = (NodeId, &Arc<Node>)> + '_ {
+        self.nodes.iter().map(|(id, n)| (*id, n))
+    }
+
     /// Mutable access (copy-on-write when a snapshot shares the node).
     pub fn node_mut(&mut self, id: NodeId) -> Option<&mut Node> {
         let n = self.nodes.get_mut(&id).map(Arc::make_mut);
