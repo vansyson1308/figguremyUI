@@ -1,8 +1,9 @@
 # figguremyui-cli
 
 Figgure My UI without a window: inspect, export, convert and render documents, run command scripts, list
-commands, serve MCP, publish plugins and code connect mappings, and measure performance. Build it with
-`cargo build --release -p figcraft-cli` (binary `target/release/figguremyui-cli`).
+commands, serve MCP, check an install (`doctor`), publish plugins and code connect mappings, and
+measure performance. Build it with `cargo build --release -p figcraft-cli` (binary
+`target/release/figguremyui-cli`), then run `figguremyui-cli doctor`.
 
 The CLI follows [RFC-0012](https://github.com/storytold/craft-contrib/blob/main/rfcs/0012-cli-conventions.md),
 the command-line conventions the Craft apps share, in how it parses its arguments (with clap). The
@@ -292,6 +293,60 @@ session can host, join and publish
 live sessions (`collab.*`: without a key on a server open to the public, with `collab.serverInfo`,
 `collab.manageFile` for the owner token and `collab.report`) and use plugin directories
 (`plugin.directory.*`); the one-shot `run` can't (no network link).
+
+### `doctor [--json] [--example FILE] [--port PORT]`
+
+Checks that this install works and prints how to connect an AI agent to it. Run it right after
+building.
+
+- Prints the version, this binary's absolute path (`current_exe`, canonicalized) and whether the
+  desktop app `figguremyui` (`figguremyui.exe` on Windows) sits next to it. The app is needed only
+  for attached mode, so its absence is a warning, not a failed check.
+- Runs an MCP self-test in this process, through the same server and stdio loop `mcp` serves
+  (requests go in as lines and the reply lines are parsed, with no pipe in between): `initialize`
+  (`serverInfo.name` must be `figguremyui`), `tools/list` (not empty), `get_capabilities` (commands,
+  flow check and scenarios present), then a `batch` that builds a two-screen prototype with a stored
+  scenario in the untitled document, a `screenshot` of it, `check_prototype` and `run_scenarios`.
+  Nothing is saved.
+- `--example FILE` also opens that document with `open_file` and runs its stored scenarios
+  (`run_scenarios`) and `check_prototype`. A file with no scenarios fails: an empty run is not a pass.
+- Reports the fonts text can use: the ones built in (craft-fonts at build time) and the installed
+  ones (not read with `--no-system-fonts` or `FIGGUREMYUI_NO_SYSTEM_FONTS=1`). No font at all is a
+  failed check, because text then lays out 1 px wide and draws nothing; Inter missing is a warning
+  (the examples are set in it).
+- Prints ready-to-paste setup lines with the binary's real path: Claude Code
+  (`claude mcp add --transport stdio figguremyui -- <path> mcp`), Codex
+  (`codex mcp add figguremyui -- <path> mcp`), an `mcpServers` JSON snippet, and the same for
+  attached mode (server name `figguremyui-app`, `mcp --attach PORT`, the app started as
+  `figguremyui --control PORT`; `--port` picks the port, default 7979). A path with spaces is quoted
+  for the platform's shell.
+- Writes no files (no client configuration either: copying a line is up to you) and uses no
+  network; the attached lines are printed, not tried.
+
+Exit code 0 when every check passes, 1 when one fails; each failed check prints `fix:` with what to
+do. A bad argument (`--port 0`) is a usage error, exit 2.
+
+`--json` prints the same as one object. Its keys are stable for `schema` 1 (keys may be added, none
+renamed or removed):
+
+| Key | Value |
+|---|---|
+| `schema` | `1` |
+| `ok` | every check passed (the exit code says the same) |
+| `product`, `version` | `"Figgure My UI"` and the version |
+| `binary` | `{path, app, appFound}`: this binary, the desktop app next to it (or `null`) |
+| `mcp` | `{serverName, protocolVersion, tools, backend, commands}` from the self-test |
+| `example` | `null` without `--example`, else `{path, opened, scenarios: {total, passed, failed}, prototypeOk, problems}` |
+| `fonts` | `{system: "scanned" \| "optedOut", families, builtIn, installed, inter}` |
+| `checks` | `[{id, ok, detail, fix}]`, `fix` `null` when `ok`; ids: `binary`, `mcp.initialize`, `mcp.initialized` (only when it fails), `mcp.tools`, `mcp.capabilities`, `mcp.document`, `mcp.screenshot`, `mcp.check_prototype`, `mcp.run_scenarios`, `example.open`, `example.scenarios`, `example.check_prototype`, `fonts` |
+| `warnings` | sentences that don't fail the run |
+| `setup` | `{command, headless, attached}`; each mode `{name, args, claudeCode, codex, mcpServers}`, attached also `{port, startApp}` |
+| `wroteFiles`, `usedNetwork` | always `false` |
+
+```sh
+figguremyui-cli doctor --example examples/signup-flow.figcraft
+figguremyui-cli doctor --json | jq -r .setup.headless.claudeCode
+```
 
 ### `plugin publish <folder> --server ws://host:port/[?key=KEY]`
 

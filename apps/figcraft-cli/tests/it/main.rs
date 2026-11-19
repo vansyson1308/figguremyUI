@@ -3,6 +3,8 @@
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod cli;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod doctor;
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod export_depth;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod fonts;
