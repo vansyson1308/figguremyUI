@@ -175,6 +175,12 @@ impl Wake for RepaintWaker {
     }
 }
 
+/// The Save as dialog's file-type label for the native format, in the UI language (the product
+/// name and the extension stay as they are). The native dialogs the app crate opens show it.
+pub fn native_file_type() -> &'static str {
+    i18n::tr("Figgure My UI file (.figcraft)")
+}
+
 /// No-op services (tests, headless screenshots).
 pub struct NoServices;
 
