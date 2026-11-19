@@ -581,7 +581,7 @@ fn every_platform_has_a_thai_font_in_the_fallbacks() {
 }
 
 /// #1902: a web build has no system fonts, so a document's missing characters can only come from
-/// the embedded faces. Every script face craft-fonts can embed (`FIGCRAFT_EMBED_SCRIPTS`) is a
+/// the embedded faces. Every script face craft-fonts can embed (`FIGGUREMYUI_EMBED_SCRIPTS`) is a
 /// document fallback after the Latin faces; else Hebrew or Devanagari typed into an Inter layer
 /// would stay missing glyphs with its face embedded.
 #[test]

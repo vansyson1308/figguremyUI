@@ -9,7 +9,7 @@ fn main() -> ExitCode {
     let cli = match cli::parse(&args) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("figcraft-server: {e}\n(figcraft-server --help lists what it takes)");
+            eprintln!("figguremyui-server: {e}\n(figguremyui-server --help lists what it takes)");
             return ExitCode::from(2);
         }
     };
@@ -20,7 +20,7 @@ fn main() -> ExitCode {
                 ExitCode::SUCCESS
             }
             Err(e) => {
-                eprintln!("figcraft-server: {e}");
+                eprintln!("figguremyui-server: {e}");
                 ExitCode::FAILURE
             }
         };

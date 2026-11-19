@@ -14,14 +14,14 @@ pub fn failed(error: &eframe::Error, quiet: bool, tried: Option<&str>) {
     if log::log_enabled!(log::Level::Error) {
         log::error!("{text}");
     } else {
-        eprintln!("figcraft: {text}");
+        eprintln!("figguremyui: {text}");
     }
     if quiet {
         return;
     }
     let _ = rfd::MessageDialog::new()
         .set_level(rfd::MessageLevel::Error)
-        .set_title("FigCraft")
+        .set_title("Figgure My UI")
         .set_description(text)
         .set_buttons(rfd::MessageButtons::Ok)
         .show();

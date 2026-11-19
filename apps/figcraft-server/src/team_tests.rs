@@ -209,17 +209,17 @@ fn a_team_list_link_joins_without_a_token_while_the_file_is_shared() {
     let addr = server.addr();
     let (mut a, file) = share(addr, "Homepage");
     // What the team list gives people to click or paste: no token in it.
-    let link = format!("figcraft://join?host={addr}&file={file}&team=1");
+    let link = format!("figguremyui://join?host={addr}&file={file}&team=1");
     let mut b = join(&link, "Bob");
     pump(&mut [&mut a, &mut b], "Bob in by the team list", |s| live(s[1]) && s[0].live().peers.len() == 1);
     assert_eq!(b.live_summary()["access"], "edit");
     let failed = |s: &figcraft_engine::Session, why: &str| matches!(&s.live().status, Status::Failed { reason } if reason.contains(why));
-    let mut c = join(&format!("figcraft://join?host={addr}&file=0123456789abcdef&team=1"), "Cy");
+    let mut c = join(&format!("figguremyui://join?host={addr}&file=0123456789abcdef&team=1"), "Cy");
     pump(&mut [&mut c], "a file that isn't shared refused", |s| failed(s[0], "isn't shared now"));
     // A server without a team list says so.
     let dir = TempDir::new("team-join-off");
     let off = crate::start(&Config { open_publish: true, ..config(dir.path()) }).unwrap();
-    let mut d = join(&format!("figcraft://join?host={}&file={file}&team=1", off.addr()), "Di");
+    let mut d = join(&format!("figguremyui://join?host={}&file={file}&team=1", off.addr()), "Di");
     pump(&mut [&mut d], "no team list", |s| failed(s[0], "keeps no team list"));
 }
 
@@ -240,11 +240,11 @@ fn the_apps_online_files_list_the_team_list_and_open_its_files() {
         (&json!("listed"), &json!("https://figcraft.example.com/app/"), &json!(file), &json!("Homepage"))
     );
     let link = t["files"][0]["link"].as_str().unwrap().to_string();
-    assert_eq!(link, format!("figcraft://join?server=ws://{addr}/&file={file}&team=1"));
+    assert_eq!(link, format!("figguremyui://join?server=ws://{addr}/&file={file}&team=1"));
     assert_eq!(
         t["files"][0]["webLink"],
         json!(format!(
-            "https://figcraft.example.com/app/#join=figcraft%3A%2F%2Fjoin%3Fserver%3Dws%3A%2F%2F{}%2F%26file%3D{file}%26team%3D1",
+            "https://figcraft.example.com/app/#join=figguremyui%3A%2F%2Fjoin%3Fserver%3Dws%3A%2F%2F{}%2F%26file%3D{file}%26team%3D1",
             addr.to_string().replace(':', "%3A")
         ))
     );

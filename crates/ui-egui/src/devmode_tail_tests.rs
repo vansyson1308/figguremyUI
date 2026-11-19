@@ -104,9 +104,28 @@ fn dev_mode_pastes_only_a_comments_link() {
     app.ui.right_tab = crate::RightTab::Inspect;
     crate::menus::paste(&mut app, None, None);
     assert_eq!(layers(&app), 0, "text doesn't paste into the design in Dev Mode");
-    app.services = Box::new(TextClip(format!("figcraft://comment/{c}")));
+    app.services = Box::new(TextClip(format!("figguremyui://comment/{c}")));
     crate::menus::paste(&mut app, None, None);
     assert_eq!(app.ui.comments.open, Some(c), "the link opens its thread");
+    // FigCraft's form of the link, copied before the rename, opens it too.
+    app.ui.comments.open = None;
+    app.services = Box::new(TextClip(format!("figcraft://comment/{c}")));
+    crate::menus::paste(&mut app, None, None);
+    assert_eq!(app.ui.comments.open, Some(c), "the old link opens its thread");
+}
+
+/// The clipboard markers of copied layers, the app's and FigCraft's, never paste as text.
+#[test]
+fn clipboard_markers_of_either_name_never_paste_as_text() {
+    let layers = |app: &crate::FigApp| app.session.doc().unwrap().node(app.session.page().unwrap()).unwrap().children.len();
+    for marker in ["figguremyui://clipboard/1", "figcraft://clipboard/1", "figcraft://clipboard/fill"] {
+        let mut app = crate::FigApp::new(Session::new(), Box::new(TextClip(marker.into())));
+        crate::menus::paste(&mut app, None, None);
+        assert_eq!(layers(&app), 0, "{marker}");
+    }
+    let mut app = crate::FigApp::new(Session::new(), Box::new(TextClip("Pasted words".into())));
+    crate::menus::paste(&mut app, None, None);
+    assert_eq!(layers(&app), 1, "plain text becomes a text layer");
 }
 
 #[test]

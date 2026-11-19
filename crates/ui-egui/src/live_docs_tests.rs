@@ -27,7 +27,7 @@ impl LiveLink for Hosting {
             color: "#14AE5C".into(),
             file_name: "Shared".into(),
             pages: vec![],
-            link: format!("figcraft://join?host={address}&file=f&token=t"),
+            link: format!("figguremyui://join?host={address}&file=f&token=t"),
             url: format!("ws://{address}/?file=f&token=t"),
             address,
             network: false,

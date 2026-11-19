@@ -23,8 +23,9 @@ pub const DEFAULT_AGENT: &str = "AI agent";
 /// Most characters of an agent's own name in its comments.
 const MAX_AGENT_NAME: usize = 64;
 
-/// Links to a thread: `figcraft://comment/<id>`.
-const LINK_PREFIX: &str = "figcraft://comment/";
+/// Links to a thread: `figguremyui://comment/<id>` (FigCraft's `figcraft://comment/<id>` is read
+/// too, brand: compat).
+const LINK_PATH: &str = "comment/";
 
 /// Most threads one `comment.prompt` brief carries, the most bytes it takes, and the most
 /// characters of one message (comments can be long).
@@ -46,13 +47,13 @@ pub fn now_secs() -> u64 {
 
 /// A thread's link (`comment.open` takes it).
 pub fn link(id: u64) -> String {
-    format!("{LINK_PREFIX}{id}")
+    format!("{}{LINK_PATH}{id}", figcraft_collab::scheme::PREFIX)
 }
 
 /// The thread id in a link (or a bare id).
 pub fn parse_link(s: &str) -> Option<u64> {
     let s = s.trim();
-    let s = s.strip_prefix(LINK_PREFIX).unwrap_or(s).trim_end_matches('/');
+    let s = figcraft_collab::scheme::strip_path(s, LINK_PATH).unwrap_or(s).trim_end_matches('/');
     // Digits only: `u64::parse` would also accept a leading '+'.
     if !s.bytes().all(|b| b.is_ascii_digit()) {
         return None;
@@ -604,7 +605,7 @@ fn prompt_text(doc: &Document, path: Option<&str>, comments: &[&Comment]) -> (St
     let name = single_line(&raw_name);
     let path_text = single_line(&raw_path);
     let mut out = String::new();
-    let _ = writeln!(out, "# FigCraft feedback\n");
+    let _ = writeln!(out, "# Figgure My UI feedback\n");
     let _ = writeln!(out, "Document: {name}");
     let _ = writeln!(out, "Path: {path_text}");
     let _ = writeln!(out, "Threads: {}\n", comments.len());
@@ -615,7 +616,7 @@ fn prompt_text(doc: &Document, path: Option<&str>, comments: &[&Comment]) -> (St
         }
         return (out, header_truncated);
     }
-    let _ = writeln!(out, "Fix these comments in the FigCraft document. For each thread:");
+    let _ = writeln!(out, "Fix these comments in the Figgure My UI document. For each thread:");
     let _ = writeln!(out, "1. Inspect the anchored layer with get_node and the frame with screenshot.");
     let _ = writeln!(out, "2. Make the smallest change that answers the comment; put one thread's edits in one batch.");
     let _ = writeln!(
@@ -1009,7 +1010,9 @@ mod tests {
         assert_eq!(super::parse_link("figcraft://comment/+5"), None);
         assert_eq!(super::parse_link(""), None);
         assert_eq!(super::parse_link("5"), Some(5));
-        assert_eq!(super::parse_link("figcraft://comment/5/"), Some(5));
+        assert_eq!(super::parse_link("figcraft://comment/5/"), Some(5), "FigCraft's links still open");
+        assert_eq!(super::parse_link("figguremyui://comment/5/"), Some(5));
+        assert_eq!(super::link(5), "figguremyui://comment/5");
     }
 
     #[test]

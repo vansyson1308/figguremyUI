@@ -26,7 +26,7 @@ impl TempDir {
         static NEXT: AtomicU32 = AtomicU32::new(0);
         let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
         let n = NEXT.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join("figcraft-server-tests").join(format!("{tag}-{}-{nanos}-{n}", std::process::id()));
+        let dir = std::env::temp_dir().join("figguremyui-server-tests").join(format!("{tag}-{}-{nanos}-{n}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         TempDir(dir)
     }

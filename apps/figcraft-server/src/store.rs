@@ -461,7 +461,7 @@ impl Store {
     /// Use the data directory `root` (made if missing). Fails when another server or command holds
     /// it. Files that can't be read are skipped and listed in [`problems`](Self::problems).
     pub fn open(root: &Path, cfg: StoreConfig) -> Result<Store, String> {
-        let mut store = Self::try_open(root, cfg)?.ok_or_else(|| format!("another figcraft-server (or a command) is using {}", root.display()))?;
+        let mut store = Self::try_open(root, cfg)?.ok_or_else(|| format!("another figguremyui-server (or a command) is using {}", root.display()))?;
         store.sweep();
         store.drop_stale_team_links();
         Ok(store)

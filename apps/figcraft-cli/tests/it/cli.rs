@@ -4,11 +4,11 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 fn bin() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_figcraft-cli"))
+    Command::new(env!("CARGO_BIN_EXE_figguremyui-cli"))
 }
 
 fn tmp(name: &str) -> std::path::PathBuf {
-    let d = std::env::temp_dir().join(format!("figcraft-cli-test-{}-{name}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("figguremyui-cli-test-{}-{name}", std::process::id()));
     std::fs::create_dir_all(&d).unwrap();
     d
 }
@@ -99,7 +99,7 @@ fn bad_arguments_exit_2_without_panicking() {
         let out = bin().args(args).output().unwrap();
         assert_eq!(out.status.code(), Some(2), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
         let err = String::from_utf8_lossy(&out.stderr);
-        assert!(err.contains("Usage: figcraft-cli") || err.contains("try '--help'"), "{args:?}: {err}");
+        assert!(err.contains("Usage: figguremyui-cli") || err.contains("try '--help'"), "{args:?}: {err}");
         assert!(!err.contains("panicked"));
     }
     let out = bin().args(["info", "/no/such/file.figcraft"]).output().unwrap();
@@ -131,7 +131,7 @@ fn help_after_a_subcommand_prints_the_usage() {
         let out = bin().args(args).stdin(Stdio::null()).output().unwrap();
         assert_eq!(out.status.code(), Some(0), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
         let text = String::from_utf8_lossy(&out.stdout);
-        assert!(text.contains("Usage: figcraft-cli"), "{args:?}: {text}");
+        assert!(text.contains("Usage: figguremyui-cli"), "{args:?}: {text}");
         assert!(out.stderr.is_empty(), "{args:?}: nothing on stderr, got {}", String::from_utf8_lossy(&out.stderr));
     }
     // A value that happens to be `--help` is still a value, not a request for help.

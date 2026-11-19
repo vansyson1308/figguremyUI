@@ -560,7 +560,7 @@ impl<'a> Exporter<'a> {
         let manifest = json!({
             "type": "penpot/export-files",
             "version": 1,
-            "generatedBy": format!("figcraft/{}", env!("CARGO_PKG_VERSION")),
+            "generatedBy": format!("figguremyui/{}", env!("CARGO_PKG_VERSION")),
             "refer": "penpot",
             "files": [{"id": self.file_id, "name": name, "features": file.get("features").cloned().unwrap_or(Value::Null)}],
             "relations": [],

@@ -1,5 +1,5 @@
 //! Where MCP tool calls end up: a control-channel method call, answered either by an in-process
-//! engine session ([`crate::Headless`]) or by a running FigCraft app ([`Attached`]).
+//! engine session ([`crate::Headless`]) or by a running Figgure My UI app ([`Attached`]).
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -8,7 +8,7 @@ use std::time::Duration;
 use base64::Engine as _;
 use serde_json::{Value, json};
 
-/// Something that answers the FigCraft control-channel methods (`engine.execute`,
+/// Something that answers the app's control-channel methods (`engine.execute`,
 /// `engine.commands`, `document.inspect`, `node.get`, `ui.pointer`, `ui.key`, `ui.type`,
 /// `ui.render`, `ui.screenshot`, `ui.inspect`). See `docs/control-protocol.md`.
 pub trait Backend {
@@ -107,7 +107,7 @@ pub fn error_detail(code: &str, message: &str) -> Value {
     json!({"code": code, "message": message})
 }
 
-/// A running FigCraft app, reached through its loopback control port (`figcraft --control PORT`).
+/// A running Figgure My UI app, reached through its loopback control port (`figguremyui --control PORT`).
 pub struct Attached {
     addr: String,
     conn: Option<(BufReader<TcpStream>, TcpStream)>,
@@ -241,7 +241,7 @@ impl Attached {
         let line = json!({"id": id, "method": "app.info", "params": {}}).to_string();
         let reply = self.roundtrip(&line).map_err(|e| {
             self.conn = None;
-            transport(format!("FigCraft app at {} did not say which app it is: {e} (the request was not sent)", self.addr))
+            transport(format!("Figgure My UI app at {} did not say which app it is: {e} (the request was not sent)", self.addr))
         })?;
         self.identified = true;
         let v: Value = serde_json::from_str(reply.trim()).unwrap_or(Value::Null);
@@ -251,7 +251,7 @@ impl Attached {
         match self.instance.replace(now.clone()) {
             Some(first) if first != now => {
                 let (message, mut detail) = transport(format!(
-                    "the FigCraft app at {} was restarted: this is another run of the app than the one this server talked to before, so the \
+                    "the Figgure My UI app at {} was restarted: this is another run of the app than the one this server talked to before, so the \
                      document ids, node ids and revisions from earlier calls are stale. The request was not sent. Look again (get_capabilities, \
                      inspect_document) before going on",
                     self.addr
@@ -277,7 +277,7 @@ impl Attached {
         if self.conn.is_none() || self.stale() {
             self.reconnect().map_err(|e| {
                 transport(format!(
-                    "FigCraft app at {} is not reachable: {e} (request was not sent; start it with `figcraft --control PORT`)",
+                    "Figgure My UI app at {} is not reachable: {e} (request was not sent; start it with `figguremyui --control PORT`)",
                     self.addr
                 ))
             })?;
@@ -290,7 +290,7 @@ impl Attached {
         let reply = self.roundtrip(&line).map_err(|e| {
             self.conn = None;
             transport(format!(
-                "FigCraft control call `{method}` at {} failed: {e}; the operation may have completed. Inspect the document before retrying.",
+                "Figgure My UI control call `{method}` at {} failed: {e}; the operation may have completed. Inspect the document before retrying.",
                 self.addr
             ))
         })?;
@@ -338,7 +338,7 @@ impl Backend for Attached {
     }
 
     fn describe(&self) -> String {
-        format!("attached to the FigCraft app at {}", self.addr)
+        format!("attached to the Figgure My UI app at {}", self.addr)
     }
 }
 

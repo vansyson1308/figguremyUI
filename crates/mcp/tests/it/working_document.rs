@@ -133,7 +133,7 @@ fn an_id_based_edit_names_the_document_it_changed() {
     assert_eq!(c.ok("use_document", json!({"document": a}))["workingDocument"]["id"], da["id"]);
     assert_eq!(c.ok("use_document", json!({"document": db["id"]}))["workingDocument"]["name"], "beta");
     // The document resource is the working document's too.
-    let read = c.rpc("resources/read", json!({"uri": "figcraft://document"}));
+    let read = c.rpc("resources/read", json!({"uri": "figguremyui://document"}));
     let doc: Value = serde_json::from_str(read["result"]["contents"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(doc["id"], db["id"]);
 }
@@ -476,7 +476,7 @@ fn capabilities_say_what_this_build_really_has() {
     assert_eq!(r["isError"], false, "{r}");
     let caps = first_json(&r);
     assert_eq!((caps["backend"].clone(), caps["window"].clone(), caps["player"].clone()), (json!("headless"), json!(false), json!(false)), "{caps}");
-    assert_eq!((caps["product"].clone(), caps["protocol"].clone()), (json!("FigCraft"), json!(figcraft_mcp::PROTOCOL_VERSION)));
+    assert_eq!((caps["product"].clone(), caps["protocol"].clone()), (json!("Figgure My UI"), json!(figcraft_mcp::PROTOCOL_VERSION)));
     assert_eq!(caps["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(caps["roots"], Value::Null);
     assert_eq!(caps["commands"], figcraft_engine::all_commands().len());

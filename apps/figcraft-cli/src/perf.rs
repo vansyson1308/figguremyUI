@@ -311,7 +311,7 @@ pub fn run(sizes: &[usize], instances: &[usize], system_fonts: bool) -> CliResul
         return Err(failed("a measured command failed"));
     }
     println!(
-        "figcraft perf ({} {}; ms unless noted; mean of several runs)",
+        "figguremyui-cli perf ({} {}; ms unless noted; mean of several runs)",
         std::env::consts::OS,
         if cfg!(debug_assertions) { "debug build" } else { "release build" }
     );

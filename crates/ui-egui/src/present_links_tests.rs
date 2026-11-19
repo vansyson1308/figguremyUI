@@ -395,7 +395,7 @@ fn a_prototype_cannot_open_a_script_or_handler_url() {
         "smb://attacker.example/share/x",
         // Handed to an application handler by the desktop.
         "ms-msdt:/id PCWDiagnostic",
-        "figcraft://join?host=127.0.0.1:47900&file=f&token=t",
+        "figguremyui://join?host=127.0.0.1:47900&file=f&token=t",
     ] {
         assert!(opens_on_a_click(url).is_empty(), "{url:?} must never reach the opener");
     }

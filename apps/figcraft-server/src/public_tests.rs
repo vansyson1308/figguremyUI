@@ -69,7 +69,7 @@ fn anyone_publishes_and_the_owner_token_manages_the_file() {
     let links = manage(&mut a, json!({"action": "links"})).unwrap();
     assert_eq!(links["links"].as_array().unwrap().len(), 2);
     let made = manage(&mut a, json!({"action": "createLink", "access": "view", "label": "Review"})).unwrap();
-    assert!(made["link"].as_str().unwrap().starts_with("figcraft://join?host="), "{made}");
+    assert!(made["link"].as_str().unwrap().starts_with("figguremyui://join?host="), "{made}");
     let view_id = links["links"].as_array().unwrap().iter().find(|l| l["access"] == "view").unwrap()["id"].as_str().unwrap().to_string();
     assert_eq!(manage(&mut a, json!({"action": "revoke", "link": view_id})).unwrap()["done"], true);
     manage(&mut a, json!({"action": "rename", "name": "Poster v2"})).unwrap();

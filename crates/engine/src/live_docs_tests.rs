@@ -14,7 +14,7 @@ use crate::live::{Event, PUBLISHING, Presence, Role, Signal, Status};
 use crate::live_tests::{Script, info, peer, push, relay, serve, session};
 use crate::{EngineError, Session};
 
-const LINK: &str = "figcraft://join?host=a:1&file=f&token=t";
+const LINK: &str = "figguremyui://join?host=a:1&file=f&token=t";
 
 /// Hand `events` to the session as link session `id`'s.
 fn feed(s: &mut Session, script: &Arc<Mutex<Script>>, id: u64, events: Vec<Event>) {

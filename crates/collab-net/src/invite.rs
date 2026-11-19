@@ -1,9 +1,9 @@
 //! Invite links and server addresses.
 //!
 //! An invite (or share) link names a session's endpoint, its file and a token:
-//! `figcraft://join?host=<host:port>&file=<id>&token=<secret>` for a plain `ws://` endpoint at `/`
-//! (what the desktop app hosts), `figcraft://join?server=<ws(s)://host[:port][/path]>&file=…&token=…`
-//! for any endpoint (a `figcraft-server` behind a TLS reverse proxy, under a path), or the same
+//! `figguremyui://join?host=<host:port>&file=<id>&token=<secret>` for a plain `ws://` endpoint at `/`
+//! (what the desktop app hosts), `figguremyui://join?server=<ws(s)://host[:port][/path]>&file=…&token=…`
+//! for any endpoint (a `figguremyui-server` behind a TLS reverse proxy, under a path), or the same
 //! session as a WebSocket URL `ws(s)://host[:port][/path]?file=<id>&token=<secret>`.
 //!
 //! The token never travels in the WebSocket request (a proxy's logs would keep it): the client
@@ -12,13 +12,18 @@
 //! link or an address.
 //!
 //! A join by code names the server to ask and the code:
-//! `figcraft://join?server=<ws(s)://…>&code=<code>` ([`Invite::parse_join`]); the server says which
+//! `figguremyui://join?server=<ws(s)://…>&code=<code>` ([`Invite::parse_join`]); the server says which
 //! file and token the code stands for.
 //!
 //! A file of a server's team list is named by the server and the file, without a token:
-//! `figcraft://join?server=<ws(s)://…>&file=<id>&team=1` ([`Invite::team_link`]); the server hands
+//! `figguremyui://join?server=<ws(s)://…>&file=<id>&team=1` ([`Invite::team_link`]); the server hands
 //! out the file's team link to whoever asks, while the file is shared. Such a link carries no
 //! secret: whoever can reach the server may join with it.
+//!
+//! Links with FigCraft's `figcraft://` scheme (brand: compat) are read the same way
+//! ([`figcraft_collab::scheme`]); new links always use `figguremyui://`.
+
+use figcraft_collab::scheme::PREFIX;
 
 /// Where a session or a server listens: `ws://host:port/path` or `wss://…` (TLS).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -53,7 +58,7 @@ pub enum Lookup {
 /// Longest link accepted (anything longer isn't one of ours).
 const MAX_LINK: usize = 2048;
 
-const NOT: &str = "that's not a live session invite: expected figcraft://join?host=…&file=…&token=… or ws://host:port/?file=…&token=…";
+const NOT: &str = "that's not a live session invite: expected figguremyui://join?host=…&file=…&token=… or ws://host:port/?file=…&token=…";
 
 impl Endpoint {
     /// A plain `ws://host/` endpoint.
@@ -126,22 +131,22 @@ impl Invite {
         Self { server: Endpoint::plain(host), file: file.into(), token: token.into() }
     }
 
-    /// The `figcraft://join?…` link.
+    /// The `figguremyui://join?…` link.
     pub fn link(&self) -> String {
         if self.server.is_plain() {
-            format!("figcraft://join?host={}&file={}&token={}", self.server.host, self.file, self.token)
+            format!("{PREFIX}join?host={}&file={}&token={}", self.server.host, self.file, self.token)
         } else {
-            format!("figcraft://join?server={}&file={}&token={}", self.server.url(), self.file, self.token)
+            format!("{PREFIX}join?server={}&file={}&token={}", self.server.url(), self.file, self.token)
         }
     }
 
-    /// The `figcraft://join?…&team=1` link to this invite's file on its server's team list (no
+    /// The `figguremyui://join?…&team=1` link to this invite's file on its server's team list (no
     /// token: the server gives the team link to whoever asks).
     pub fn team_link(&self) -> String {
         if self.server.is_plain() {
-            format!("figcraft://join?host={}&file={}&team=1", self.server.host, self.file)
+            format!("{PREFIX}join?host={}&file={}&team=1", self.server.host, self.file)
         } else {
-            format!("figcraft://join?server={}&file={}&team=1", self.server.url(), self.file)
+            format!("{PREFIX}join?server={}&file={}&team=1", self.server.url(), self.file)
         }
     }
 
@@ -178,7 +183,8 @@ impl Invite {
             return Err(NOT.into());
         }
         let (scheme, rest) = link.split_once("://").ok_or(NOT)?;
-        let (server, query) = if scheme.eq_ignore_ascii_case("figcraft") {
+        // Our scheme, or FigCraft's (links from before the rename still join).
+        let (server, query) = if figcraft_collab::scheme::is_own(scheme) {
             let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
             if !path.trim_end_matches('/').eq_ignore_ascii_case("join") {
                 return Err(NOT.into());

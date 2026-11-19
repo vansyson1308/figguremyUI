@@ -348,11 +348,18 @@ pub struct ParagraphStyle {
     pub features: std::collections::BTreeMap<String, bool>,
 }
 
-/// The font new text starts in. A build can name another (`FIGCRAFT_DEFAULT_FONT="Noto Sans Thai"`,
-/// for a distribution whose users mostly write a script Inter lacks); empty means Inter.
-pub const DEFAULT_FONT: &str = match option_env!("FIGCRAFT_DEFAULT_FONT") {
+/// The font new text starts in. A build can name another (`FIGGUREMYUI_DEFAULT_FONT="Noto Sans Thai"`,
+/// for a distribution whose users mostly write a script Inter lacks; FigCraft's
+/// `FIGCRAFT_DEFAULT_FONT` when the new one isn't set); empty means Inter.
+pub const DEFAULT_FONT: &str = match BUILD_DEFAULT_FONT {
     Some(family) if !family.is_empty() => family,
     _ => "Inter",
+};
+
+/// The font the build names for new text, if any ([`DEFAULT_FONT`]).
+const BUILD_DEFAULT_FONT: Option<&str> = match option_env!("FIGGUREMYUI_DEFAULT_FONT") {
+    Some(family) => Some(family),
+    None => option_env!("FIGCRAFT_DEFAULT_FONT"),
 };
 
 impl Default for TextStyle {
@@ -1112,8 +1119,8 @@ mod case_tests {
 
     #[test]
     fn new_text_starts_in_the_builds_default_font() {
-        // Inter, unless the build names another with `FIGCRAFT_DEFAULT_FONT` (empty means Inter).
-        let named = option_env!("FIGCRAFT_DEFAULT_FONT").filter(|f| !f.is_empty());
+        // Inter, unless the build names another with `FIGGUREMYUI_DEFAULT_FONT` (empty means Inter).
+        let named = BUILD_DEFAULT_FONT.filter(|f| !f.is_empty());
         assert_eq!(DEFAULT_FONT, named.unwrap_or("Inter"));
         let st = TextStyle::default();
         assert_eq!(st.font_family, DEFAULT_FONT);

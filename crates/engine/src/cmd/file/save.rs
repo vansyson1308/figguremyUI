@@ -120,7 +120,7 @@ impl FileSnapshot {
 fn refuse_dropping_images(ds: &DocState, path: &str) -> Result<()> {
     match ds.images_lost_saving_to(path) {
         Some(count) => Err(EngineError::Other(format!(
-            "{} wasn't saved: {count} of its images weren't loaded (together they pass what FigCraft reads from one file), and saving over it would delete them. Save it under another name; this file keeps them.",
+            "{} wasn't saved: {count} of its images weren't loaded (together they pass what Figgure My UI reads from one file), and saving over it would delete them. Save it under another name; this file keeps them.",
             file_stem(path)
         ))),
         None => Ok(()),
@@ -131,7 +131,7 @@ fn refuse_dropping_images(ds: &DocState, path: &str) -> Result<()> {
 fn refuse_overwriting_changes(ds: &DocState, path: &str) -> Result<()> {
     match (&ds.on_disk, crate::library::stat(path)) {
         (Some(was), Ok(now)) if now != *was => Err(EngineError::Other(format!(
-            "{} wasn't saved: the file changed on disk since it was opened or saved here (another app or figcraft-cli wrote to it), and saving would replace those changes. Revert to saved to load them, or Save as to keep this version as well.",
+            "{} wasn't saved: the file changed on disk since it was opened or saved here (another app or figguremyui-cli wrote to it), and saving would replace those changes. Revert to saved to load them, or Save as to keep this version as well.",
             file_stem(path)
         ))),
         _ => Ok(()),

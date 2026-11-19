@@ -5,15 +5,27 @@ use serde_json::{Value, json};
 
 use crate::backend::Backend;
 
-pub const DOC_URI: &str = "figcraft://document";
-pub const COMMANDS_URI: &str = "figcraft://commands";
-pub const COMMENTS_URI: &str = "figcraft://comments";
-pub const DESIGN_URI: &str = "figcraft://design";
-pub const FINDINGS_URI: &str = "figcraft://design/findings";
-pub const FLOW_URI: &str = "figcraft://prototype/flow";
-pub const SCENARIOS_URI: &str = "figcraft://prototype/scenarios";
-pub const NODE_TEMPLATE: &str = "figcraft://node/{id}";
-pub const COMMAND_TEMPLATE: &str = "figcraft://command/{id}";
+pub const DOC_URI: &str = "figguremyui://document";
+pub const COMMANDS_URI: &str = "figguremyui://commands";
+pub const COMMENTS_URI: &str = "figguremyui://comments";
+pub const DESIGN_URI: &str = "figguremyui://design";
+pub const FINDINGS_URI: &str = "figguremyui://design/findings";
+pub const FLOW_URI: &str = "figguremyui://prototype/flow";
+pub const SCENARIOS_URI: &str = "figguremyui://prototype/scenarios";
+pub const NODE_TEMPLATE: &str = "figguremyui://node/{id}";
+pub const COMMAND_TEMPLATE: &str = "figguremyui://command/{id}";
+
+/// FigCraft's form of every resource (`figcraft://document`, `figcraft://node/{id}`, …): read like
+/// the `figguremyui://` one, never listed (brand: compat).
+pub const OLD_PREFIX: &str = "figcraft://";
+
+/// `uri` in the form this server lists: FigCraft's `figcraft://…` becomes `figguremyui://…`.
+fn current(uri: &str) -> std::borrow::Cow<'_, str> {
+    match uri.strip_prefix(OLD_PREFIX) {
+        Some(rest) => format!("{}{rest}", figcraft_engine::figcraft_collab::scheme::PREFIX).into(),
+        None => uri.into(),
+    }
+}
 
 pub enum ReadError {
     NotFound(String),
@@ -23,7 +35,7 @@ pub enum ReadError {
 pub fn list() -> Value {
     json!({"resources": [
         {"uri": DOC_URI, "name": "document", "title": "Working document", "description": "The working document as JSON (current page's layer tree, pages, styles, selection, history), like inspect_document.", "mimeType": "application/json"},
-        {"uri": COMMANDS_URI, "name": "commands", "title": "Command catalog", "description": "Every FigCraft command with label, menu, shortcut and parameter docs.", "mimeType": "application/json"},
+        {"uri": COMMANDS_URI, "name": "commands", "title": "Command catalog", "description": "Every Figgure My UI command with label, menu, shortcut and parameter docs.", "mimeType": "application/json"},
         {"uri": COMMENTS_URI, "name": "comments", "title": "Open comments", "description": "Every open comment thread on every page, as JSON (the same objects as comment.list).", "mimeType": "application/json"},
         {"uri": DESIGN_URI, "name": "design", "title": "Design context", "description": "Why the working document is the way it is: the brief, the stage, assumptions, decisions, scenarios, end states, findings, alternatives and links to layers that are gone (what the design_context tool returns).", "mimeType": "application/json"},
         {"uri": FINDINGS_URI, "name": "findings", "title": "Findings", "description": "The findings stored in the working document: measured checks, judgements and people's feedback, each with its status. They are what was recorded; check_design measures the file as it is now.", "mimeType": "application/json"},
@@ -35,7 +47,7 @@ pub fn list() -> Value {
 pub fn templates() -> Value {
     json!({"resourceTemplates": [
         {"uriTemplate": NODE_TEMPLATE, "name": "node", "title": "Layer", "description": "One layer and its children (depth 2) as JSON.", "mimeType": "application/json"},
-        {"uriTemplate": COMMAND_TEMPLATE, "name": "command", "title": "Command", "description": "One command's label, menu path, shortcut and parameter docs, e.g. figcraft://command/layout.add.", "mimeType": "application/json"},
+        {"uriTemplate": COMMAND_TEMPLATE, "name": "command", "title": "Command", "description": "One command's label, menu path, shortcut and parameter docs, e.g. figguremyui://command/layout.add.", "mimeType": "application/json"},
     ]})
 }
 
@@ -55,6 +67,8 @@ fn command_of(uri: &str) -> Option<(&'static str, Value)> {
 /// comments, design and prototype resources are read from; without one they are the tab in
 /// front's.
 pub fn read(b: &mut dyn Backend, uri: &str, document: Option<&Value>) -> Result<Value, ReadError> {
+    let asked = uri;
+    let uri = &*current(asked);
     let in_document = |mut params: Value| {
         if let (Some(d), Some(o)) = (document, params.as_object_mut()) {
             o.insert("document".into(), d.clone());
@@ -70,21 +84,21 @@ pub fn read(b: &mut dyn Backend, uri: &str, document: Option<&Value>) -> Result<
     if let Some((command, params)) = command_of(uri) {
         return b.call("engine.execute", in_document(json!({"command": command, "params": params}))).map_err(ReadError::Backend);
     }
-    if let Some(id) = uri.strip_prefix("figcraft://node/") {
-        let Some(id) = figcraft_engine::params::id_of(&Value::String(id.to_string())) else { return Err(ReadError::NotFound(uri.into())) };
+    if let Some(id) = uri.strip_prefix("figguremyui://node/") {
+        let Some(id) = figcraft_engine::params::id_of(&Value::String(id.to_string())) else { return Err(ReadError::NotFound(asked.into())) };
         return match b.call("node.get", in_document(json!({"id": id.0, "depth": 2}))) {
-            Ok(Value::Null) => Err(ReadError::NotFound(uri.into())),
+            Ok(Value::Null) => Err(ReadError::NotFound(asked.into())),
             Ok(v) => Ok(v),
-            Err(e) if e.contains("no such node") => Err(ReadError::NotFound(uri.into())),
+            Err(e) if e.contains("no such node") => Err(ReadError::NotFound(asked.into())),
             Err(e) => Err(ReadError::Backend(e)),
         };
     }
-    if let Some(id) = uri.strip_prefix("figcraft://command/") {
+    if let Some(id) = uri.strip_prefix("figguremyui://command/") {
         let all = b.call("engine.commands", json!({})).map_err(ReadError::Backend)?;
         return all
             .as_array()
             .and_then(|a| a.iter().find(|c| c.get("id").and_then(Value::as_str) == Some(id)).cloned())
-            .ok_or_else(|| ReadError::NotFound(uri.into()));
+            .ok_or_else(|| ReadError::NotFound(asked.into()));
     }
-    Err(ReadError::NotFound(uri.into()))
+    Err(ReadError::NotFound(asked.into()))
 }

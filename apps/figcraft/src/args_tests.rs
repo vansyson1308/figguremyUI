@@ -49,15 +49,20 @@ fn unknown_flags_are_refused_never_ignored() {
 
 #[test]
 fn invite_links_join_instead_of_opening() {
-    let link = "figcraft://join?host=192.168.1.20:47900&file=abc&token=AbCdEfGhIjKlMnOpQrStUv";
+    let link = "figguremyui://join?host=192.168.1.20:47900&file=abc&token=AbCdEfGhIjKlMnOpQrStUv";
     let a = parse(&args(&[link]));
     assert_eq!(a.join.as_deref(), Some(link));
     assert!(a.files.is_empty(), "a link is never opened as a file");
+    // FigCraft's links, from before the rename, still join.
+    let old = "figcraft://join?host=192.168.1.20:47900&file=abc&token=AbCdEfGhIjKlMnOpQrStUv";
+    let a = parse(&args(&[old]));
+    assert_eq!((a.join.as_deref(), a.files.len()), (Some(old), 0));
     // How browsers and shells pass it: any case, a slash after `join`, alongside files.
     let a = parse(&args(&["design.figcraft", "FIGCRAFT://join/?host=h:1&file=f&token=t"]));
     assert_eq!(a.files, args(&["design.figcraft"]));
     assert_eq!(a.join.as_deref(), Some("FIGCRAFT://join/?host=h:1&file=f&token=t"));
     assert!(is_invite("figcraft:join") && !is_invite("figcraft.svg") && !is_invite("fig") && !is_invite("ü€figcraft:"));
+    assert!(is_invite("figguremyui:join") && is_invite("FiggureMyUI://join") && !is_invite("figguremyui.svg") && !is_invite(r"C:\a.figcraft"));
 }
 
 #[test]

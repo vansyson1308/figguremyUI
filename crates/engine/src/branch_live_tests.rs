@@ -122,7 +122,7 @@ fn update_from_main_takes_in_peers_edits_and_shows_in_the_branch_history() {
 #[test]
 fn a_view_link_still_refuses_merging() {
     let (mut s, script) = session();
-    s.execute("collab.join", &json!({"link": "figcraft://join?host=a:1&file=f&token=t"})).unwrap();
+    s.execute("collab.join", &json!({"link": "figguremyui://join?host=a:1&file=f&token=t"})).unwrap();
     let mut doc = Document::new("Shared");
     let page = doc.first_page().unwrap();
     let card = doc.create(page, figcraft_doc::NodeKind::Rectangle, "Card", 0.0, 0.0, 10.0, 10.0).unwrap();

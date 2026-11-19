@@ -74,7 +74,7 @@ pub fn start(cfg: &Config) -> Result<Running, String> {
     let public = cli::public_endpoint(cfg, addr)?;
     let hosting = Hosting::serve(listener, store, cfg.net()).map_err(|e| format!("can't start serving: {e}"))?;
     log::info!(
-        "figcraft-server {}: {files} file{} in {}; listening on {addr}; links name {}",
+        "figguremyui-server {}: {files} file{} in {}; listening on {addr}; links name {}",
         env!("CARGO_PKG_VERSION"),
         if files == 1 { "" } else { "s" },
         cfg.data.display(),

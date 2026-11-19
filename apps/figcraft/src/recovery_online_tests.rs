@@ -19,7 +19,7 @@ use crate::recovery::{Recovery, recover, recover_all};
 
 const SERVER: &str = "wss://share.example/";
 const OWNER: &str = "OwnerSecretOwnerSecret";
-const EDIT: &str = "figcraft://join?server=wss://share.example/&file=f1&token=EditSecretEditSecret00";
+const EDIT: &str = "figguremyui://join?server=wss://share.example/&file=f1&token=EditSecretEditSecret00";
 
 /// What the link was asked, what the app sent, and the events handed out next (as the session
 /// started last).

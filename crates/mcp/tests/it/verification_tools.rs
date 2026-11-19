@@ -256,13 +256,13 @@ fn the_design_and_prototype_resources_read_the_working_document() {
     assert_eq!(
         uris,
         [
-            "figcraft://document",
-            "figcraft://commands",
-            "figcraft://comments",
-            "figcraft://design",
-            "figcraft://design/findings",
-            "figcraft://prototype/flow",
-            "figcraft://prototype/scenarios"
+            "figguremyui://document",
+            "figguremyui://commands",
+            "figguremyui://comments",
+            "figguremyui://design",
+            "figguremyui://design/findings",
+            "figguremyui://prototype/flow",
+            "figguremyui://prototype/scenarios"
         ]
     );
     for r in listed["result"]["resources"].as_array().unwrap() {
@@ -279,27 +279,27 @@ fn the_design_and_prototype_resources_read_the_working_document() {
         serde_json::from_str(contents["text"].as_str().unwrap()).unwrap()
     };
     // Each is what the tool or command gives.
-    assert_eq!(read(&mut c, "figcraft://design"), c.ok("design_context", json!({})));
-    assert_eq!(read(&mut c, "figcraft://design/findings"), c.run("design.finding.list", json!({})));
-    assert_eq!(read(&mut c, "figcraft://prototype/flow"), c.ok("check_prototype", json!({})));
-    assert_eq!(read(&mut c, "figcraft://prototype/scenarios"), c.run("proto.scenario.list", json!({})));
-    assert_eq!(read(&mut c, "figcraft://design")["brief"]["audience"], "Couriers");
-    assert_eq!(read(&mut c, "figcraft://design/findings")["findings"][0]["message"], "Say which box");
-    assert_eq!(read(&mut c, "figcraft://prototype/flow")["starts"][0]["frame"], b.home);
-    assert_eq!(read(&mut c, "figcraft://prototype/scenarios")["scenarios"].as_array().unwrap().len(), 4);
+    assert_eq!(read(&mut c, "figguremyui://design"), c.ok("design_context", json!({})));
+    assert_eq!(read(&mut c, "figguremyui://design/findings"), c.run("design.finding.list", json!({})));
+    assert_eq!(read(&mut c, "figguremyui://prototype/flow"), c.ok("check_prototype", json!({})));
+    assert_eq!(read(&mut c, "figguremyui://prototype/scenarios"), c.run("proto.scenario.list", json!({})));
+    assert_eq!(read(&mut c, "figguremyui://design")["brief"]["audience"], "Couriers");
+    assert_eq!(read(&mut c, "figguremyui://design/findings")["findings"][0]["message"], "Say which box");
+    assert_eq!(read(&mut c, "figguremyui://prototype/flow")["starts"][0]["frame"], b.home);
+    assert_eq!(read(&mut c, "figguremyui://prototype/scenarios")["scenarios"].as_array().unwrap().len(), 4);
     // They follow the working document, not the tab in front.
     let first = about(&c.call("inspect_document", json!({"depth": 0})))["id"].clone();
     let second = c.run("file.new", json!({"name": "Other"}))["id"].clone();
     // A file the agent makes is its working document from then on, as one it opens is (R2-11).
-    assert_eq!(read(&mut c, "figcraft://design")["brief"], json!({}));
+    assert_eq!(read(&mut c, "figguremyui://design")["brief"], json!({}));
     c.ok("use_document", json!({"document": first}));
-    assert_eq!(read(&mut c, "figcraft://design")["brief"]["audience"], "Couriers", "the tab in front changes nothing");
+    assert_eq!(read(&mut c, "figguremyui://design")["brief"]["audience"], "Couriers", "the tab in front changes nothing");
     c.ok("use_document", json!({"document": second}));
-    assert_eq!(read(&mut c, "figcraft://design")["brief"], json!({}));
-    assert_eq!(read(&mut c, "figcraft://prototype/scenarios")["scenarios"], json!([]));
+    assert_eq!(read(&mut c, "figguremyui://design")["brief"], json!({}));
+    assert_eq!(read(&mut c, "figguremyui://prototype/scenarios")["scenarios"], json!([]));
     c.ok("use_document", json!({"document": first}));
-    assert_eq!(read(&mut c, "figcraft://design")["counts"]["scenarios"], 4);
-    assert_eq!(c.rpc("resources/read", json!({"uri": "figcraft://design/nope"}))["error"]["code"], -32002);
+    assert_eq!(read(&mut c, "figguremyui://design")["counts"]["scenarios"], 4);
+    assert_eq!(c.rpc("resources/read", json!({"uri": "figguremyui://design/nope"}))["error"]["code"], -32002);
 }
 
 /// The verification tools take the document they are told, say which one they read, and refuse

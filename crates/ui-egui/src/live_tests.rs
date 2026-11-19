@@ -113,7 +113,7 @@ impl Harness {
 
     /// Joined as Ada, with Hana (the host) already here.
     pub(crate) fn joined(&mut self) {
-        self.app.session.execute("collab.join", &json!({"link": "figcraft://join?host=127.0.0.1:47900&file=f&token=t"})).unwrap();
+        self.app.session.execute("collab.join", &json!({"link": "figguremyui://join?host=127.0.0.1:47900&file=f&token=t"})).unwrap();
         self.welcome();
     }
 
@@ -126,7 +126,7 @@ impl Harness {
             color: "#14AE5C".into(),
             file_name: "Shared".into(),
             pages: vec![],
-            link: "figcraft://join?host=127.0.0.1:47900&file=f&token=t".into(),
+            link: "figguremyui://join?host=127.0.0.1:47900&file=f&token=t".into(),
             url: String::new(),
             address: "127.0.0.1:47900".into(),
             network: false,

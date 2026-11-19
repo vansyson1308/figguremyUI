@@ -137,7 +137,7 @@ fn a_copy_command_invoked_for_a_synthetic_click_still_keeps_the_clipboard() {
 fn a_synthetic_ui_menu_invoke_copy_link_keeps_the_clipboard_then_a_user_copy_writes_the_link() {
     let mut w = Win::new();
     let selected = *w.app.session.selection().first().expect("a selected layer");
-    let link = format!("figcraft://node/{}", selected.0);
+    let link = format!("figguremyui://node/{}", selected.0);
 
     let (tx, rx) = std::sync::mpsc::channel();
     w.app.control_queue.push(ControlRequest {

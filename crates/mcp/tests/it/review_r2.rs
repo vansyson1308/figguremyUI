@@ -236,7 +236,7 @@ fn results_name_the_document_they_acted_on() {
 #[test]
 fn a_resource_read_first_settles_the_working_document() {
     let mut c = Client::new();
-    let r = c.rpc("resources/read", json!({"uri": "figcraft://design"}));
+    let r = c.rpc("resources/read", json!({"uri": "figguremyui://design"}));
     assert!(r["result"].is_object(), "{r}");
     // A new file in front afterwards (made by the user) doesn't move it.
     c.server.backend().call("engine.execute", json!({"command": "file.new", "params": {"name": "The user's"}})).unwrap();

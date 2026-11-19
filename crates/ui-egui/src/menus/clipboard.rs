@@ -99,9 +99,10 @@ pub fn paste(app: &mut FigApp, event_text: Option<&str>, at: Option<(f64, f64)>)
     }
 }
 
-/// The marker FigCraft puts on the system clipboard for copied layers with no text/SVG mirror.
+/// The marker the app puts on the system clipboard for copied layers with no text/SVG mirror
+/// (`figguremyui://clipboard/…`; FigCraft's `figcraft://clipboard/…` too).
 fn is_clipboard_marker(text: &str) -> bool {
-    text.starts_with("figcraft://clipboard/")
+    figcraft_engine::figcraft_collab::scheme::strip_path(text, "clipboard/").is_some()
 }
 
 /// Paste text from another app at `(cx, cy)` (`center`: centred there): a comment's link opens its
@@ -109,7 +110,7 @@ fn is_clipboard_marker(text: &str) -> bool {
 /// layer.
 fn paste_text(app: &mut FigApp, text: &str, (cx, cy): (f64, f64), center: bool) {
     let board = app.session.doc().is_ok_and(figcraft_engine::board::is_board);
-    if text.trim().starts_with("figcraft://comment/") {
+    if figcraft_engine::figcraft_collab::scheme::strip_path(text.trim(), "comment/").is_some() {
         app.run("comment.open", json!({"link": text.trim()}));
     } else if dev_mode_refuses(app, "edit.paste") {
         // Dev Mode: the note says why nothing was pasted.

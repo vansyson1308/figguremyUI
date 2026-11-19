@@ -31,6 +31,7 @@ mod history;
 pub mod merge;
 pub mod message;
 pub mod replica;
+pub mod scheme;
 pub mod server;
 pub mod sim;
 
