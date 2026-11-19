@@ -12,7 +12,9 @@ impl figcraft_layout::Measure for TextMeasure {
         if t.auto_resize == TextAutoResize::WidthAndHeight {
             t.auto_resize = TextAutoResize::Height;
         }
-        Some(figcraft_text::layout(&t, Some(width), None).height.max(1.0))
+        // Cached: a layout measures every text in each auto layout frame it runs, changed or not
+        // (a prototype run lays frames out again after every action, PF2).
+        Some(figcraft_text::height_cached(&t, width).max(1.0))
     }
     fn text_size(&self, doc: &Document, id: NodeId) -> Option<(f64, f64)> {
         let n = doc.node(id)?;

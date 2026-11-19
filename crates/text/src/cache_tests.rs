@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use figcraft_doc::{LetterSpacing, TextData};
 
-use crate::{clear_layout_cache, layout_cached, layout_generation};
+use crate::{clear_layout_cache, height_cached, layout, layout_cached, layout_generation};
 
 #[test]
 fn equal_texts_share_a_layout_and_unequal_ones_never_do() {
@@ -33,4 +33,19 @@ fn clearing_bumps_the_generation() {
     let g = layout_generation();
     clear_layout_cache();
     assert!(layout_generation() > g);
+}
+
+#[test]
+fn a_cached_height_is_the_height_of_the_layout() {
+    let mut t = TextData::new("A cached height, long enough to wrap onto more than one line at the narrow width");
+    for w in [40.0, 120.0, 1000.0] {
+        let want = layout(&t, Some(w), None).height;
+        assert_eq!(height_cached(&t, w), want, "width {w}");
+        assert_eq!(height_cached(&t, w), want, "width {w}, cached");
+    }
+    // Another text at a width it was measured at is measured anew.
+    t.style.font_size *= 2.0;
+    assert_eq!(height_cached(&t, 120.0), layout(&t, Some(120.0), None).height);
+    clear_layout_cache();
+    assert_eq!(height_cached(&t, 120.0), layout(&t, Some(120.0), None).height);
 }
