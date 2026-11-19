@@ -488,7 +488,7 @@ fn read_clipboard<T>(c: &mut arboard::Clipboard, read: fn(&mut arboard::Clipboar
 /// Native Save as filters; other callers keep their existing combined filter.
 fn save_filters<'a>(exts: &'a [&'a str]) -> Vec<(&'static str, &'a [&'a str])> {
     if exts == ["figcraft", "fig"] {
-        vec![("Figgure My UI file (.figcraft)", &exts[..1]), (figcraft_ui_egui::i18n::tr(".fig (experimental)"), &exts[1..])]
+        vec![(figcraft_ui_egui::native_file_type(), &exts[..1]), (figcraft_ui_egui::i18n::tr(".fig (experimental)"), &exts[1..])]
     } else {
         vec![("File", exts)]
     }
@@ -697,6 +697,15 @@ mod save_filter_tests {
             save_filters(&extensions),
             vec![("Figgure My UI file (.figcraft)", &extensions[..1]), (figcraft_ui_egui::i18n::tr(".fig (experimental)"), &extensions[1..])]
         );
+    }
+
+    /// QC2-07: both labels are catalog entries, so the dialog shows them in the UI language (the
+    /// native format's label was a literal: English in every language).
+    #[test]
+    fn save_filter_labels_come_from_the_catalog() {
+        for (label, _) in save_filters(&["figcraft", "fig"]) {
+            assert!(figcraft_ui_egui::i18n::try_tr(label).is_some(), "{label:?} isn't in the catalog");
+        }
     }
 
     #[test]
