@@ -88,6 +88,62 @@ fn set_variable_evaluates_expressions_where_the_layer_is() {
 }
 
 #[test]
+fn set_variable_reapplies_every_binding_that_reads_the_variable_and_settling_the_rest() {
+    use figcraft_doc::ColorOperand;
+    let (mut s, a, _, _, r) = setup();
+    let rect = |s: &mut Session, x: i64| {
+        id_of(&s.execute("shape.rectangle", &json!({"x": x, "y": 50, "width": 5, "height": 5, "parent": a})).unwrap()["id"]).unwrap()
+    };
+    let (aliased, faded, mixed, other) = (rect(&mut s, 30), rect(&mut s, 40), rect(&mut s, 50), rect(&mut s, 60));
+    for name in ["brand", "soft", "blend", "ink"] {
+        s.execute("variable.create", &json!({"collection": "Theme", "name": name, "type": "color", "value": "#00FF00"})).unwrap();
+    }
+    for (id, var) in [(aliased, "brand"), (faded, "soft"), (mixed, "blend"), (other, "ink")] {
+        s.execute("variable.bind", &json!({"ids": [id], "field": "fill", "variable": var})).unwrap();
+    }
+    let mut doc = s.doc().unwrap().clone();
+    let (bg, brand) = (var_id(&doc, "bg"), var_id(&doc, "brand"));
+    // brand is bg; soft is brand at 50%; blend mixes white into soft: each reads bg, through the one before.
+    let values = [
+        ("brand", VariableValue::Alias(bg.clone())),
+        ("soft", VariableValue::ColorAlpha { variable: brand, opacity: 0.5 }),
+        (
+            "blend",
+            VariableValue::ColorMix {
+                from: ColorOperand::Variable { variable: var_id(&doc, "soft") },
+                to: ColorOperand::Literal { literal: figcraft_color::Color::WHITE },
+                t: 0.0,
+            },
+        ),
+    ];
+    for (name, value) in values {
+        let id = var_id(&doc, name);
+        let v = doc.variables.variables.iter_mut().find(|v| v.id == id).unwrap();
+        v.values.values_mut().for_each(|x| *x = value.clone());
+    }
+    apply_all(&mut doc);
+    // A binding gone out of date before the change, on a variable the change doesn't read.
+    doc.node_mut(other).unwrap().fills = vec![figcraft_color::Paint::solid(figcraft_color::Color::BLACK)];
+    let before = doc.clone();
+    assert!(set_variable(&mut doc, a, &bg, &json!("#FF0000"), None));
+    for id in [r, aliased, faded, mixed] {
+        assert_eq!(fill_hex(&doc, id).as_deref(), Some("FF0000"), "layer {id}");
+    }
+    assert_eq!(doc.node(faded).unwrap().fills[0].solid_color().map(|c| c.a), Some(0.5));
+    // The change didn't read `ink`: its layer is put right when the edit is normalised, as the
+    // player and the simulator do next.
+    assert_eq!(fill_hex(&doc, other).as_deref(), Some("000000"));
+    crate::normalize(&mut doc, &before);
+    assert_eq!(fill_hex(&doc, other).as_deref(), Some("00FF00"));
+    assert_eq!(fill_hex(&doc, mixed).as_deref(), Some("FF0000"));
+}
+
+/// Every binding of `doc` applied, as an edit that changes variables leaves them.
+fn apply_all(doc: &mut Document) {
+    crate::cmd::styles::apply_bindings(doc);
+}
+
+#[test]
 fn set_mode_switches_the_prototype_and_keeps_nested_choices() {
     let (mut s, a, b, _, r) = setup();
     // B chose Light explicitly; a group inside A chose Light too (nested: it wins).
