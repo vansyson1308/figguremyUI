@@ -37,6 +37,14 @@ pub trait Backend {
         None
     }
 
+    /// The open documents as `doc.list` lists them, read without running a command, when this
+    /// backend can (headless: from its own session). A tool call reads them before its first
+    /// request and after its last; a command for each read cost about as much as a small tool
+    /// call's own work (performance budget PF1). `None`: ask `doc.list`.
+    fn documents(&mut self) -> Option<Vec<OpenDocument>> {
+        None
+    }
+
     /// What the app at the other end says about itself (`app.info`: `{instance, version, …}`),
     /// when there is one and it answers the question.
     fn app_info(&mut self) -> Option<Value> {
@@ -221,6 +229,32 @@ impl Attached {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("reply larger than {mib} MiB")));
         }
         String::from_utf8(reply).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    }
+}
+
+/// One open document, as `doc.list` lists it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OpenDocument {
+    pub id: u64,
+    /// Its tab's place among the open documents (`doc.list`'s `index`).
+    pub index: Option<u64>,
+    pub name: String,
+    /// `None` from an app that doesn't count revisions yet.
+    pub revision: Option<u64>,
+    /// The tab the user sees in front (`doc.list`'s `active`).
+    pub front: bool,
+}
+
+impl OpenDocument {
+    /// One entry of `doc.list`'s answer (`None`: it has no id).
+    pub fn from_listed(d: &Value) -> Option<Self> {
+        Some(Self {
+            id: d.get("id")?.as_u64()?,
+            index: d.get("index").and_then(Value::as_u64),
+            name: d.get("name").and_then(Value::as_str).unwrap_or_default().to_string(),
+            revision: d.get("revision").and_then(Value::as_u64),
+            front: d.get("active").and_then(Value::as_bool).unwrap_or(false),
+        })
     }
 }
 

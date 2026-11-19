@@ -6,7 +6,7 @@ use figcraft_doc::{ExportFormat, NodeId};
 use figcraft_engine::{PointerEvent, PointerKind, Session, textedit};
 use serde_json::{Value, json};
 
-use crate::backend::{Backend, error_detail};
+use crate::backend::{Backend, OpenDocument, error_detail};
 
 /// Headless backend: a [`Session`] with one untitled document.
 pub struct Headless {
@@ -504,6 +504,24 @@ impl Backend for Headless {
 
     fn take_revision(&mut self) -> Option<(u64, u64)> {
         self.last_revision.take()
+    }
+
+    /// What `doc.list` lists, without the command around it: what a live session sent since is
+    /// taken in first, as a request does.
+    fn documents(&mut self) -> Option<Vec<OpenDocument>> {
+        self.session.live_poll();
+        let front = self.session.front_uid();
+        let list = (self.session.docs.iter().enumerate())
+            .map(|(i, d)| OpenDocument {
+                id: d.uid,
+                index: u64::try_from(i).ok(),
+                name: d.doc.name.clone(),
+                revision: Some(d.doc_revision()),
+                front: Some(d.uid) == front,
+            })
+            .collect();
+        self.session.live_sync();
+        Some(list)
     }
 
     fn render_png(&mut self, ids: &[u64], scale: f64) -> Result<Vec<u8>, String> {

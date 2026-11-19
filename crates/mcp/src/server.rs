@@ -7,7 +7,7 @@ use figcraft_engine::file_access::{Roots, confined};
 
 use serde_json::{Value, json};
 
-use crate::backend::Backend;
+use crate::backend::{Backend, OpenDocument};
 use crate::prompts;
 use crate::resources;
 use crate::tools::{ToolState, call_tool_in, tool_definitions};
@@ -97,6 +97,10 @@ impl Backend for AsAgent<'_> {
         self.inner.take_revision()
     }
 
+    fn documents(&mut self) -> Option<Vec<OpenDocument>> {
+        self.inner.documents()
+    }
+
     fn app_info(&mut self) -> Option<Value> {
         self.inner.app_info()
     }
@@ -115,7 +119,12 @@ impl Backend for AsAgent<'_> {
 }
 
 fn response(id: Value, result: Value) -> Value {
-    json!({"jsonrpc": "2.0", "id": id, "result": result})
+    // Moved in, not copied as `json!` would: a result can be a whole document tree.
+    let mut v = serde_json::Map::new();
+    v.insert("jsonrpc".into(), json!("2.0"));
+    v.insert("id".into(), id);
+    v.insert("result".into(), result);
+    Value::Object(v)
 }
 
 fn error(id: Value, code: i64, message: impl Into<String>) -> Value {
@@ -321,7 +330,7 @@ impl Server {
                 // The tools remember the working document between calls; the backend acts as the
                 // client's agent.
                 let mut backend = AsAgent { inner: self.backend.as_mut(), agent: &self.agent };
-                Ok(call_tool_in(&mut self.tools, &mut backend, name, &args).to_value())
+                Ok(call_tool_in(&mut self.tools, &mut backend, name, &args).into_value())
             }
             "resources/list" => Ok(resources::list()),
             "resources/templates/list" => Ok(resources::templates()),
