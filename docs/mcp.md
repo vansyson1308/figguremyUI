@@ -190,6 +190,10 @@ Or in a project's `.mcp.json`:
   space of their own: a layer in a group is placed in the frame (or on the page) the group is in.
   `rotation` is the layer's angle to its parent (Figma's plugin API `rotation` is the same); `absoluteRotation` sets its rotation on the page, what the Design panel's field shows; a call takes one of the two.
   `inspect_document` reports `x`/`y` the same way, plus `absoluteBounds` in page coordinates.
+  `x`, `y`, `width` and `height` must be finite and within ±1e9 (`figcraft_geom::MAX_COORD`); a
+  value outside is refused as an invalid parameter, not clamped.
+  A `fontFamily` that no installed or built-in font provides is kept (the text draws in a fallback
+  font) and named in `warnings`; `create_node` returns node.create's `warnings` too.
   In `props`, `fill` and `stroke` also accept `"none"` (either case) or `null` as no paint, the
   same as an empty `fills`/`strokes` list, so an outline-only shape can be made in one call.
 - Frames, groups, sections and masks: drawing a frame or section with the `pointer` tool around
@@ -1638,7 +1642,7 @@ the message for people; the last text block is `{"error": {…}}` as JSON for th
 parameter the message is about), `node`, `step` (the failing step of a batch, with `command` then
 the command that step runs), `expected` / `actual` / `since` (a conflict), `label` / `author` (an
 undo or a discard refused), `by` (whose gesture made a call `busy`: `user` or an agent), `document`, `documents` (the open ones, when the document asked for is not open),
-`tool`.
+`tool`, `path` / `folder` (a write into a missing folder).
 
 | Code | Meaning |
 |---|---|
@@ -1652,6 +1656,7 @@ undo or a discard refused), `by` (whose gesture made a call `busy`: `user` or an
 | `busy` | A person (or another agent) is in the middle of a gesture or text edit on this file: nothing was changed; try again shortly. |
 | `notAvailable` | The command can't run now (nothing selected, a read-only file, a version shown…). |
 | `pathRejected` | A path outside the automation roots. |
+| `noSuchFolder` | A file was to be written in a folder that doesn't exist, or that is a file: nothing was written and no folder created. `folder` names it, `path` the file. |
 | `unsupportedHere` | Not possible in this backend (the prototype player without a window). |
 | `transport` | The attached app didn't answer, or was restarted (`restarted: true`). |
 | `internal` | A bug; the document was left as it was. |
