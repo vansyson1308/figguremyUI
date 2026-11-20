@@ -3,7 +3,7 @@
 //! no layer; each finding's subject says which entry it is about (`link:A1:418`, `brief`,
 //! `assumptions`, `decision:D1`), which is how a stored finding is matched to a later run.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use figcraft_doc::design::{AssumptionStatus, FindingStatus, Severity};
 use figcraft_doc::{Document, NodeId};
@@ -34,13 +34,24 @@ pub(in crate::design) fn missing_links(doc: &Document) -> Vec<(NodeId, String)> 
     out
 }
 
-/// `context.missingLink`: one finding per link to a layer that is gone. The links of declared
-/// states and required elements are left out: `states.notDesigned` and `context.requiredMissing`
-/// report a gone layer of theirs.
+/// The most `context.missingLink` findings one entry gives, and the rule gives in all (then one
+/// note counts the rest).
+const MAX_PER_ENTRY: usize = 20;
+const MAX_FINDINGS: usize = 200;
+
+/// `context.missingLink`: one finding per link to a layer that is gone, at most
+/// [`MAX_PER_ENTRY`] for one entry and [`MAX_FINDINGS`] in all, then one note that counts the
+/// rest (counting builds nothing). From the stage at which `states.notDesigned` and
+/// `context.requiredMissing` run, the links of declared states and required elements are left
+/// to them, which report a gone layer of theirs; before it (a file still exploring), nothing else
+/// would report those, so this rule does.
 pub(super) fn missing_link(doc: &Document) -> Vec<Found> {
+    let stage = doc.design.stage;
+    let states_elsewhere = stage >= super::min_stage("states.notDesigned");
+    let required_elsewhere = stage >= super::min_stage(super::required::MISSING);
     let required: BTreeSet<&str> = doc.design.brief.required.iter().map(|r| r.id.as_str()).collect();
-    let reported_elsewhere = |from: &str| from.starts_with("state ") || required.contains(from);
-    let found = |(node, from): (NodeId, String)| Found {
+    let reported_elsewhere = |from: &str| (states_elsewhere && from.starts_with("state ")) || (required_elsewhere && required.contains(from));
+    let found = |node: NodeId, from: &str| Found {
         rule: MISSING_LINK,
         severity: Severity::Minor,
         nodes: Vec::new(),
@@ -49,7 +60,41 @@ pub(super) fn missing_link(doc: &Document) -> Vec<Found> {
         evidence: format!("{from} → {node}"),
         suggestion: "point it at the layer that took its place, or remove the link".into(),
     };
-    missing_links(doc).into_iter().filter(|(_, from)| !reported_elsewhere(from)).map(found).collect()
+    let mut out: Vec<Found> = Vec::new();
+    let mut per_entry: BTreeMap<String, usize> = BTreeMap::new();
+    let mut left = 0usize;
+    for (node, from) in missing_links(doc) {
+        if reported_elsewhere(&from) {
+            continue;
+        }
+        let listed = match per_entry.get_mut(&from) {
+            Some(n) => {
+                *n = n.saturating_add(1);
+                *n
+            }
+            None => {
+                per_entry.insert(from.clone(), 1);
+                1
+            }
+        };
+        if listed > MAX_PER_ENTRY || out.len() >= MAX_FINDINGS {
+            left = left.saturating_add(1);
+        } else {
+            out.push(found(node, &from));
+        }
+    }
+    if left > 0 {
+        out.push(Found {
+            rule: MISSING_LINK,
+            severity: Severity::Note,
+            nodes: Vec::new(),
+            subject: "link:more".into(),
+            message: format!("{left} more link(s) to layers that no longer exist weren't listed"),
+            evidence: format!("at most {MAX_PER_ENTRY} findings per entry and {MAX_FINDINGS} in all are listed; design.get counts them all"),
+            suggestion: "Repair or remove those listed and run it again".into(),
+        });
+    }
+    out
 }
 
 /// `context.briefIncomplete`: a file with screens whose brief leaves out who it is for, what

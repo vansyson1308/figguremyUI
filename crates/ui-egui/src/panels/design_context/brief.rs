@@ -170,7 +170,7 @@ fn element(app: &mut FigApp, ui: &mut Ui, cx: &Cx, r: &RequiredElement, form: &m
             act(app, &r.id, "design.required.set", json!({"id": r.id, "nodes": next}));
         }
         // Hidden in the file, shown in a declared state: a fact, not a problem.
-        for (id, node, state) in figcraft_engine::design::shown_in_states(&cx.doc) {
+        for (id, node, state) in figcraft_engine::design::shown_in_states(&cx.doc, figcraft_engine::design::MAX_FACTS).0 {
             if id == r.id {
                 quiet(ui, &trf("{layer} shows in {state}", &[("layer", &cx.name(node).unwrap_or_default()), ("state", &state)]));
             }

@@ -46,7 +46,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
         spec!(
             "design.get",
             "Design context",
-            "{}  → {brief (with `required`: the elements it must show, [{id, text, screens, nodes, author, status}]), briefRevision, stage, assumptions, decisions, scenarios, endStates, states (the states screens are declared to have: [{frame, kind, name?, shownBy?, reason?, author, status}]; proto.state.list adds whether each is designed and reachable), findings, alternatives, missingLinks: [{node, from}] (links whose layer no longer exists), requiredFacts: [{id, node, shownIn}] (layers of required elements the file hides that count as shown in a declared state: \"the error state of `Form`\"), counts}",
+            "{}  → {brief (with `required`: the elements it must show, [{id, text, screens, nodes, author, status}]), briefRevision, stage, assumptions, decisions, scenarios, endStates, states (the states screens are declared to have: [{frame, kind, name?, shownBy?, reason?, author, status}]; proto.state.list adds whether each is designed and reachable), findings, alternatives, missingLinks: [{node, from}] (links whose layer no longer exists; at most 200, counts.missingLinks counts them all), requiredFacts: [{id, node, shownIn}] (layers of required elements the file hides that count as shown in accepted declared states: \"the error state of `Form`\"; at most 200, counts.requiredFacts counts them all), counts}",
             false,
             get_all
         ),
@@ -123,10 +123,14 @@ pub(super) fn specs() -> Vec<CommandSpec> {
     ]
 }
 
+/// The most links whose layer is gone `design.get` lists (`counts.missingLinks` counts them all).
+const MAX_LISTED_LINKS: usize = 200;
+
 fn get_all(s: &mut Session, _: &Value) -> Result<Value> {
     let doc = s.doc()?;
     let ctx = &doc.design;
     let missing = missing_links(doc);
+    let (facts, all_facts) = super::checks::shown_in_states(doc, super::checks::MAX_FACTS);
     let untested = ctx.assumptions.iter().filter(|a| a.status == AssumptionStatus::Untested).count();
     let proposed = ctx.decisions.iter().filter(|d| d.status == DecisionStatus::Proposed).count();
     let open = ctx.findings.iter().filter(|f| f.status == figcraft_doc::design::FindingStatus::Open).count();
@@ -141,11 +145,9 @@ fn get_all(s: &mut Session, _: &Value) -> Result<Value> {
         "states": ctx.states,
         "findings": ctx.findings,
         "alternatives": ctx.alternatives,
-        "missingLinks": missing.iter().map(|(node, from)| json!({"node": node, "from": from})).collect::<Vec<_>>(),
-        "requiredFacts": super::checks::shown_in_states(doc)
-            .into_iter()
-            .map(|(id, node, state)| json!({"id": id, "node": node, "shownIn": state}))
-            .collect::<Vec<_>>(),
+        // Listed up to a cap, so a hostile file can't make the answer huge; `counts` has them all.
+        "missingLinks": missing.iter().take(MAX_LISTED_LINKS).map(|(node, from)| json!({"node": node, "from": from})).collect::<Vec<_>>(),
+        "requiredFacts": facts.into_iter().map(|(id, node, state)| json!({"id": id, "node": node, "shownIn": state})).collect::<Vec<_>>(),
         "counts": {
             "assumptions": ctx.assumptions.len(),
             "untestedAssumptions": untested,
@@ -160,6 +162,7 @@ fn get_all(s: &mut Session, _: &Value) -> Result<Value> {
             "openFindings": open,
             "alternatives": ctx.alternatives.len(),
             "missingLinks": missing.len(),
+            "requiredFacts": all_facts,
         },
     }))
 }
