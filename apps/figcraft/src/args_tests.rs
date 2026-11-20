@@ -65,6 +65,17 @@ fn invite_links_join_instead_of_opening() {
     assert!(is_invite("figguremyui:join") && is_invite("FiggureMyUI://join") && !is_invite("figguremyui.svg") && !is_invite(r"C:\a.figcraft"));
 }
 
+/// F-16: `--help` (and `-h`) asks for the usage; it was an unknown option before.
+#[test]
+fn help_asks_for_the_usage() {
+    for flag in ["--help", "-h"] {
+        let a = parse(&args(&[flag]));
+        assert!(a.help && a.unknown.is_empty() && a.files.is_empty(), "{flag}: {a:?}");
+    }
+    assert!(!parse(&args(&["--", "-h"])).help, "after `--` it is a file");
+    assert!(crate::args::USAGE.contains("--control PORT") && crate::args::USAGE.contains("--help"));
+}
+
 #[test]
 fn file_urls_are_paths() {
     // What a Linux desktop passes for `%U`.

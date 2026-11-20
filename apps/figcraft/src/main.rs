@@ -145,7 +145,7 @@ impl eframe::App for App {
     }
 }
 
-fn main() -> eframe::Result {
+fn main() -> std::process::ExitCode {
     // Windows: the update helper is a copy of this program started with `--finish-update`.
     #[cfg(windows)]
     if let Some(result) = craft_update::self_update::finish(&figcraft_ui_egui::UPDATE_APP, &std::env::args_os().skip(1).collect::<Vec<_>>()) {
@@ -159,14 +159,16 @@ fn main() -> eframe::Result {
             env!("CARGO_PKG_VERSION"),
             option_env!("FIGGUREMYUI_BUILD_SHA").filter(|s| !s.is_empty()).map(|s| format!(" ({s})")).unwrap_or_default()
         );
-        return Ok(());
+        return std::process::ExitCode::SUCCESS;
     }
     let args = args::parse(&args);
     if let Some(flag) = args.unknown.first() {
-        eprintln!(
-            "Figgure My UI: unknown option {flag}\nUsage: figguremyui [--control PORT] [--automation-read-root DIR]... [--automation-write-root DIR]... [FILE | figguremyui://join?...]..."
-        );
+        eprintln!("Figgure My UI: unknown option {flag}\n{}", args::USAGE);
         std::process::exit(2);
+    }
+    if args.help {
+        println!("Figgure My UI {}\n{}", env!("CARGO_PKG_VERSION"), args::USAGE);
+        return std::process::ExitCode::SUCCESS;
     }
     let roots = match (
         args.read_roots.is_empty() && args.write_roots.is_empty(),
@@ -289,40 +291,57 @@ fn main() -> eframe::Result {
     let apple_events = apple_events::AppleEvents::install();
     #[cfg(target_os = "macos")]
     let apple_events = &apple_events;
-    let result = eframe::run_native(
-        "Figgure My UI",
-        options,
-        Box::new(|cc| {
-            if let Some(state) = &cc.wgpu_render_state {
-                graphics.opened(&state.adapter.get_info());
-            }
-            with_app(|fig| fig.services.set_egui_context(&cc.egui_ctx));
-            // winit's own Quit (⌘Q) ends the process through `terminate:` without ever asking the
-            // app, so unsaved changes are lost with no warning (issue #857). This menu's Quit
-            // sends the root window a close request instead, and the unsaved-changes question
-            // asks just as it does for the close button. Failure keeps winit's menu: the app
-            // runs, but ⌘Q ends it without asking.
-            #[cfg(target_os = "macos")]
-            if let Err(e) = craft_menu::mac::install_app_menu(&cc.egui_ctx, "Figgure My UI") {
-                log::warn!("app menu: kept winit's Quit, which ends the app without asking: {e}");
-            }
-            Ok(Box::new(App {
-                queue,
-                ctx_slot,
-                title: String::new(),
-                recovery,
-                // The custom title bar's undecorated window must stay borderless, or its caption
-                // and border offset the content and the pointer on some Windows systems (#1343).
-                window_frame: window_frame::WindowFrame::new(custom_titlebar),
+    // A system library the window loads that isn't installed makes winit panic before the first
+    // frame: that ends in a plain message instead (`startup::run_window`, F-16).
+    let starting = ctx_slot.clone();
+    let quiet = port.is_some();
+    let run = || {
+        eframe::run_native(
+            "Figgure My UI",
+            options,
+            Box::new(|cc| {
+                if let Some(state) = &cc.wgpu_render_state {
+                    graphics.opened(&state.adapter.get_info());
+                }
+                with_app(|fig| fig.services.set_egui_context(&cc.egui_ctx));
+                // winit's own Quit (⌘Q) ends the process through `terminate:` without ever asking the
+                // app, so unsaved changes are lost with no warning (issue #857). This menu's Quit
+                // sends the root window a close request instead, and the unsaved-changes question
+                // asks just as it does for the close button. Failure keeps winit's menu: the app
+                // runs, but ⌘Q ends it without asking.
                 #[cfg(target_os = "macos")]
-                apple_events: apple_events.connect(&cc.egui_ctx),
-            }))
-        }),
-    );
+                if let Err(e) = craft_menu::mac::install_app_menu(&cc.egui_ctx, "Figgure My UI") {
+                    log::warn!("app menu: kept winit's Quit, which ends the app without asking: {e}");
+                }
+                Ok(Box::new(App {
+                    queue,
+                    ctx_slot,
+                    title: String::new(),
+                    recovery,
+                    // The custom title bar's undecorated window must stay borderless, or its caption
+                    // and border offset the content and the pointer on some Windows systems (#1343).
+                    window_frame: window_frame::WindowFrame::new(custom_titlebar),
+                    #[cfg(target_os = "macos")]
+                    apple_events: apple_events.connect(&cc.egui_ctx),
+                }))
+            }),
+        )
+    };
+    let result = match startup::run_window(move || starting.try_lock().is_ok_and(|s| s.is_none()), run) {
+        Ok(result) => result,
+        Err(text) => {
+            startup::say(&text, quiet);
+            return std::process::ExitCode::FAILURE;
+        }
+    };
     let frames = window.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map_or(0, egui::Context::cumulative_frame_nr);
     // Start again on other graphics, or say why instead of quitting silently: release builds on
     // Windows have no console.
-    graphics.finish(result, frames, port.is_some())
+    // The message was given already (`startup::failed`): no `Error: …` after it.
+    match graphics.finish(result, frames, quiet) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(_) => std::process::ExitCode::FAILURE,
+    }
 }
 
 /// With nothing to open, whether the window starts in a new file rather than on the home screen.

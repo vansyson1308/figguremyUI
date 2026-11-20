@@ -365,6 +365,17 @@ were not run here.
 Warnings don't fail the run: the desktop app not next to the CLI (only attached mode needs it), and
 Inter not installed (the examples fall back to another font).
 
+### The desktop app doesn't start
+
+| What you see | What to do |
+|---|---|
+| `figguremyui: the window can't start: the system library libxkbcommon-x11.so.0 isn't installed` (exit 1) | Install the library it names; the message gives the Debian/Ubuntu package (`sudo apt-get install libxkbcommon-x11-0`). Check all four with the `ldconfig` line in section 1. |
+| `the window can't start: the system library libEGL.so.1 isn't installed`, followed by `Figgure My UI couldn't open its window: WGPU error: …` | The graphics found no library to draw with. Install what it names (here package `libegl1`). |
+| `Figgure My UI couldn't open its window` with no library named | The graphics driver refused the window; the message says what was tried. A machine without a display can't show the window at all: use the headless CLI. |
+| `unknown option --flag` (exit 2) | `figguremyui --help` prints the options. |
+
+The headless `figguremyui-cli` needs none of these libraries.
+
 ### Headless or attached?
 
 - `can't reach the Figgure My UI app at 127.0.0.1:7979` from an attached server: the app isn't
