@@ -24,6 +24,15 @@ pub(crate) fn finite_check_candidates(doc: &Document, before: &Document) -> Vec<
     doc.changed_ids(before, usize::MAX).unwrap_or_default()
 }
 
+/// Whether layer `n`'s position or size is not finite, or further than
+/// [`figcraft_geom::MAX_COORD`] from 0 (`check_finite_geometry`).
+pub(crate) fn out_of_range(n: &Node) -> bool {
+    let max = figcraft_geom::MAX_COORD;
+    let c = n.transform.as_coeffs();
+    let within = |v: f64| v.is_finite() && v.abs() <= max;
+    !(c.iter().all(|v| v.is_finite()) && within(c[4]) && within(c[5]) && within(n.width) && within(n.height))
+}
+
 /// Somebody else's gesture or text edit in progress, as an AI agent's command found it.
 struct Gesture {
     by: Option<String>,
@@ -190,6 +199,9 @@ impl Session {
             ds.end_preview();
         }
         let before = self.ds().ok().map(|d| (d.doc.clone(), d.selection.clone(), d.page, d.uid));
+        // The vector edit (its selected points) goes back with a refused edit too: a paste of points
+        // the geometry check refuses had selected the points it made.
+        let vector_edit_before = self.ds().ok().map(|d| d.vector_edit.clone());
         // The revision this command starts from (a command of its own, not a step of a group):
         // whatever it does is one change, and none when it fails.
         let revision_before = self.ds().ok().filter(|_| self.counts_alone()).map(DocState::revision_mark);
@@ -238,6 +250,9 @@ impl Session {
                     ds.doc = doc;
                     ds.selection = sel;
                     ds.page = page;
+                    if let Some(ve) = vector_edit_before {
+                        ds.vector_edit = ve;
+                    }
                     // The gesture the command was refused for goes on as it was.
                     if let Some(g) = &gesture {
                         ds.interaction.clone_from(&g.interaction);
@@ -308,17 +323,20 @@ impl Session {
     }
 
     /// A layer's position and size stay finite: infinity and NaN are written as `null`, so a file
-    /// holding them saves but can't be reopened. Refuse such an edit (it is rolled back).
+    /// holding them saves but can't be reopened. They also stay within
+    /// [`figcraft_geom::MAX_COORD`] of 0, the bound shapes are built within (F-11: a width of
+    /// 1e308 was stored). Refuse such an edit (it is rolled back).
     fn check_finite_geometry(&self, id: &str, before: &Option<(Arc<Document>, Vec<NodeId>, NodeId, u64)>) -> Result<()> {
         let Some((bdoc, _, _, uid)) = before else { return Ok(()) };
         let Some(ds) = self.docs.iter().find(|d| d.uid == *uid) else { return Ok(()) };
         if Arc::ptr_eq(&ds.doc, bdoc) {
             return Ok(());
         }
-        let broken = |n: &Node| !(n.transform.as_coeffs().iter().all(|c| c.is_finite()) && n.width.is_finite() && n.height.is_finite());
         let untouched = |n: &Node| bdoc.node_arc(n.id).zip(ds.doc.node_arc(n.id)).is_some_and(|(a, b)| Arc::ptr_eq(a, b));
-        match finite_check_candidates(&ds.doc, bdoc).iter().filter_map(|i| ds.doc.node(*i)).find(|n| broken(n) && !untouched(n)) {
-            Some(n) => Err(bad(id, format!("\"{}\" would get a position or size beyond the number range", n.name))),
+        match finite_check_candidates(&ds.doc, bdoc).iter().filter_map(|i| ds.doc.node(*i)).find(|n| out_of_range(n) && !untouched(n)) {
+            Some(n) => {
+                Err(bad(id, format!("\"{}\" would get a position or size beyond the range layers have (±{:e})", n.name, figcraft_geom::MAX_COORD)))
+            }
             None => Ok(()),
         }
     }
