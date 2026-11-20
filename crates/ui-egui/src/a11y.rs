@@ -124,6 +124,11 @@ pub struct Nav {
     opener: Option<(Id, LayerId)>,
     /// The name of the control with the keyboard when the last frame ended (`ui.inspect`).
     pub focused_name: String,
+    /// Where that control is (window points), when it has a place.
+    pub focused_rect: Option<Rect>,
+    /// Where the icon rail was drawn this frame, when it was: it is part of the layers' region
+    /// for the keyboard, but `ui.inspect` names it as itself.
+    pub rail_rect: Option<Rect>,
     /// A control the keyboard moved to: the panel that scrolls (the properties, the design
     /// context in the left panel's place) scrolls it into view.
     scroll_to: Option<Id>,
@@ -553,6 +558,7 @@ pub fn end(app: &mut FigApp, ctx: &Context) {
     }
     // What the frame ends with, for `ui.inspect` answered before the next one draws.
     nav.focused_name = focused_name(ctx);
+    nav.focused_rect = ctx.memory(|m| m.focused()).and_then(|f| ctx.read_response(f)).map(|r| r.rect);
 }
 
 /// Dialogs, the palette, the presenter and the home screen have no regions.

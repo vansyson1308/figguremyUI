@@ -512,7 +512,8 @@ pub(crate) fn draft(ui: &mut Ui, id: Id, label: &str, text: &mut String, rows: u
     if focus {
         // A form just opened: the keyboard goes to its first field, brought into view.
         r.request_focus();
-        r.scroll_to_me(None);
+        // The whole focus ring, not only the field, comes into view (QC2-06).
+        crate::a11y::scroll_ring_into_view(ui, r.rect.expand(6.0));
     }
     ui.add_space(4.0);
     r
@@ -618,7 +619,9 @@ pub(crate) fn layer_links(app: &mut FigApp, ui: &mut Ui, cx: &Cx, layers: &[Node
                         quiet(ui, &missing);
                     }
                 }
-                if unlink && icons::button(ui, Icon::Close, 16.0, false, tr("Remove this link")).clicked() {
+                // Named after what it takes away: several in a row aren't heard alike (QC2-11).
+                let what = trf("Remove the link to {name}", &[("name", &text)]);
+                if unlink && icons::button(ui, Icon::Close, 16.0, false, &what).clicked() {
                     gone = Some(*id);
                 }
             });

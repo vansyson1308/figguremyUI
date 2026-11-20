@@ -15,7 +15,7 @@ use super::{
     stage, strong,
 };
 use crate::FigApp;
-use crate::i18n::{tr, tr_noop, trn};
+use crate::i18n::{tr, tr_noop, trf, trn};
 use crate::widgets;
 
 /// The brief's text answers: the command's field and the question the panel asks for it.
@@ -168,6 +168,12 @@ fn element(app: &mut FigApp, ui: &mut Ui, cx: &Cx, r: &RequiredElement, form: &m
         if let Some(gone) = layer_links(app, ui, cx, &r.nodes, true) {
             let next: Vec<NodeId> = r.nodes.iter().copied().filter(|n| *n != gone).collect();
             act(app, &r.id, "design.required.set", json!({"id": r.id, "nodes": next}));
+        }
+        // Hidden in the file, shown in a declared state: a fact, not a problem.
+        for (id, node, state) in figcraft_engine::design::shown_in_states(&cx.doc) {
+            if id == r.id {
+                quiet(ui, &trf("{layer} shows in {state}", &[("layer", &cx.name(node).unwrap_or_default()), ("state", &state)]));
+            }
         }
     }
     let mut more = r.nodes.clone();

@@ -67,6 +67,8 @@ fn run(app: &mut FigApp, id: Option<&str>) {
     let params = id.map_or_else(|| json!({}), |id| json!({"id": id}));
     if let Some(result) = act(app, id.unwrap_or("scenarios"), "proto.scenario.run", params) {
         keep(app, result, |r, ran| r.scenario_run = Some(ran));
+        // What the scenarios show of the declared states goes with them.
+        super::states::check_states(app);
     }
 }
 
@@ -261,6 +263,7 @@ fn flow_check(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
             && let Some(result) = act(app, "flow", "proto.check", json!({}))
         {
             keep(app, result, |r, ran| r.flow = Some(ran));
+            super::states::check_states(app);
         }
         refusal_for(app, ui, "flow");
     });

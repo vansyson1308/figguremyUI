@@ -3,8 +3,11 @@
 //! and whether the prototype gets there. Nothing is inferred: what isn't declared isn't listed,
 //! and with nothing declared the panel says that.
 //!
-//! What is designed and reachable comes from `proto.state.list`, asked again only when the file
-//! changed; every edit runs a `proto.state.*` command.
+//! What is designed and reachable comes from `proto.state.list`, which replays the stored
+//! scenarios: like the flow check it is asked for (the first time the section shows a file,
+//! "Check the states again", running the scenarios, checking the flow), kept by file, and marked
+//! as being about an earlier state once the file changes; it is never asked again by itself on a
+//! frame or an edit. Every edit runs a `proto.state.*` command.
 
 use egui::Ui;
 use figcraft_doc::NodeId;
@@ -13,8 +16,8 @@ use serde_json::{Value, json};
 
 use super::records::submit;
 use super::{
-    Cx, Form, FormEnd, FormKind, Ran, act, authorship, body, button, chip, choice, draft, entry, flow_row, form_end, go_to, go_to_entry, heading,
-    link, pad, quiet, refusal_for, strong,
+    Cx, Form, FormEnd, FormKind, act, authorship, body, button, chip, choice, draft, entry, flow_row, form_end, go_to, go_to_entry, heading, link,
+    pad, quiet, refusal_for, strong,
 };
 use crate::FigApp;
 use crate::i18n::{tr, tr_noop, trf};
@@ -40,19 +43,24 @@ fn key_of(st: &DeclaredState) -> (String, String) {
     (st.kind.id().to_string(), st.name.clone())
 }
 
-/// What `proto.state.list` says now, asked again only when the file changed.
-fn listed(app: &mut FigApp, cx: &Cx) -> Value {
-    let kept = app.ui.context.results(cx.uid).and_then(|r| r.states.as_ref()).filter(|ran| !ran.stale(&cx.doc));
-    if let Some(ran) = kept {
-        return ran.result.clone();
-    }
+/// Ask `proto.state.list` now and keep its answer for the file in front.
+pub(super) fn check_states(app: &mut FigApp) {
     // A read, run directly as `design.forNode` is (see `for_selected`).
-    let Some(spec) = figcraft_engine::find_command("proto.state.list") else { return Value::Null };
-    let Ok(result) = (spec.run)(&mut app.session, &json!({})) else { return Value::Null };
-    if let Some(ran) = Ran::new(app, result.clone()) {
-        app.ui.context.results_mut(cx.uid).states = Some(ran);
+    let Some(spec) = figcraft_engine::find_command("proto.state.list") else { return };
+    let Ok(result) = (spec.run)(&mut app.session, &json!({})) else { return };
+    super::keep(app, result, |r, ran| r.states = Some(ran));
+}
+
+/// What `proto.state.list` said last about this file, and whether the file changed since; asked
+/// the first time the section shows the file.
+fn listed(app: &mut FigApp, cx: &Cx) -> (Value, bool) {
+    if app.ui.context.results(cx.uid).and_then(|r| r.states.as_ref()).is_none() {
+        check_states(app);
     }
-    result
+    match app.ui.context.results(cx.uid).and_then(|r| r.states.as_ref()) {
+        Some(ran) => (ran.result.clone(), ran.stale(&cx.doc)),
+        None => (Value::Null, false),
+    }
 }
 
 /// The facts the list gives about declaration `st`.
@@ -76,7 +84,16 @@ pub(super) fn show(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
             "The states each screen has where time passes: the first time, nothing yet, waiting, something going wrong, coming back, and how it ends. Say which a screen has and what shows each; the checks compare that with the file.",
         ),
     );
-    let listed = listed(app, cx);
+    let (listed, stale) = listed(app, cx);
+    pad(ui, |ui| {
+        if stale {
+            quiet(ui, tr("The file has changed since the states were checked: what follows is from before."));
+            ui.add_space(4.0);
+        }
+        if !cx.design.states.is_empty() && button(ui, tr("Check the states again")) {
+            check_states(app);
+        }
+    });
     let mut form = app.ui.context.form.take();
     let editing = |form: &Option<Form>, frame: NodeId, key: Option<(String, String)>| {
         form.as_ref().is_some_and(|f| f.kind == FormKind::State(frame, key.clone()))
@@ -97,9 +114,18 @@ pub(super) fn show(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
             quiet(ui, tr("No states are declared, so missing states aren't checked."));
             ui.add_space(4.0);
         }
-        match selected_screen(cx) {
-            Some(frame) if editing(&form, frame, None) => state_form(app, ui, cx, &mut form),
-            Some(frame) => {
+        // A declaration being written stays with its screen whatever is selected now: the
+        // selection only says what shows it.
+        let writing = form.as_ref().and_then(|f| match f.kind {
+            FormKind::State(frame, None) => Some(frame),
+            _ => None,
+        });
+        match (writing, selected_screen(cx)) {
+            (Some(frame), _) => {
+                strong(ui, &format!("“{}”", cx.name(frame).unwrap_or_default()));
+                state_form(app, ui, cx, &mut form);
+            }
+            (None, Some(frame)) => {
                 strong(ui, &format!("“{}”", cx.name(frame).unwrap_or_default()));
                 if button(ui, tr("Declare a state of this screen")) {
                     let mut f = Form::new(FormKind::State(frame, None));
@@ -108,7 +134,7 @@ pub(super) fn show(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
                     form = Some(f);
                 }
             }
-            None => {
+            (None, None) => {
                 quiet(ui, tr("Select a screen, or a layer in it, to declare one of its states."));
             }
         }
@@ -144,11 +170,25 @@ fn state(app: &mut FigApp, ui: &mut Ui, cx: &Cx, st: &DeclaredState, facts: Opti
     if !st.reason.is_empty() {
         body(ui, &st.reason);
     }
+    if facts.is_none() {
+        ui.add_space(2.0);
+        quiet(ui, tr("Not checked yet: check the states again to see whether it is designed and reached."));
+    }
     if let Some(f) = facts {
         ui.add_space(2.0);
+        let screen_only = f["screenReachable"] == json!(true);
         flow_row(ui, |ui| {
             chip(ui, if f["designed"] == json!(true) { tr("Designed") } else { tr("Not designed") });
-            chip(ui, if f["reachable"] == json!(true) { tr("Reachable") } else { tr("Nothing gets there") });
+            chip(
+                ui,
+                if f["reachable"] == json!(true) {
+                    tr("Reachable")
+                } else if screen_only {
+                    tr("Only its screen is reached")
+                } else {
+                    tr("Nothing gets there")
+                },
+            );
         });
         if let Some(why) = f["notDesigned"].as_str() {
             quiet(ui, why);
@@ -163,7 +203,7 @@ fn state(app: &mut FigApp, ui: &mut Ui, cx: &Cx, st: &DeclaredState, facts: Opti
                     }
                 }
             });
-        } else if f["reachable"] == json!(true) {
+        } else if screen_only {
             quiet(ui, tr("Its screen can be reached; no stored scenario shows the state itself."));
         }
     }
