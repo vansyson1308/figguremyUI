@@ -893,36 +893,37 @@ fn may_read_differently(text: &str) -> bool {
         let s = std::str::from_utf8(digits).ok()?;
         u32::from_str_radix(s, 16).ok()
     };
-    let (mut i, mut depth, mut in_string) = (0usize, 0usize, false);
+    let (mut i, mut depth) = (0usize, 0usize);
     while let Some(&c) = b.get(i) {
-        if in_string {
-            match c {
-                b'"' => in_string = false,
-                b'\\' if b.get(i + 1) == Some(&b'u') => {
-                    match hex4(i + 2) {
+        match c {
+            b'"' => {
+                // A string, to its closing quote: only its escapes are looked at.
+                i += 1;
+                loop {
+                    let Some(at) = next_quote_or_escape(b, i) else { return false };
+                    if b.get(at) == Some(&b'"') {
+                        i = at + 1;
+                        break;
+                    }
+                    if b.get(at + 1) != Some(&b'u') {
+                        i = at + 2;
+                        continue;
+                    }
+                    match hex4(at + 2) {
                         Some(0xD800..=0xDBFF) => {
-                            let paired = b.get(i + 6) == Some(&b'\\') && b.get(i + 7) == Some(&b'u') && matches!(hex4(i + 8), Some(0xDC00..=0xDFFF));
+                            let paired =
+                                b.get(at + 6) == Some(&b'\\') && b.get(at + 7) == Some(&b'u') && matches!(hex4(at + 8), Some(0xDC00..=0xDFFF));
                             if !paired {
                                 return true;
                             }
-                            i += 12;
+                            i = at + 12;
                         }
                         Some(0xDC00..=0xDFFF) => return true,
-                        _ => i += 6,
+                        _ => i = at + 6,
                     }
-                    continue;
                 }
-                b'\\' => {
-                    i += 2;
-                    continue;
-                }
-                _ => {}
+                continue;
             }
-            i += 1;
-            continue;
-        }
-        match c {
-            b'"' => in_string = true,
             b'[' | b'{' => {
                 depth += 1;
                 if depth >= NESTING_TO_CHECK {
@@ -932,12 +933,18 @@ fn may_read_differently(text: &str) -> bool {
             b']' | b'}' => depth = depth.saturating_sub(1),
             b'-' | b'0'..=b'9' => {
                 let start = i;
-                while matches!(b.get(i), Some(b'0'..=b'9' | b'-' | b'+' | b'.' | b'e' | b'E')) {
+                let mut exponent = false;
+                while let Some(&d) = b.get(i) {
+                    match d {
+                        b'0'..=b'9' | b'-' | b'+' | b'.' => {}
+                        b'e' | b'E' => exponent = true,
+                        _ => break,
+                    }
                     i += 1;
                 }
-                let number = text.get(start..i).unwrap_or("");
                 // A long number may overflow; one with an exponent may be past f64 (1e400).
-                if number.len() > 300 || (number.contains(['e', 'E']) && number.parse::<f64>().map_or(true, |x| !x.is_finite() || x.abs() > 1e300)) {
+                let past_f64 = || text.get(start..i).and_then(|n| n.parse::<f64>().ok()).is_none_or(|x| !x.is_finite() || x.abs() > 1e300);
+                if i - start > 300 || (exponent && past_f64()) {
                     return true;
                 }
                 continue;
@@ -947,6 +954,27 @@ fn may_read_differently(text: &str) -> bool {
         i += 1;
     }
     false
+}
+
+/// Where the first `"` or `\` of `b` from `i` on is, looking at 8 bytes at a time (a context is
+/// mostly text, and in text only those two matter).
+fn next_quote_or_escape(b: &[u8], mut i: usize) -> Option<usize> {
+    const ONES: u64 = 0x0101_0101_0101_0101;
+    const HIGHS: u64 = 0x8080_8080_8080_8080;
+    while let Some(chunk) = b.get(i..i + 8) {
+        let mut w = [0u8; 8];
+        w.copy_from_slice(chunk);
+        let x = u64::from_le_bytes(w);
+        // A byte of `q` or `s` is zero where `x` has a quote or a backslash; the first such byte
+        // is the lowest one whose high bit `hit` sets.
+        let (q, s) = (x ^ (ONES * u64::from(b'"')), x ^ (ONES * u64::from(b'\\')));
+        let hit = ((q.wrapping_sub(ONES) & !q) | (s.wrapping_sub(ONES) & !s)) & HIGHS;
+        if hit != 0 {
+            return Some(i + (hit.trailing_zeros() / 8) as usize);
+        }
+        i += 8;
+    }
+    b.get(i..)?.iter().position(|&c| c == b'"' || c == b'\\').map(|k| i + k)
 }
 
 /// What reading the stored context left out or cut, taken out of it so it is reported once.
@@ -1451,7 +1479,7 @@ mod tests {
 
     use super::{
         Brief, Decision, DecisionStatus, DesignContext, EndState, EndStateStatus, Finding, MAX_ENTRIES, MAX_TEXT, NESTING_TO_CHECK, Scenario,
-        ShownBy, Stage, THROUGH_VALUE, document_from_json, may_read_differently, take_load_issues,
+        ShownBy, Stage, THROUGH_VALUE, document_from_json, may_read_differently, next_quote_or_escape, take_load_issues,
     };
     use crate::{Document, NodeId};
 
@@ -1689,6 +1717,27 @@ mod tests {
         );
         let shown = DesignContext::from_stored_text(&texts[7]).and_then(|c| c.states.first().and_then(|s| s.shown_by.clone()));
         assert_eq!(shown, Some(ShownBy::Node { node: NodeId(3) }), "the last `node`, as a `Value` keeps it");
+    }
+
+    #[test]
+    fn the_next_quote_or_escape_is_found_wherever_it_is() {
+        // Against a byte-by-byte search, from every place, with the two bytes at every place in
+        // and across the 8-byte steps, next to text of other bytes (é, 0x80 and up, 0x21, 0x5D).
+        let filler = "aé!]\u{7f}xyz".as_bytes();
+        for len in 0..40 {
+            for at in 0..=len {
+                for mark in *b"\"\\" {
+                    let mut b: Vec<u8> = filler.iter().copied().cycle().take(len).collect();
+                    if at < len {
+                        b[at] = mark;
+                    }
+                    for from in 0..=len {
+                        let naive = b.get(from..).and_then(|r| r.iter().position(|&c| c == b'"' || c == b'\\')).map(|k| from + k);
+                        assert_eq!(next_quote_or_escape(&b, from), naive, "{b:?} from {from}");
+                    }
+                }
+            }
+        }
     }
 
     #[test]
