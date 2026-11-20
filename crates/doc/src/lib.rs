@@ -23,6 +23,7 @@ pub mod library;
 pub mod node;
 pub mod props;
 pub mod proto;
+pub mod shared;
 pub mod styles;
 pub mod text;
 pub mod vector;
@@ -205,10 +206,11 @@ pub struct Document {
     #[serde(skip)]
     dirty: Dirty,
     next_id: IdAlloc,
+    /// Shared with the copies of the document until one changes them ([`shared::Shared`]).
     #[serde(default)]
-    pub styles: Vec<Style>,
+    pub styles: shared::Shared<Vec<Style>>,
     #[serde(default)]
-    pub variables: Variables,
+    pub variables: shared::Shared<Variables>,
     /// Images by content hash; serialized separately by the format crate.
     #[serde(skip)]
     pub images: BTreeMap<String, ImageData>,
@@ -288,8 +290,8 @@ impl Document {
             nodes: imbl::OrdMap::new(),
             dirty: Dirty::default(),
             next_id: IdAlloc { next: 1, client: 0 },
-            styles: Vec::new(),
-            variables: Variables::default(),
+            styles: shared::Shared::default(),
+            variables: shared::Shared::default(),
             images: BTreeMap::new(),
             current_page: None,
             document_colors: Vec::new(),

@@ -443,7 +443,7 @@ fn styled() -> Document {
         kind,
         bound: Default::default(),
     };
-    doc.styles = vec![
+    *doc.styles = vec![
         style("s-text", "Heading", StyleKind::Text { style: heading.clone(), paragraph: Default::default() }),
         style("s-brand", "Brand/Primary", StyleKind::Paint { paints: vec![solid(0.25, 0.5, 1.0)] }),
         style("s-unused", "Brand/Unused", StyleKind::Paint { paints: vec![solid(1.0, 0.0, 0.0), solid(0.0, 1.0, 0.0)] }),
@@ -511,7 +511,7 @@ fn a_styled_layers_fill_variable_survives_a_round_trip() {
     let dark = VariableValue::Color(Color::new(0.8, 0.9, 1.0, 1.0));
     doc.variables.variables =
         vec![var("v-accent", "Accent color", "c-theme", VariableType::Color, &[("m-light", VariableValue::Color(light)), ("m-dark", dark)])];
-    doc.styles = vec![Style {
+    *doc.styles = vec![Style {
         id: "s-accent".into(),
         name: "Accent".into(),
         description: String::new(),

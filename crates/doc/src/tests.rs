@@ -1114,7 +1114,7 @@ fn the_colour_walker_visits_calculation_literals() {
     let mut v = vars_with_colours(&[("base", red(), red())]);
     add(&mut v, "mx", mix(lit("#804020"), src("base"), 0.5));
     let mut doc = Document::new("x");
-    doc.variables = v;
+    doc.variables = v.into();
     doc.map_colors(|c| c.with_alpha(0.5));
     let mx = doc.variables.variables.iter().find(|x| x.id == "mx").unwrap();
     let VariableValue::ColorMix { from, .. } = &mx.values["light"] else { panic!("still the mix") };

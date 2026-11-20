@@ -124,7 +124,7 @@ fn document_level_data_round_trips() {
     let mut b = a.document().clone();
     b.name = "Renamed".into();
     b.document_colors.push(Color::from_rgb8_const(9, 9, 9));
-    b.styles = vec![style("s1"), style("s2"), style("s3")];
+    *b.styles = vec![style("s1"), style("s2"), style("s3")];
     b.comments.push(Comment {
         id: 7,
         page,
