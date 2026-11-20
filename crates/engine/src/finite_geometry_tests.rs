@@ -39,6 +39,34 @@ fn huge_scale_is_refused_and_the_file_still_reopens() {
     assert_roundtrips(&s);
 }
 
+/// F-11: a finite but huge position or size (a width of 1e308) was stored. It is refused, naming
+/// the parameter, from `node.create`, `node.set` and the shape commands; a value that isn't a
+/// number is refused too instead of quietly becoming 0. Values at the bound still go through.
+#[test]
+fn geometry_past_the_range_is_refused_not_stored() {
+    let mut s = Session::new();
+    let r = rect(&mut s);
+    let before = s.doc().unwrap().clone();
+    for (key, v) in [("width", json!(1e308)), ("height", json!(2e9)), ("x", json!(-1e12)), ("y", json!(1e300)), ("width", json!("NaN"))] {
+        let e = s.execute("node.set", &json!({"ids": [r], "props": {key: v}})).unwrap_err();
+        assert_eq!(e.detail()["param"], key, "node.set {key} {v}: {e}");
+        let e = s.execute("node.create", &json!({"type": "rectangle", key: v})).unwrap_err();
+        assert_eq!(e.detail()["param"], key, "node.create {key} {v}: {e}");
+        assert!(s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10, key: v})).is_err(), "shape.rectangle {key} {v}");
+    }
+    assert_eq!(*s.doc().unwrap(), before, "nothing changed");
+    let e = s.execute("node.set", &json!({"ids": [r], "props": {"width": 1e308}})).unwrap_err().to_string();
+    assert!(e.contains("out of range") && e.contains("1e9"), "{e}");
+    // Two moves that each stay in range but end past it.
+    s.execute("transform.move", &json!({"ids": [r], "dx": 9e8, "dy": 0})).unwrap();
+    assert!(s.execute("transform.move", &json!({"ids": [r], "dx": 9e8, "dy": 0})).is_err(), "a move that ends past the range is refused");
+    // At the bound is fine.
+    s.execute("node.set", &json!({"ids": [r], "props": {"x": -1e9, "width": 1e9}})).unwrap();
+    let n = s.doc().unwrap().node(r).unwrap();
+    assert_eq!((n.width, n.transform.as_coeffs()[4]), (1e9, -1e9));
+    assert_roundtrips(&s);
+}
+
 /// A settled document of `groups` groups of `per` rectangles each, and one of the rectangles.
 fn large(groups: usize, per: usize) -> (figcraft_doc::Document, crate::NodeId) {
     use figcraft_doc::NodeKind;

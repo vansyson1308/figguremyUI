@@ -282,19 +282,19 @@ pub fn create(s: &mut Session, p: &Value) -> Result<Value> {
     }
     // X and Y are in the frame's space: a group parent has none of its own.
     let space = if pn.kind.bounds_follow_children() { doc.frame_relative(parent) } else { figcraft_geom::Affine::IDENTITY };
-    let x = num_or(p, "x", 0.0);
-    let y = num_or(p, "y", 0.0);
+    // Positions and sizes are finite and in range, or refused (F-11).
+    let [x, y, width, height] = ["x", "y", "width", "height"].map(|k| crate::params::opt_geometry(cmd, p, k));
+    let (x, y, width, height) = (x?.unwrap_or(0.0), y?.unwrap_or(0.0), width?, height?);
     let (mut w, mut h) = match base {
-        "Line" | "Arrow" => (num_or(p, "width", 100.0), 0.0),
-        "Text" => (num_or(p, "width", 0.0), num_or(p, "height", 0.0)),
-        "Frame" | "Component" => (num_or(p, "width", 100.0), num_or(p, "height", 100.0)),
-        "Section" => (num_or(p, "width", 400.0), num_or(p, "height", 300.0)),
-        _ => (num_or(p, "width", 100.0), num_or(p, "height", 100.0)),
+        "Line" | "Arrow" => (width.unwrap_or(100.0), 0.0),
+        "Text" => (width.unwrap_or(0.0), height.unwrap_or(0.0)),
+        "Section" => (width.unwrap_or(400.0), height.unwrap_or(300.0)),
+        _ => (width.unwrap_or(100.0), height.unwrap_or(100.0)),
     };
     // Vectors: path data or points define the shape and its box. `width`/`height`, when asked
     // for, scale the geometry: both sides independently, one side proportionally.
     let mut offset = (0.0, 0.0);
-    let asked = (num(p, "width"), num(p, "height"));
+    let asked = (width, height);
     if let NodeKind::Vector { network } = &mut kind {
         if let Some(d) = string(p, "path") {
             let shape = path_network(cmd, &d, asked.0, asked.1)?;
@@ -369,13 +369,15 @@ pub fn create(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let index = crate::params::opt_index(cmd, p, "index")?;
     doc.insert(node, parent, index)?;
+    let mut warnings = Vec::new();
     if let Some(Value::Object(props)) = get(p, "props") {
         super::props::apply(cmd, doc, nid, props)?;
+        warnings.extend(crate::fonts::props_family_warning(props));
     }
     if boolean(p, "select").unwrap_or(true) {
         ds.selection = vec![nid];
     }
-    Ok(json!({"id": nid}))
+    if warnings.is_empty() { Ok(json!({"id": nid})) } else { Ok(json!({"id": nid, "warnings": warnings})) }
 }
 
 fn frame_create(s: &mut Session, p: &Value) -> Result<Value> {

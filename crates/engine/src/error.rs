@@ -24,6 +24,10 @@ pub enum EngineError {
     /// A path outside the automation roots ([`crate::file_access`]).
     #[error("{0}")]
     PathRejected(String),
+    /// Writing `path` failed because the folder it goes in, `folder`, doesn't exist (`file`: a
+    /// file is where that folder would be). A write never creates folders (F-15).
+    #[error("{}", no_folder_text(.path, .folder, *.file))]
+    NoFolder { path: String, folder: String, file: bool },
     /// The command can't do anything where it was called (the prototype player in a session
     /// without a window): refused instead of answering as if it had.
     #[error("`{cmd}` is not supported here: {msg}")]
@@ -97,6 +101,16 @@ fn other_author_text(cmd: &str, label: &str, author: &str) -> String {
         _ => format!(
             "`{cmd}` would discard \"{label}\", made by {author}, not by you, with the rest of the unsaved work or undo history that isn't yours: nothing was changed. Leave the file as it is, or ask them (they can save, revert or close it themselves)"
         ),
+    }
+}
+
+fn no_folder_text(path: &str, folder: &str, file: bool) -> String {
+    if file {
+        format!("{path} wasn't written: {folder} is a file, not a folder. Choose a path in an existing folder")
+    } else {
+        format!(
+            "{path} wasn't written: the folder {folder} doesn't exist (folders aren't created when saving or exporting). Create it first, or choose a path in an existing folder"
+        )
     }
 }
 
@@ -180,6 +194,7 @@ impl EngineError {
             EngineError::NoNode(_) => "noSuchNode",
             EngineError::Other(_) => "failed",
             EngineError::PathRejected(_) => "pathRejected",
+            EngineError::NoFolder { .. } => "noSuchFolder",
             EngineError::Unsupported { .. } => "unsupportedHere",
             EngineError::Conflict(_) => "conflict",
             EngineError::OtherAuthor { .. } => "otherAuthor",
@@ -224,6 +239,10 @@ impl EngineError {
                 }
             }
             EngineError::NoSuchDocument(name) => d["document"] = json!(name),
+            EngineError::NoFolder { path, folder, .. } => {
+                d["path"] = json!(path);
+                d["folder"] = json!(folder);
+            }
             EngineError::NoNode(id) => d["node"] = json!(id),
             EngineError::Conflict(c) => {
                 d["command"] = json!(c.cmd);

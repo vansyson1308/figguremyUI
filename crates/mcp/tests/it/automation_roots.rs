@@ -46,6 +46,38 @@ fn text(r: &Value) -> String {
     r["content"][0]["text"].as_str().unwrap_or_default().to_string()
 }
 
+/// F-15: saving into a folder that doesn't exist was the system's bare "No such file or directory
+/// (os error 2)". It is a structured error naming the folder, inside a write root and without
+/// roots, and no folder is created.
+#[test]
+fn saving_into_a_missing_folder_names_the_folder() {
+    let d = Dirs::new("nofolder");
+    for confined in [true, false] {
+        let mut s = if confined { d.server() } else { Server::headless() };
+        assert_eq!(call(&mut s, "create_node", json!({"type": "frame", "width": 40, "height": 20}))["isError"], false);
+        let missing = d.p("out/no/such");
+        let r = call(&mut s, "save_file", json!({"path": format!("{missing}/a.figcraft")}));
+        assert_eq!(r["isError"], true, "{r}");
+        let e = &r["structuredContent"]["error"];
+        assert_eq!(e["code"], "noSuchFolder", "{r}");
+        assert_eq!(e["folder"], json!(missing), "{r}");
+        let msg = e["message"].as_str().unwrap();
+        assert!(msg.contains(&format!("the folder {missing} doesn't exist")) && !msg.contains("os error"), "{msg}");
+        assert!(!d.0.join("out/no").exists(), "no folder was created");
+        // A file where the folder would be.
+        std::fs::write(d.0.join("out/plain"), b"x").unwrap();
+        let r = call(&mut s, "save_file", json!({"path": d.p("out/plain/a.figcraft")}));
+        if confined {
+            // Resolving the path inside the root meets the file first.
+            assert_eq!(r["isError"], true, "{r}");
+        } else {
+            assert_eq!(r["structuredContent"]["error"]["code"], "noSuchFolder", "{r}");
+            assert!(text(&r).contains("is a file, not a folder"), "{r}");
+        }
+        std::fs::remove_file(d.0.join("out/plain")).unwrap();
+    }
+}
+
 #[test]
 fn writes_go_only_into_the_write_root() {
     let d = Dirs::new("write");

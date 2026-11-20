@@ -7,9 +7,16 @@
 //! `--flag` is unknown and stops the app at startup (#836): a mistyped root flag must never leave
 //! the app running unconfined. After a bare `--`, every argument is a file.
 
+/// What `--help` prints, and what an unknown option prints after naming it.
+pub const USAGE: &str =
+    "Usage: figguremyui [--control PORT] [--automation-read-root DIR]... [--automation-write-root DIR]... [FILE | figguremyui://join?...]...
+       figguremyui --help | --version";
+
 /// What the app was started with.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Args {
+    /// `--help` or `-h`: print [`USAGE`] and start nothing (F-16).
+    pub help: bool,
     /// `--control <port>` (or `--control=<port>`): the JSON-lines control server.
     pub control: Option<u16>,
     pub files: Vec<String>,
@@ -73,6 +80,8 @@ pub fn parse(args: &[String]) -> Args {
         };
         if let Some(roots) = roots {
             roots.push(inline.or_else(|| it.next().cloned()).unwrap_or_default());
+        } else if a == "--help" || a == "-h" {
+            out.help = true;
         } else if flag == "--control" {
             out.control = inline.or_else(|| it.next().cloned()).and_then(|p| p.parse().ok());
         } else if is_invite(a) {

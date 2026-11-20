@@ -12,5 +12,7 @@ pub use access::Forward;
 mod exec;
 #[cfg(test)]
 pub(crate) use exec::finite_check_candidates;
+#[cfg(test)]
+pub(crate) use exec::out_of_range;
 mod new;
 mod undo;

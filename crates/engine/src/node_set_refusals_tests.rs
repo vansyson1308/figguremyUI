@@ -79,9 +79,11 @@ fn a_font_style_draws_in_the_nearest_face_and_says_so_when_it_differs() {
     let w = out["warnings"][0].as_str().unwrap();
     assert!(w.contains(&family) && w.contains("`Black`") && w.contains("nearest"), "{w}");
     assert_eq!(s.doc().unwrap().node(t).unwrap().kind.text().unwrap().spans()[0].2.font_style, "Black");
-    // A family that isn't installed keeps any style name without a word (files from elsewhere name theirs).
+    // A family that isn't installed keeps any style name without a word about the style (files from
+    // elsewhere name theirs); the missing family itself is named (F-13).
     let out = ex(&mut s, "node.set", json!({"ids": [t], "props": {"fontFamily": "No Such Family 7f3a", "fontStyle": "Hairline"}}));
-    assert!(out.get("warnings").is_none(), "{out}");
+    let w = out["warnings"].as_array().unwrap();
+    assert!(w.len() == 1 && w[0].as_str().unwrap().contains("`No Such Family 7f3a`") && !w[0].as_str().unwrap().contains("Hairline"), "{out}");
 }
 
 #[test]

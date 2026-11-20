@@ -549,7 +549,7 @@ fn apply_geometry(
         }
         "width" | "height" | "w" | "h" if props.contains_key("path") => {}
         "x" | "y" => {
-            let val = f64_of(v).ok_or_else(|| bad(cmd, format!("`{k}` must be a number")))?;
+            let val = crate::params::geometry_of(cmd, k, v)?;
             let val = val + if k == "x" { path_offset.0 } else { path_offset.1 };
             // X/Y are the node's own origin (its rotated top-left for rotated nodes), in the
             // frame it is in (groups have no space of their own).
@@ -566,7 +566,7 @@ fn apply_geometry(
             doc.get_mut(id)?.transform = space.inverse() * Affine::new([c[0], c[1], c[2], c[3], tx, ty]);
         }
         "width" | "height" | "w" | "h" => {
-            let val = f64_of(v).ok_or_else(|| bad(cmd, format!("`{k}` must be a number")))?.max(0.0);
+            let val = crate::params::geometry_of(cmd, k, v)?.max(0.0);
             let is_w = k.starts_with('w');
             // With the proportions locked (the Layout panel's link) and only one side set, the
             // other side follows the node's ratio; both sides in one `node.set` stay as typed.

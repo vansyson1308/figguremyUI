@@ -40,6 +40,23 @@ pub fn req_num(cmd: &str, p: &Value, key: &str) -> Result<f64> {
     num(p, key).ok_or_else(|| bad_param(cmd, key, format!("`{key}` must be a number")))
 }
 
+/// A layer's position or size given as `key` (`x`, `y`, `width`, `height`, …): a finite number no
+/// further than [`figcraft_geom::MAX_COORD`] from 0, the bound shapes are built within. Anything
+/// else is refused rather than stored (F-11): a width of 1e308 saved, then broke what measured it.
+pub fn geometry_of(cmd: &str, key: &str, v: &Value) -> Result<f64> {
+    let max = figcraft_geom::MAX_COORD;
+    match f64_of(v) {
+        Some(x) if x.abs() <= max => Ok(x),
+        Some(_) => Err(bad_param(cmd, key, format!("`{key}` is out of range: positions and sizes lie within ±{max:e}"))),
+        None => Err(bad_param(cmd, key, format!("`{key}` must be a finite number"))),
+    }
+}
+
+/// [`geometry_of`] for `key` in `p`, when it is given (not null).
+pub fn opt_geometry(cmd: &str, p: &Value, key: &str) -> Result<Option<f64>> {
+    get(p, key).map(|v| geometry_of(cmd, key, v)).transpose()
+}
+
 /// A list index from params: a whole number, never negative (no casting -1 to 0).
 pub fn req_index(cmd: &str, p: &Value, key: &str) -> Result<usize> {
     let k = req_num(cmd, p, key)?;
