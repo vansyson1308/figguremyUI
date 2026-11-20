@@ -13,7 +13,7 @@
 //! passes the limits is cut, and both are reported ([`take_load_issues`]) instead of failing the
 //! file, whose layers don't depend on it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
@@ -1127,18 +1127,38 @@ impl DesignContext {
     }
 
     /// Make the declared states and required elements of a stored context what the commands
-    /// would have made, so each can be edited and removed: a required element without an id, or
-    /// with one another element has already, gets a fresh id; an `other` state without a name
-    /// is named from its reason (else "unnamed"); a second declaration of the same frame, kind
-    /// and name is dropped (the first is kept); a list of screens or layers names each once.
-    /// Returns what was changed, for the loader to report.
+    /// would have made, so each can be edited and removed. Ids compare without case or
+    /// surrounding space: the first element with an id keeps it (as the commands write it, in
+    /// capitals), and one without an id, or with one an earlier element has, gets a fresh id no
+    /// element has. Declarations that are named (any kind but `other`, or an `other` with a name)
+    /// come first: a second one of the same frame, kind and name is dropped (the first is kept).
+    /// Then an `other` without a name is named from its reason (else "unnamed"), with a number
+    /// added when a declaration of its frame and kind has that name already, so it never pushes
+    /// out one a person named. A list of screens or layers names each once. Returns what was
+    /// changed, for the loader to report.
     fn repair(&mut self) -> Vec<String> {
         let mut said = Vec::new();
-        let mut ids: Vec<String> = Vec::new();
+        let given: Vec<String> = self.brief.required.iter().map(|r| r.id.trim().to_ascii_uppercase()).collect();
+        // The ids that stay: the first element with each.
+        let mut taken: BTreeSet<String> = BTreeSet::new();
+        let keeps: Vec<bool> = given.iter().map(|id| !id.is_empty() && taken.insert(id.clone())).collect();
         let mut twice = 0usize;
-        for i in 0..self.brief.required.len() {
-            let id = self.brief.required.get(i).map(|r| r.id.trim().to_ascii_uppercase()).unwrap_or_default();
-            let fresh = if id.is_empty() || ids.contains(&id) { Some(self.next_id("R")) } else { None };
+        for (i, id) in given.into_iter().enumerate() {
+            let fresh = if keeps.get(i).copied().unwrap_or(false) {
+                None
+            } else {
+                // `raise_counters` has put the counter past every id it can read as a number; the
+                // loop guards against the others. Each id taken blocks one candidate at most.
+                let mut new = self.next_id("R");
+                for _ in 0..taken.len() {
+                    if !taken.contains(&new) {
+                        break;
+                    }
+                    new = self.next_id("R");
+                }
+                taken.insert(new.clone());
+                Some(new)
+            };
             let Some(r) = self.brief.required.get_mut(i) else { continue };
             match fresh {
                 Some(new) => {
@@ -1151,7 +1171,6 @@ impl DesignContext {
                 }
                 None => r.id = id,
             }
-            ids.push(r.id.clone());
             let (screens, nodes) = (r.screens.len(), r.nodes.len());
             dedup(&mut r.screens);
             dedup(&mut r.nodes);
@@ -1162,19 +1181,12 @@ impl DesignContext {
         if twice > 0 {
             said.push(format!("{twice} required element(s) named a layer twice; each is named once"));
         }
-        let mut named = 0usize;
-        for st in self.states.iter_mut().filter(|st| st.kind == StateKind::Other && st.name.trim().is_empty()) {
-            let from: String = st.reason.trim().chars().take(40).collect();
-            st.name = if from.is_empty() { "unnamed".into() } else { from };
-            named = named.saturating_add(1);
-        }
-        if named > 0 {
-            said.push(format!("{named} state(s) of kind other had no name and were named from their reason (else \"unnamed\")"));
-        }
+        let nameless = |st: &DeclaredState| st.kind == StateKind::Other && st.name.trim().is_empty();
+        // The named declarations first: the first of each frame, kind and name is kept.
         let mut kept: Vec<DeclaredState> = Vec::with_capacity(self.states.len());
         let mut dropped = 0usize;
         for st in std::mem::take(&mut self.states) {
-            if kept.iter().any(|k| k.is(st.frame, st.kind, &st.name)) {
+            if !nameless(&st) && kept.iter().any(|k| !nameless(k) && k.is(st.frame, st.kind, &st.name)) {
                 dropped = dropped.saturating_add(1);
             } else {
                 kept.push(st);
@@ -1185,16 +1197,45 @@ impl DesignContext {
                 "{dropped} state(s) declared a second time for the same frame, kind and name were left out; the first of each is kept"
             ));
         }
+        // Then those without a name, each given one no other declaration has.
+        let mut named = 0usize;
+        for i in 0..kept.len() {
+            let Some(st) = kept.get(i).filter(|st| nameless(st)) else { continue };
+            let (frame, kind) = (st.frame, st.kind);
+            let from: String = st.reason.trim().chars().take(40).collect::<String>().trim().to_string();
+            let base = if from.is_empty() { "unnamed".to_string() } else { from };
+            let in_use = |name: &str| kept.iter().enumerate().any(|(j, k)| j != i && !nameless(k) && k.is(frame, kind, name));
+            let mut name = base.clone();
+            // Each other declaration blocks one candidate at most.
+            for n in 2..kept.len().saturating_add(2) {
+                if !in_use(&name) {
+                    break;
+                }
+                name = format!("{base} {n}");
+            }
+            if let Some(st) = kept.get_mut(i) {
+                st.name = name;
+                named = named.saturating_add(1);
+            }
+        }
+        if named > 0 {
+            said.push(format!(
+                "{named} state(s) of kind other had no name and were named from their reason (else \"unnamed\"), with a number added where a declaration of the same frame had that name"
+            ));
+        }
         self.states = kept;
         said
     }
 
     /// Raise the id counters to the ids in use, so [`next_id`](Self::next_id) never gives out one
-    /// an entry already has (a file can say anything). True when a counter moved.
+    /// an entry already has (a file can say anything). Ids are read without case or surrounding
+    /// space (`r7` is `R7`), as the commands look them up. True when a counter moved.
     fn raise_counters(&mut self) -> bool {
         let mut highest: BTreeMap<&'static str, u64> = BTreeMap::new();
         let mut see = |prefix: &'static str, id: &str| {
-            if let Some(n) = id.strip_prefix(prefix).and_then(|n| n.parse::<u64>().ok()) {
+            let id = id.trim();
+            let number = id.get(..prefix.len()).filter(|p| p.eq_ignore_ascii_case(prefix)).and_then(|_| id.get(prefix.len()..));
+            if let Some(n) = number.and_then(|n| n.parse::<u64>().ok()) {
                 let top = highest.entry(prefix).or_insert(0);
                 *top = (*top).max(n);
             }
@@ -1587,6 +1628,55 @@ mod tests {
         assert_eq!(DesignContext::clone(&ctx).next_id("R"), "R5");
         // A context that needs nothing repaired says nothing.
         assert!(DesignContext::from_stored(json!({"states": [{"frame": 2, "kind": "error"}]})).load_issues.0.is_empty());
+    }
+
+    /// P3-6: ids compare without case when counters are raised and repeats are found, so a blank
+    /// id never takes the id a person gave another element.
+    #[test]
+    fn a_blank_required_id_gets_one_no_entry_has_and_the_persons_id_stays() {
+        let ctx = DesignContext::from_stored(json!({"brief": {"required": [{"id": "", "text": "a"}, {"id": "r1", "text": "b"}]}}));
+        let ids: Vec<(&str, &str)> = ctx.brief.required.iter().map(|r| (r.id.as_str(), r.text.as_str())).collect();
+        assert_eq!(ids, [("R2", "a"), ("R1", "b")], "the person's r1 is kept (as R1); the blank gets a fresh id");
+        let said = ctx.load_issues.0.join("; ");
+        assert!(said.contains("a required element had no id and was given R2"), "{said}");
+        assert!(!said.contains("a second required element"), "nothing was given twice: {said}");
+        assert_eq!(DesignContext::clone(&ctx).next_id("R"), "R3");
+        // Counters of the other entries are raised by ids in any case too.
+        let ctx = DesignContext::from_stored(json!({"assumptions": [{"id": "a4", "text": "t"}]}));
+        assert_eq!(DesignContext::clone(&ctx).next_id("A"), "A5");
+        // Near miss: a repeat in another case is still a repeat, and the later one moves.
+        let ctx = DesignContext::from_stored(json!({"brief": {"required": [{"id": "R1", "text": "a"}, {"id": " r1 ", "text": "b"}]}}));
+        let ids: Vec<&str> = ctx.brief.required.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, ["R1", "R2"]);
+        assert!(ctx.load_issues.0.join("; ").contains("a second required element R1 was given R2"));
+    }
+
+    /// P3-5: the declarations a person named are kept first; one without a name gets a name no
+    /// kept declaration of its frame and kind has.
+    #[test]
+    fn an_other_state_without_a_name_never_pushes_out_one_a_person_named() {
+        use super::StateKind;
+        let ctx = DesignContext::from_stored(json!({"states": [
+            {"frame": 2, "kind": "other", "reason": "a"},
+            {"frame": 2, "kind": "other", "reason": "b"},
+            {"frame": 2, "kind": "other", "name": "A"},
+            {"frame": 2, "kind": "other", "reason": "b"},
+            {"frame": 2, "kind": "other", "name": " b 2 "},
+        ]}));
+        let names: Vec<&str> = ctx.states.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["a 2", "b", "A", "b 3", " b 2 "], "every declaration is kept, each with a name of its own");
+        assert!(ctx.states.iter().all(|s| s.kind == StateKind::Other));
+        for (i, a) in ctx.states.iter().enumerate() {
+            assert!(ctx.states.iter().skip(i + 1).all(|b| !b.is(a.frame, a.kind, &a.name)), "{:?}", ctx.states);
+        }
+        let said = ctx.load_issues.0.join("; ");
+        assert!(said.contains("3 state(s) of kind other had no name") && !said.contains("declared a second time"), "{said}");
+        // Two a person named alike are still one declaration: the first is kept.
+        let ctx = DesignContext::from_stored(json!({"states": [
+            {"frame": 2, "kind": "other", "name": "Offline", "reason": "first"},
+            {"frame": 2, "kind": "other", "name": "offline ", "reason": "second"},
+        ]}));
+        assert_eq!(ctx.states.iter().map(|s| s.reason.as_str()).collect::<Vec<_>>(), ["first"]);
     }
 
     #[test]
