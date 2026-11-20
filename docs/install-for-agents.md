@@ -136,13 +136,13 @@ Checks
   ok    binary                   /path/to/figguremyUI/target/release/figguremyui-cli
   ok    mcp.initialize           serverInfo.name "figguremyui", protocol 2025-06-18
   ok    mcp.tools                26 tools
-  ok    mcp.capabilities         headless backend, 688 commands, flow check and scenarios
+  ok    mcp.capabilities         headless backend, 696 commands, flow check and scenarios
   ok    mcp.document             built a two-screen prototype with batch (in memory, not saved)
   ok    mcp.screenshot           rendered a 240×160 PNG
   ok    mcp.check_prototype      2 screens, no blocker or major problem
   ok    mcp.run_scenarios        1 of 1 scenarios passed
   ok    example.open             /path/to/figguremyUI/examples/signup-flow.figcraft
-  ok    example.scenarios        6 of 6 scenarios passed
+  ok    example.scenarios        7 of 7 scenarios passed
   ok    example.check_prototype  no blocker or major problem (0 minor)
   ok    fonts                    27 families: 0 built in, 27 installed
 ```
@@ -174,8 +174,10 @@ Building leaves the binaries in the clone, and the client setup can point there.
 CARGO_TARGET_DIR=target cargo install --locked --path apps/figcraft-cli
 ```
 
-`CARGO_TARGET_DIR=target` reuses the build from section 3 (here it finished in under a second);
-without it, `cargo install` builds again from scratch in a temporary folder. The warnings that some
+`CARGO_TARGET_DIR=target` reuses the build from section 3. After a CLI-only build
+(`-p figcraft-cli`) it finishes in about a second. After the combined build with the desktop app,
+Cargo builds the CLI's dependencies again with the CLI's own feature set (about as long as a
+CLI-only build: 12 minutes on a 4-core machine here, and about 1 GB more in `target/`). Without it, `cargo install` builds again from scratch in a temporary folder. The warnings that some
 packages in `Cargo.lock` are *yanked* are expected with `--locked`: it keeps the versions the
 repository was tested with. On Windows PowerShell (*not run here*):
 `$env:CARGO_TARGET_DIR="target"; cargo install --locked --path apps/figcraft-cli`.
@@ -279,7 +281,7 @@ printf '%s\n' \
 
 The server logs one line to stderr and answers each request with one JSON line on stdout: the first
 names `serverInfo` `figguremyui`, and the third's text block is the scenario report, with
-`"passed": true`, `"total": 6` and `"failed": 0` for the sign-up example (escaped inside the JSON
+`"passed": true`, `"total": 7` and `"failed": 0` for the sign-up example (escaped inside the JSON
 string). In PowerShell (*not run here*), pipe the same lines with
 `'line1','line2','line3' | target\release\figguremyui-cli.exe mcp`.
 

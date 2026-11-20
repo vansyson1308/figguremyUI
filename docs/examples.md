@@ -14,7 +14,7 @@ nothing is sent anywhere.
 
 Each file also holds its components (below the screens; beside them in the dashboard, which grows
 tall at phone width), a `Theme` variable collection (colours whose text pairs pass WCAG AA), text
-styles, a collection of prototype state variables, one flow start, five or six stored scenarios,
+styles, a collection of prototype state variables, one flow start, five to seven stored scenarios,
 three untested assumptions and three decisions with the options they rejected, the states its
 screens are declared to have where time passes (each linked to what shows it), one required
 element of the brief linked to its layers, at stage `converging`. The end states, declared

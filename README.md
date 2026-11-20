@@ -134,7 +134,7 @@ target/release/figguremyui-cli doctor --example examples/signup-flow.figcraft
 a runbook to run top to bottom on Linux, macOS or Windows.
 
 On Linux the app needs the usual desktop libraries (for example on Debian/Ubuntu:
-`libxkbcommon-x11-0`, `libwayland-client0`, `libgl1`). Text uses your installed fonts; the examples
+`libxkbcommon-x11-0`, `libwayland-client0`, `libgl1`, `libegl1`). Text uses your installed fonts; the examples
 are set in [Inter](https://rsms.me/inter/), so install it for them to look as designed. Optionally,
 clone [craft-fonts](https://github.com/storytold/craft-fonts) next to this repository before building
 so fonts are built into the binaries.
@@ -145,7 +145,8 @@ Open an example:
 target/release/figguremyui examples/signup-flow.figcraft
 ```
 
-Open **View ▸ Panels ▸ Design context** (or the **Context** button on the left rail) to see its brief,
+Open **View ▸ Panels ▸ Design context** (the app menu is under the top-left icon of the left rail),
+or click the **Context** button on the left rail, to see its brief,
 assumptions, decisions, scenarios and checks, and press the ▶ button at the top right to play it.
 
 ## Connect an AI agent
