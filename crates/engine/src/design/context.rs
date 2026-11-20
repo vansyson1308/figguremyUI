@@ -46,7 +46,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
         spec!(
             "design.get",
             "Design context",
-            "{}  → {brief (with `required`: the elements it must show, [{id, text, screens, nodes, author, status}]), briefRevision, stage, assumptions, decisions, scenarios, endStates, states (the states screens are declared to have: [{frame, kind, name?, shownBy?, reason?, author, status}]; proto.state.list adds whether each is designed and reachable), findings, alternatives, missingLinks: [{node, from}] (links whose layer no longer exists), counts}",
+            "{}  → {brief (with `required`: the elements it must show, [{id, text, screens, nodes, author, status}]), briefRevision, stage, assumptions, decisions, scenarios, endStates, states (the states screens are declared to have: [{frame, kind, name?, shownBy?, reason?, author, status}]; proto.state.list adds whether each is designed and reachable), findings, alternatives, missingLinks: [{node, from}] (links whose layer no longer exists), requiredFacts: [{id, node, shownIn}] (layers of required elements the file hides that count as shown in a declared state: \"the error state of `Form`\"), counts}",
             false,
             get_all
         ),
@@ -142,6 +142,10 @@ fn get_all(s: &mut Session, _: &Value) -> Result<Value> {
         "findings": ctx.findings,
         "alternatives": ctx.alternatives,
         "missingLinks": missing.iter().map(|(node, from)| json!({"node": node, "from": from})).collect::<Vec<_>>(),
+        "requiredFacts": super::checks::shown_in_states(doc)
+            .into_iter()
+            .map(|(id, node, state)| json!({"id": id, "node": node, "shownIn": state}))
+            .collect::<Vec<_>>(),
         "counts": {
             "assumptions": ctx.assumptions.len(),
             "untestedAssumptions": untested,

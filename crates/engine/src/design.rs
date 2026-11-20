@@ -27,7 +27,7 @@ mod tests;
 
 use crate::cmd::CommandSpec;
 
-pub use checks::{min_stage, rules};
+pub use checks::{min_stage, rules, shown_in_states};
 pub(crate) use input::{USER, actor, agent, author_name};
 
 pub fn specs() -> Vec<CommandSpec> {

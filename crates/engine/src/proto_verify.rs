@@ -30,6 +30,7 @@ pub use run::{KNOWN_DIFFERENCES, NOT_MODELLED};
 mod scenario;
 pub(crate) use scenario::{Walk, walks};
 mod states;
+pub(crate) use states::not_a_screen;
 
 #[cfg(test)]
 mod tests;
@@ -83,7 +84,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "proto.state.set",
             "Declare screen state",
-            "{frame (a top-level frame: the screen), kind: firstUse|empty|loading|error|returning|success|other, name? (required for other; a label otherwise: one declaration per frame, kind and name), shownBy? ({node} a top-level frame (another screen, an overlay) or a layer in the screen | {instance, variant} an instance in the screen and the variant it shows the state with (its name, one property value, or the variant's id) | null: not designed yet), reason? (why the screen has this state)}  declares a state the screen has because time passes (first use, nothing yet, waiting, failure, coming back) or its outcome, or changes the given keys of one declared already; what `shownBy` names must exist. The user's declaration stands; an AI agent's is a proposal until a person accepts it (proto.state.accept), and an agent changes and takes back only its own proposals. Proposals count in the states.* checks all the same → {state: {frame, frameName, kind, name?, shownBy?, shownByName?, reason?, author, status: proposed|accepted, acceptedBy?, exists}}",
+            "{frame (a top-level frame: the screen), kind: firstUse|empty|loading|error|returning|success|other, name? (required for other; a label otherwise: one declaration per frame, kind and name), shownBy? ({node} a top-level frame (another screen, an overlay) or a layer in the screen | {instance, variant} an instance in the screen and the variant it shows the state with (its name, one property value, or the variant's id) | null: not designed yet), reason? (why the screen has this state)}  declares a state the screen has because time passes (first use, nothing yet, waiting, failure, coming back) or its outcome, or changes the given keys of one declared already; what `shownBy` names must exist. The user's declaration stands; an AI agent's is a proposal until a person accepts it (proto.state.accept), and an agent changes and takes back only its own proposals that nobody else edited (a change by anyone but its author is recorded as editedBy). A new declaration needs a top-level frame; one whose frame has since moved or gone can still be changed and removed. Proposals count in the states.* checks all the same → {state: {frame, frameName, kind, name?, shownBy?, shownByName?, reason?, author, status: proposed|accepted, acceptedBy?, exists}}",
             true,
             states::set
         ),
@@ -104,7 +105,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "proto.state.list",
             "List screen states",
-            "{frame? (only this screen's)}  every declared state with what can be said about it → {states: [{frame, frameName, kind, name?, shownBy?, shownByName?, reason?, author, status, acceptedBy?, exists (the screen), designed (shownBy is given and what it names is there: a top-level frame, a layer in the screen, or an instance in the screen whose component set has the variant), notDesigned? (why not), reachable (by the flow or a scenario), reachedBy: [flow (a flow start reaches the frame that shows it through the page's interactions: the top-level frame shownBy names, else the screen; variables and bindings aren't followed, so for a layer or a variant only its screen is reached) | scenario], coveredBy: [scenario ids whose headless run shows it, at the start or after a step that passed]}], summary: {total, designed, reachable, proposed}}",
+            "{frame? (only this screen's)}  every declared state with what can be said about it → {states: [{frame, frameName, kind, name?, shownBy?, shownByName?, reason?, author, status, acceptedBy?, exists (the screen), designed (shownBy is given and what it names is there: a top-level frame, a layer in the screen, or an instance in the screen whose component set has the variant), notDesigned? (why not), reachable (a scenario shows it, or the flow reaches the top-level frame shownBy names), screenReachable? (true for a layer or a variant whose screen the flow reaches: not counted as reachable, since variables and bindings aren't followed), reachedBy: [scenario | flow (navigate and overlay actions reach the frame or overlay shownBy names) | screen (only the screen holding the layer or variant is reached)], coveredBy: [scenario ids whose headless run shows it, at the start or after a step that passed], editedBy? (who changed somebody else's declaration last)}], summary: {total, designed, reachable, proposed}}",
             false,
             states::list
         ),

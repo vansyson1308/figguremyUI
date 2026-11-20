@@ -266,13 +266,13 @@ pub(super) fn rules() -> Vec<Rule> {
         },
         Rule {
             id: states::NOT_DESIGNED,
-            about: "A declared state (proto.state.set) with nothing designed to show it: minor when no `shownBy` is given; major when what `shownBy` names is gone, is neither a top-level frame nor a layer in the screen, or is an instance (in the screen) whose component set has no such variant. Compares the declaration with the file; declarations of the whole file, whatever the page.",
+            about: "A declared state (proto.state.set) with nothing designed to show it: minor when no `shownBy` is given; major when what `shownBy` names is gone, is neither a top-level frame nor a layer in the screen, or is an instance (in the screen) whose component set has no such variant; major, with a finding of its own, when the declared frame is gone or no longer a top-level frame (\"`A` is no longer a screen: it is inside `B`\"; remove it or declare it on B). Compares the declaration with the file; declarations of the whole file, whatever the page.",
             run: states::not_designed_rule,
             unsettled: None,
         },
         Rule {
             id: states::UNREACHABLE,
-            about: "Minor: a declared state that is designed, but no flow start reaches the frame that shows it (the top-level frame `shownBy` names, else the screen) through the interactions of its page, and no stored scenario shows it (its headless run, at the start or after a step that passed: the frame is the screen or an open overlay, the layer is showing, the instance is showing with that variant). The flow graph doesn't follow variables, so for a layer or a variant it reaches only the screen.",
+            about: "A designed declared state that nothing is known to show. Minor when `shownBy` names a top-level frame (a screen, an overlay) that no flow start reaches through the interactions of its page and no stored scenario shows. Note (the lowest severity) when it names a layer or a variant whose screen is reached: the flow graph doesn't follow variables or bindings, so only a stored scenario shows it is ever shown (its headless run, at the start or after a step that passed: the frame is the screen or an open overlay, the layer is showing, the instance is showing with that variant); add a scenario step that shows it. A declaration whose frame is no longer a screen is states.notDesigned's, not this rule's.",
             run: states::unreachable,
             unsettled: None,
         },

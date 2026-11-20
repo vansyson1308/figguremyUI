@@ -589,7 +589,8 @@ struct Mixed {
 /// the card cuts off (`layout.clippedContent`, minor); the brief is empty
 /// (`context.briefIncomplete`, note) and no scenario walks the flow (`scenario.none`, note). The
 /// flow itself is sound: it starts on the card and may end on "Done"; the card's empty state is
-/// declared and shown by the caption (so `states.none` has nothing to say).
+/// declared and shown by the card itself, which the flow starts on (so `states.none` and
+/// `states.unreachable` have nothing to say).
 fn mixed_page(s: &mut Session) -> Mixed {
     let (card, text) = card_with_text(s, "#DDDDDD");
     let done = frame(s, "Done", 500.0, 320.0, 200.0);
@@ -598,7 +599,7 @@ fn mixed_page(s: &mut Session) -> Mixed {
     ex(s, "proto.interaction.add", json!({"id": dot, "dest": done}));
     ex(s, "proto.flow.add", json!({"start": card}));
     ex(s, "proto.endState.set", json!({"id": done, "reason": "The task is finished here"}));
-    ex(s, "proto.state.set", json!({"frame": card, "kind": "empty", "shownBy": {"node": text}}));
+    ex(s, "proto.state.set", json!({"frame": card, "kind": "empty", "shownBy": {"node": card}}));
     ex(s, "design.stage.set", json!({"stage": "ready"}));
     Mixed { card, text, banner, dot }
 }

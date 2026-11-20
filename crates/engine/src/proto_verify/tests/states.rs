@@ -180,15 +180,16 @@ fn designed_reachable_and_covered_say_what_the_file_the_flow_and_the_scenarios_s
     ex(&mut s, "proto.state.set", json!({"frame": list, "kind": "loading", "shownBy": {"instance": spinner, "variant": "Idle"}}));
     ex(&mut s, "proto.state.set", json!({"frame": home, "kind": "returning", "shownBy": {"node": later}}));
     ex(&mut s, "proto.state.set", json!({"frame": list, "kind": "success"}));
-    // The overlay is reached through the flow; the hidden note's screen too (the graph doesn't
-    // follow what would show the note); nothing leads to "Later".
+    // The overlay is reached through the flow. Of the hidden note only its screen is: the graph
+    // doesn't follow what would show the note, so it isn't counted as reachable. Nothing leads
+    // to "Later".
     let error = listed(&mut s, home, "error");
     assert_eq!(
         (&error["designed"], &error["reachable"], &error["reachedBy"], &error["coveredBy"]),
         (&json!(true), &json!(true), &json!(["flow"]), &json!([]))
     );
     let empty = listed(&mut s, list, "empty");
-    assert_eq!((&empty["reachable"], &empty["reachedBy"]), (&json!(true), &json!(["flow"])));
+    assert_eq!((&empty["reachable"], &empty["screenReachable"], &empty["reachedBy"]), (&json!(false), &json!(true), &json!(["screen"])), "{empty}");
     let later_state = listed(&mut s, home, "returning");
     assert_eq!((&later_state["designed"], &later_state["reachable"], &later_state["reachedBy"]), (&json!(true), &json!(false), &json!([])));
     let success = listed(&mut s, list, "success");
@@ -202,7 +203,13 @@ fn designed_reachable_and_covered_say_what_the_file_the_flow_and_the_scenarios_s
     assert_eq!(listed(&mut s, list, "empty")["coveredBy"], json!([]), "hidden on the way: not shown");
     let error = listed(&mut s, home, "error");
     assert_eq!((&error["coveredBy"], &error["reachedBy"]), (&json!(["S2"]), &json!(["flow", "scenario"])));
-    // A step that fails, and what follows it, shows nothing.
+    let loading = listed(&mut s, list, "loading");
+    assert_eq!((&loading["reachable"], &loading["reachedBy"]), (&json!(true), &json!(["screen", "scenario"])));
+    // A step that fails shows nothing, though the simulator shows the overlay after it: the walk
+    // isn't the one the scenario meant (the step opens Oops but expects List).
+    ex(&mut s, "proto.scenario.set", json!({"id": "S2", "steps": [{"click": fail, "expect": {"screen": list}}]}));
+    assert_eq!(listed(&mut s, home, "error")["coveredBy"], json!([]));
+    // And neither does what follows a failing step.
     ex(&mut s, "proto.scenario.set", json!({"id": "S2", "steps": [{"click": open, "expect": {"screen": oops}}, {"click": fail}]}));
     assert_eq!(listed(&mut s, home, "error")["coveredBy"], json!([]));
     // A scenario that shows "Later" makes it reachable though no interaction leads there.
@@ -288,6 +295,66 @@ fn unreachable_is_a_designed_state_neither_the_flow_nor_a_scenario_gets_to() {
     // Near miss: a scenario shows it.
     ex(&mut s, "proto.scenario.add", json!({"name": "Back after a week", "start": later, "steps": []}));
     assert!(found(s.doc().unwrap(), "states.unreachable", &[]).is_empty());
+}
+
+#[test]
+fn a_layer_whose_screen_is_reached_is_a_note_until_a_scenario_shows_it() {
+    let (mut s, [home, list, _, _, note, _]) = screens();
+    ex(&mut s, "proto.state.set", json!({"frame": list, "kind": "empty", "shownBy": {"node": note}}));
+    let f = found(s.doc().unwrap(), "states.unreachable", &[]);
+    assert_eq!(f.len(), 1, "{f:?}");
+    assert_eq!(f[0].severity, Severity::Note, "only a scenario can show a layer is shown: a note, not a defect");
+    assert!(f[0].message.contains("`Empty note`") && f[0].suggestion.contains("scenario step"), "{f:?}");
+    // A scenario that shows it: nothing to say.
+    let open = s.doc().unwrap().node(home).unwrap().children[0];
+    ex(&mut s, "node.set", json!({"id": note, "visible": true}));
+    ex(&mut s, "proto.scenario.add", json!({"name": "Nothing yet", "start": home, "steps": [{"click": open, "expect": {"visible": [note]}}]}));
+    assert!(found(s.doc().unwrap(), "states.unreachable", &[]).is_empty());
+}
+
+#[test]
+fn a_declared_screen_that_moved_inside_another_frame_is_reported_and_can_be_changed_or_removed() {
+    let (mut s, [home, list, _, later, note, _]) = screens();
+    ex(&mut s, "proto.state.set", json!({"frame": later, "kind": "returning", "reason": "a week later"}));
+    ex(&mut s, "proto.state.set", json!({"frame": list, "kind": "empty", "shownBy": {"node": note}}));
+    // "Later" goes inside Home: it is no longer a screen.
+    ex(&mut s, "node.reparent", json!({"ids": [later], "parent": home}));
+    let f = found(s.doc().unwrap(), "states.notDesigned", &[]);
+    let moved: Vec<_> = f.iter().filter(|x| x.subject == format!("state:{later}:returning:")).collect();
+    assert_eq!(moved.len(), 1, "{f:?}");
+    assert_eq!(moved[0].severity, Severity::Major);
+    assert!(
+        moved[0].evidence.contains("`Later`") && moved[0].evidence.contains("is no longer a screen: it is inside `Home`"),
+        "{}",
+        moved[0].evidence
+    );
+    assert!(moved[0].suggestion.contains("proto.state.remove") && moved[0].suggestion.contains("`Home`"), "{}", moved[0].suggestion);
+    assert!(found(s.doc().unwrap(), "states.unreachable", &[]).iter().all(|x| !x.subject.contains(&later.to_string())), "no unreachable for it");
+    let l = listed(&mut s, later, "returning");
+    assert_eq!((&l["designed"], &l["reachable"]), (&json!(false), &json!(false)));
+    // Its reason can still be changed, a new declaration there can't be made, and it can go.
+    ex(&mut s, "proto.state.set", json!({"frame": later, "kind": "returning", "reason": "two weeks later"}));
+    assert!(err(&mut s, "proto.state.set", json!({"frame": later, "kind": "error"})).contains("isn't a top-level frame"));
+    ex(&mut s, "proto.state.remove", json!({"frame": later, "kind": "returning"}));
+    // A gone screen: the same, and removable.
+    ex(&mut s, "edit.delete", json!({"ids": [list]}));
+    let f = found(s.doc().unwrap(), "states.notDesigned", &[]);
+    assert!(f.iter().any(|x| x.evidence.contains(&format!("the screen (layer {list}) no longer exists"))), "{f:?}");
+    ex(&mut s, "proto.state.remove", json!({"frame": list, "kind": "empty"}));
+    assert!(s.doc().unwrap().design.states.is_empty());
+}
+
+#[test]
+fn a_persons_edit_of_an_agents_declaration_is_recorded_and_ends_the_agents_say_over_it() {
+    let (mut s, [_, list, _, _, note, _]) = screens();
+    as_agent(&mut s, "proto.state.set", json!({"frame": list, "kind": "empty"}));
+    let r = ex(&mut s, "proto.state.set", json!({"frame": list, "kind": "empty", "shownBy": {"node": note}}));
+    assert_eq!((&r["state"]["editedBy"], &r["state"]["status"]), (&json!("user"), &json!("proposed")), "{r}");
+    let e = agent_err(&mut s, "proto.state.set", json!({"frame": list, "kind": "empty", "reason": "mine"}));
+    assert!(e.contains("edited by user"), "{e}");
+    agent_err(&mut s, "proto.state.remove", json!({"frame": list, "kind": "empty"}));
+    // Accepting is still the person's.
+    ex(&mut s, "proto.state.accept", json!({"frame": list, "kind": "empty"}));
 }
 
 #[test]

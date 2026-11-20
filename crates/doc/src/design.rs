@@ -247,6 +247,10 @@ pub struct RequiredElement {
     /// Who listed it: an agent's name, or `user`.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub author: String,
+    /// Who last changed its words or screens, when that wasn't its author. Once a person has
+    /// edited an AI agent's entry, the words are no longer the agent's to change.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub edited_by: String,
     #[serde(skip_serializing_if = "ProposalStatus::is_accepted")]
     pub status: ProposalStatus,
     /// The person who accepted an AI agent's entry.
@@ -334,6 +338,10 @@ pub struct DeclaredState {
     /// Who declared it: an agent's name, or `user`.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub author: String,
+    /// Who last changed what shows it or why, when that wasn't its author. Once a person has
+    /// edited an AI agent's declaration, it is no longer the agent's to change.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub edited_by: String,
     #[serde(default, skip_serializing_if = "ProposalStatus::is_accepted")]
     pub status: ProposalStatus,
     /// The person who accepted an AI agent's declaration.
@@ -961,6 +969,7 @@ impl DesignContext {
         if ctx.raise_counters() {
             issues.push("the design context's id counters were behind the ids in use and were raised, so no id is given out twice".into());
         }
+        issues.extend(ctx.repair());
         ctx.load_issues = LoadIssues(issues);
         ctx
     }
@@ -1011,7 +1020,7 @@ impl DesignContext {
         c.texts(&mut b.success, "brief.success");
         c.list(&mut b.required, "brief.required");
         for r in &mut b.required {
-            for t in [&mut r.id, &mut r.text, &mut r.author, &mut r.accepted_by] {
+            for t in [&mut r.id, &mut r.text, &mut r.author, &mut r.edited_by, &mut r.accepted_by] {
                 c.text(t);
             }
             c.list(&mut r.screens, "required screens");
@@ -1060,7 +1069,7 @@ impl DesignContext {
         }
         c.list(&mut self.states, "states");
         for st in &mut self.states {
-            for t in [&mut st.name, &mut st.reason, &mut st.author, &mut st.accepted_by] {
+            for t in [&mut st.name, &mut st.reason, &mut st.author, &mut st.edited_by, &mut st.accepted_by] {
                 c.text(t);
             }
             if let Some(ShownBy::Variant { variant, .. }) = &mut st.shown_by {
@@ -1117,6 +1126,69 @@ impl DesignContext {
         c.said()
     }
 
+    /// Make the declared states and required elements of a stored context what the commands
+    /// would have made, so each can be edited and removed: a required element without an id, or
+    /// with one another element has already, gets a fresh id; an `other` state without a name
+    /// is named from its reason (else "unnamed"); a second declaration of the same frame, kind
+    /// and name is dropped (the first is kept); a list of screens or layers names each once.
+    /// Returns what was changed, for the loader to report.
+    fn repair(&mut self) -> Vec<String> {
+        let mut said = Vec::new();
+        let mut ids: Vec<String> = Vec::new();
+        let mut twice = 0usize;
+        for i in 0..self.brief.required.len() {
+            let id = self.brief.required.get(i).map(|r| r.id.trim().to_ascii_uppercase()).unwrap_or_default();
+            let fresh = if id.is_empty() || ids.contains(&id) { Some(self.next_id("R")) } else { None };
+            let Some(r) = self.brief.required.get_mut(i) else { continue };
+            match fresh {
+                Some(new) => {
+                    said.push(if id.is_empty() {
+                        format!("a required element had no id and was given {new}")
+                    } else {
+                        format!("a second required element {id} was given {new}")
+                    });
+                    r.id = new;
+                }
+                None => r.id = id,
+            }
+            ids.push(r.id.clone());
+            let (screens, nodes) = (r.screens.len(), r.nodes.len());
+            dedup(&mut r.screens);
+            dedup(&mut r.nodes);
+            if r.screens.len() < screens || r.nodes.len() < nodes {
+                twice = twice.saturating_add(1);
+            }
+        }
+        if twice > 0 {
+            said.push(format!("{twice} required element(s) named a layer twice; each is named once"));
+        }
+        let mut named = 0usize;
+        for st in self.states.iter_mut().filter(|st| st.kind == StateKind::Other && st.name.trim().is_empty()) {
+            let from: String = st.reason.trim().chars().take(40).collect();
+            st.name = if from.is_empty() { "unnamed".into() } else { from };
+            named = named.saturating_add(1);
+        }
+        if named > 0 {
+            said.push(format!("{named} state(s) of kind other had no name and were named from their reason (else \"unnamed\")"));
+        }
+        let mut kept: Vec<DeclaredState> = Vec::with_capacity(self.states.len());
+        let mut dropped = 0usize;
+        for st in std::mem::take(&mut self.states) {
+            if kept.iter().any(|k| k.is(st.frame, st.kind, &st.name)) {
+                dropped = dropped.saturating_add(1);
+            } else {
+                kept.push(st);
+            }
+        }
+        if dropped > 0 {
+            said.push(format!(
+                "{dropped} state(s) declared a second time for the same frame, kind and name were left out; the first of each is kept"
+            ));
+        }
+        self.states = kept;
+        said
+    }
+
     /// Raise the id counters to the ids in use, so [`next_id`](Self::next_id) never gives out one
     /// an entry already has (a file can say anything). True when a counter moved.
     fn raise_counters(&mut self) -> bool {
@@ -1143,6 +1215,18 @@ impl DesignContext {
         }
         moved
     }
+}
+
+/// `list` with each entry once, in the order first given.
+fn dedup<T: PartialEq + Copy>(list: &mut Vec<T>) {
+    let mut seen: Vec<T> = Vec::with_capacity(list.len());
+    list.retain(|x| {
+        let fresh = !seen.contains(x);
+        if fresh {
+            seen.push(*x);
+        }
+        fresh
+    });
 }
 
 #[cfg(test)]
@@ -1371,6 +1455,7 @@ mod tests {
                     screens: vec![NodeId(4)],
                     nodes: vec![NodeId(9)],
                     author: "Claude (agent)".into(),
+                    edited_by: String::new(),
                     status: ProposalStatus::Proposed,
                     accepted_by: String::new(),
                 }],
@@ -1384,6 +1469,7 @@ mod tests {
                     shown_by: Some(ShownBy::Node { node: NodeId(7) }),
                     reason: "the network fails".into(),
                     author: "user".into(),
+                    edited_by: String::new(),
                     status: ProposalStatus::Accepted,
                     accepted_by: String::new(),
                 },
@@ -1394,6 +1480,7 @@ mod tests {
                     shown_by: Some(ShownBy::Variant { instance: NodeId(8), variant: "State=Offline".into() }),
                     reason: String::new(),
                     author: "Claude (agent)".into(),
+                    edited_by: String::new(),
                     status: ProposalStatus::Proposed,
                     accepted_by: String::new(),
                 },
@@ -1451,6 +1538,55 @@ mod tests {
         // Counters behind the ids in use are raised for required elements too.
         let ctx = DesignContext::from_stored(json!({"brief": {"required": [{"id": "R7", "text": "x"}]}}));
         assert_eq!(DesignContext::clone(&ctx).next_id("R"), "R8");
+    }
+
+    #[test]
+    fn entries_that_couldnt_be_edited_or_removed_are_repaired_on_load_and_said() {
+        use super::StateKind;
+        let stored = json!({
+            "brief": {"required": [
+                {"id": "", "text": "Consent"},
+                {"id": "R1", "text": "A price", "nodes": [4, 4, 5], "screens": [2, 2]},
+                {"id": "r1", "text": "The same id again"},
+                {},
+            ]},
+            "states": [
+                {"frame": 2, "kind": "other", "reason": "Offline while on the bus"},
+                {"frame": 2, "kind": "other"},
+                {"frame": 2, "kind": "error", "reason": "first"},
+                {"frame": 2, "kind": "error", "reason": "second"},
+                {"frame": 3, "kind": "error"},
+            ],
+            "counters": {"R": 1},
+        });
+        let ctx = DesignContext::from_stored(stored);
+        let ids: Vec<&str> = ctx.brief.required.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, ["R2", "R1", "R3", "R4"], "an empty or repeated id gets a fresh one; nothing a person wrote is dropped");
+        assert_eq!((ctx.brief.required[1].nodes.clone(), ctx.brief.required[1].screens.clone()), (vec![NodeId(4), NodeId(5)], vec![NodeId(2)]));
+        let states: Vec<(StateKind, &str, &str)> = ctx.states.iter().map(|s| (s.kind, s.name.as_str(), s.reason.as_str())).collect();
+        assert_eq!(
+            states,
+            [
+                (StateKind::Other, "Offline while on the bus", "Offline while on the bus"),
+                (StateKind::Other, "unnamed", ""),
+                (StateKind::Error, "", "first"),
+                (StateKind::Error, "", ""),
+            ],
+            "an `other` without a name is named from its reason; a second declaration of the same frame, kind and name is left out"
+        );
+        let said = ctx.load_issues.0.join("; ");
+        for part in [
+            "had no id and was given R2",
+            "a second required element R1 was given R3",
+            "named a layer twice",
+            "had no name",
+            "declared a second time",
+        ] {
+            assert!(said.contains(part), "{part}: {said}");
+        }
+        assert_eq!(DesignContext::clone(&ctx).next_id("R"), "R5");
+        // A context that needs nothing repaired says nothing.
+        assert!(DesignContext::from_stored(json!({"states": [{"frame": 2, "kind": "error"}]})).load_issues.0.is_empty());
     }
 
     #[test]

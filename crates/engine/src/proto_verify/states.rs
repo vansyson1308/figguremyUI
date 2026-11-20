@@ -17,11 +17,15 @@
 //! - **designed**: `shownBy` is given and what it names is there: a top-level frame (another
 //!   screen, an overlay) or a layer inside the screen; or an instance inside the screen whose
 //!   component set has the variant named.
-//! - **reachable**: the flow graph reaches the frame that shows it (the top-level frame `shownBy`
-//!   names, else the screen itself: a layer or a variant shows on its screen), or a stored
-//!   scenario shows it (`coveredBy`). The graph doesn't follow variables or bindings, so for a
-//!   layer or a variant it says only that its screen can be reached; whether something on that
-//!   screen makes it show is what a scenario shows.
+//! - **reachable**: a stored scenario shows it (`reachedBy: scenario`), or `shownBy` names a
+//!   top-level frame (another screen, an overlay) that the flow graph reaches by navigate and
+//!   overlay actions (`flow`). For a layer or a variant the graph can only say that its screen is
+//!   reached (`screen`, with `screenReachable`): it doesn't follow variables or bindings, so
+//!   whether anything on that screen makes it show is what a scenario shows, and without one it
+//!   isn't counted as reachable.
+//! - A declaration whose screen is gone or is no longer a top-level frame is about no screen: it
+//!   isn't designed (`states.notDesigned` says where the frame is now), and it can be changed and
+//!   removed but not declared anew there.
 //! - **coveredBy**: the stored scenarios whose headless run shows it, at the start or after a step
 //!   that passed (a step that failed and what follows it don't count): the frame is the screen or
 //!   an open overlay, the layer is showing, or the instance is showing with that variant.
@@ -100,6 +104,7 @@ fn declared(frame: NodeId) -> DeclaredState {
         shown_by: None,
         reason: String::new(),
         author: String::new(),
+        edited_by: String::new(),
         status: ProposalStatus::Accepted,
         accepted_by: String::new(),
     }
@@ -184,22 +189,41 @@ fn not_shown_by(doc: &Document, frame: NodeId, by: &ShownBy) -> Option<String> {
     }
 }
 
+/// Why `frame` is no longer a screen (gone, or inside another frame now); `None`: it is one.
+pub(crate) fn not_a_screen(doc: &Document, frame: NodeId) -> Option<String> {
+    if !doc.contains(frame) {
+        return Some(format!("the screen (layer {frame}) no longer exists"));
+    }
+    match doc.top_level_frame(frame) {
+        Some(top) if top == frame => None,
+        Some(top) => Some(format!("{} is no longer a screen: it is inside {}", label(doc, frame), label(doc, top))),
+        None => Some(format!("{} is no longer a screen: it isn't a frame on a page", label(doc, frame))),
+    }
+}
+
 /// Why declaration `st` isn't designed; `None`: it is.
 fn not_designed(doc: &Document, st: &DeclaredState) -> Option<String> {
+    if let Some(why) = not_a_screen(doc, st.frame) {
+        return Some(why);
+    }
     match &st.shown_by {
-        None if !doc.contains(st.frame) => Some(format!("the screen (layer {}) no longer exists", st.frame)),
         None => Some("nothing is said to show it (no `shownBy`)".into()),
         Some(by) => not_shown_by(doc, st.frame, by),
+    }
+}
+
+/// The top-level frame `st` is shown by, when `shownBy` names one (another screen, an overlay).
+fn shown_frame(doc: &Document, st: &DeclaredState) -> Option<NodeId> {
+    match &st.shown_by {
+        Some(ShownBy::Node { node }) if doc.top_level_frame(*node) == Some(*node) => Some(*node),
+        _ => None,
     }
 }
 
 /// The frame whose reachability counts for `st`: the top-level frame `shownBy` names, else the
 /// screen (a layer or a variant shows on it).
 fn shows_on(doc: &Document, st: &DeclaredState) -> NodeId {
-    match &st.shown_by {
-        Some(ShownBy::Node { node }) if doc.top_level_frame(*node) == Some(*node) => *node,
-        _ => st.frame,
-    }
+    shown_frame(doc, st).unwrap_or(st.frame)
 }
 
 /// Mark in `seen` the declarations of `doc` the simulator shows now (see the module's
@@ -234,8 +258,10 @@ pub(super) fn showing(doc: &Document, sim: &Sim, seen: &mut BTreeSet<usize>) {
 pub(crate) struct StateFacts {
     /// Why it isn't designed; `None`: it is.
     pub not_designed: Option<String>,
-    /// The flow graph reaches the frame that shows it.
+    /// The flow graph reaches the top-level frame `shownBy` names.
     pub by_flow: bool,
+    /// For a layer or a variant: the flow graph reaches the screen it is on (not that it shows).
+    pub screen_reachable: bool,
     /// The scenarios that show it, in file order.
     pub covered_by: Vec<String>,
 }
@@ -272,11 +298,13 @@ pub(crate) fn facts(f: &Facts<'_>) -> Vec<StateFacts> {
         .map(|(i, st)| {
             let not_designed = not_designed(doc, st);
             let target = shows_on(doc, st);
-            let by_flow = not_designed.is_none()
+            let reached = not_designed.is_none()
                 && doc.page_of(target).is_some_and(|page| f.flow(page).graph.screens.iter().any(|sc| sc.id == target && sc.reachable));
+            let by_flow = reached && shown_frame(doc, st).is_some();
+            let screen_reachable = reached && !by_flow;
             let mut covered_by: Vec<String> = covered.remove(&i).map(|ids| ids.into_iter().collect()).unwrap_or_default();
             covered_by.sort_by_key(order);
-            StateFacts { not_designed, by_flow, covered_by }
+            StateFacts { not_designed, by_flow, screen_reachable, covered_by }
         })
         .collect()
 }
@@ -306,15 +334,24 @@ fn state_json(doc: &Document, st: &DeclaredState, fact: Option<&StateFacts>) -> 
     if !st.accepted_by.is_empty() {
         o.insert("acceptedBy".into(), json!(st.accepted_by));
     }
+    if !st.edited_by.is_empty() {
+        o.insert("editedBy".into(), json!(author_name(&st.edited_by)));
+    }
     if let Some(f) = fact {
         o.insert("designed".into(), json!(f.designed()));
         if let Some(why) = &f.not_designed {
             o.insert("notDesigned".into(), json!(why));
         }
         o.insert("reachable".into(), json!(f.reachable()));
+        if f.screen_reachable {
+            o.insert("screenReachable".into(), json!(true));
+        }
         let mut by: Vec<&str> = Vec::new();
         if f.by_flow {
             by.push("flow");
+        }
+        if f.screen_reachable {
+            by.push("screen");
         }
         if !f.covered_by.is_empty() {
             by.push("scenario");
@@ -341,12 +378,13 @@ pub(super) fn on_page(f: &Facts<'_>, page: NodeId) -> Vec<Value> {
 /// Refuse an AI agent (`me`) a change to a declaration that isn't its own pending proposal.
 fn own_proposal(cmd: &str, me: Option<&str>, st: &DeclaredState, doing: &str) -> Result<()> {
     match me {
-        Some(me) if st.author != me || st.status.is_accepted() => Err(bad(
+        Some(me) if st.author != me || st.status.is_accepted() || !st.edited_by.is_empty() => Err(bad(
             cmd,
             format!(
-                "{} was declared by {}{}; an AI agent ({me}) {doing} only its own proposals. Ask them to change it",
+                "{} was declared by {}{}{}; an AI agent ({me}) {doing} only its own proposals. Ask them to change it",
                 st.label(),
                 author_name(&st.author),
+                if st.edited_by.is_empty() { String::new() } else { format!(" and edited by {}", author_name(&st.edited_by)) },
                 if st.status.is_accepted() { " and stands accepted" } else { "" }
             ),
         )),
@@ -360,12 +398,17 @@ pub(super) fn set(s: &mut Session, p: &Value) -> Result<Value> {
     let by = shown_by(cmd, p)?;
     let reason = get(p, "reason").map(|v| parse::text(cmd, v, "reason").map(|r| r.trim().to_string())).transpose()?;
     let me = agent(s).map(str::to_string);
+    let who = me.clone().unwrap_or_else(|| USER.to_string());
     let doc = s.doc()?;
-    if !doc.contains(k.frame) {
-        return Err(bad(cmd, format!("`frame`: no layer {}", k.frame)));
-    }
-    if doc.top_level_frame(k.frame) != Some(k.frame) {
-        return Err(bad(cmd, format!("`frame`: {} isn't a top-level frame (a state belongs to a screen)", label(doc, k.frame))));
+    let declared_already = doc.design.states.iter().any(|st| st.is(k.frame, k.kind, &k.name));
+    // A new declaration needs a screen; one made before its frame moved can still be changed.
+    if !declared_already {
+        if !doc.contains(k.frame) {
+            return Err(bad(cmd, format!("`frame`: no layer {}", k.frame)));
+        }
+        if doc.top_level_frame(k.frame) != Some(k.frame) {
+            return Err(bad(cmd, format!("`frame`: {} isn't a top-level frame (a state belongs to a screen)", label(doc, k.frame))));
+        }
     }
     if let Some(Some(b)) = &by
         && let Some(why) = not_shown_by(doc, k.frame, b)
@@ -377,11 +420,16 @@ pub(super) fn set(s: &mut Session, p: &Value) -> Result<Value> {
     match states.iter_mut().find(|st| st.is(k.frame, k.kind, &k.name)) {
         Some(st) => {
             own_proposal(cmd, me.as_deref(), st, "changes")?;
+            let before = st.clone();
             if let Some(b) = by {
                 st.shown_by = b;
             }
             if let Some(r) = reason {
                 st.reason = r;
+            }
+            // Somebody else's change: the declaration is no longer all its author's.
+            if *st != before && who != st.author {
+                st.edited_by.clone_from(&who);
             }
         }
         None if full => {
@@ -414,8 +462,11 @@ pub(super) fn remove(s: &mut Session, p: &Value) -> Result<Value> {
     let Some(st) = doc.design.states.iter().find(|st| st.is(k.frame, k.kind, &k.name)) else {
         return Err(bad(cmd, format!("no {} is declared", k.label())));
     };
-    own_proposal(cmd, me.as_deref(), st, "takes back")?;
     let removed = st.label();
+    // Every declaration the call would take away.
+    for st in doc.design.states.iter().filter(|st| st.is(k.frame, k.kind, &k.name)) {
+        own_proposal(cmd, me.as_deref(), st, "takes back")?;
+    }
     Arc::make_mut(&mut s.doc_mut()?.design).states.retain(|st| !st.is(k.frame, k.kind, &k.name));
     Ok(json!({"removed": removed}))
 }
@@ -519,9 +570,23 @@ pub(super) fn not_designed_rule(f: &Facts<'_>, scope: Scope<'_>) -> Vec<Found> {
         .iter()
         .filter_map(|st| {
             let why = not_designed(doc, st)?;
+            // The screen itself is gone or moved: the declaration is about no screen now.
+            if not_a_screen(doc, st.frame).is_some() {
+                let top = doc.top_level_frame(st.frame).filter(|t| *t != st.frame);
+                let elsewhere = top.map(|t| format!(", or declare it on {} (proto.state.set {{frame: {t}, ...}})", label(doc, t))).unwrap_or_default();
+                return Some(Found {
+                    rule: NOT_DESIGNED,
+                    severity: Severity::Major,
+                    nodes: nodes_of(doc, st),
+                    subject: subject(st),
+                    message: format!("The {} state is declared for a frame that is no longer a screen", kind_words(st)),
+                    evidence: format!("{}: {why}", st.label()),
+                    suggestion: format!("Remove the declaration (proto.state.remove){elsewhere}"),
+                });
+            }
             // Not designed yet is a gap the declaration names; a link that broke is a state the
             // file says it has and no longer does.
-            let severity = if st.shown_by.is_none() && doc.contains(st.frame) { Severity::Minor } else { Severity::Major };
+            let severity = if st.shown_by.is_none() { Severity::Minor } else { Severity::Major };
             Some(Found {
                 rule: NOT_DESIGNED,
                 severity,
@@ -546,8 +611,24 @@ pub(super) fn unreachable(f: &Facts<'_>, scope: Scope<'_>) -> Vec<Found> {
         .iter()
         .zip(&all)
         .filter(|(_, fact)| fact.designed() && !fact.reachable())
-        .map(|(st, _)| {
+        .map(|(st, fact)| {
             let target = shows_on(doc, st);
+            if fact.screen_reachable {
+                let shown = st.shown_by.as_ref().map(|b| label(doc, b.node())).unwrap_or_default();
+                return Found {
+                    rule: UNREACHABLE,
+                    severity: Severity::Note,
+                    nodes: nodes_of(doc, st),
+                    subject: subject(st),
+                    message: format!("Nothing shows that {shown} is ever shown: the {} state of {} is in no stored scenario", kind_words(st), label(doc, st.frame)),
+                    evidence: format!(
+                        "{}: its screen {} is reached through the page's interactions, but whether anything makes {shown} show isn't worked out from the graph (variables and bindings aren't followed), and no stored scenario shows it",
+                        st.label(),
+                        label(doc, target)
+                    ),
+                    suggestion: "Add a scenario step that shows it (proto.scenario.add, or a step with expect visible or variants)".into(),
+                };
+            }
             Found {
                 rule: UNREACHABLE,
                 severity: Severity::Minor,
