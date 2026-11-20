@@ -587,3 +587,39 @@ fn the_bike_booking_back_goes_one_step_back_after_a_change() {
     let r = c.run("proto.scenario.run", json!({"id": "S3"}));
     assert_eq!(r["passed"], true, "{r}");
 }
+
+/// FNV-1a (64 bits) of `text`: a digest that needs no dependency.
+fn fnv1a(text: &str) -> u64 {
+    text.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3))
+}
+
+#[test]
+fn the_prototype_answers_of_each_example_stay_what_they_were() {
+    // Every word and value of these answers, pinned as they were before the performance work of
+    // M12.40 (worked out from 9f05ba8e's answers as well): making the simulator, its settling and
+    // the checks cheaper must not change what they say. The answers read no font measurements, so
+    // they are the same with or without fonts. When an example or one of these answers changes on
+    // purpose, update the digests in the same change (the message gives the new ones).
+    let wanted: [(&str, &str, u64, usize); 9] = [
+        ("signup-flow", "proto.check", 0x26f4_2fcd_e95f_fa39, 9101),
+        ("signup-flow", "proto.scenario.run", 0x7ae6_4bf1_660c_4820, 15207),
+        ("signup-flow", "proto.state.list", 0x8e40_38b0_2faf_4f2b, 1619),
+        ("pantry-dashboard", "proto.check", 0x80d8_5076_1d0b_bc64, 17742),
+        ("pantry-dashboard", "proto.scenario.run", 0x7bb6_45ba_8499_e16f, 11483),
+        ("pantry-dashboard", "proto.state.list", 0xe568_cadf_5ab8_5871, 1628),
+        ("bike-repair-booking", "proto.check", 0x2a9e_845f_863b_6cca, 10461),
+        ("bike-repair-booking", "proto.scenario.run", 0x948a_e317_2e04_1a93, 15852),
+        ("bike-repair-booking", "proto.state.list", 0x4e3e_fd83_116e_e514, 1257),
+    ];
+    let mut got: Vec<(&str, &str, u64, usize)> = Vec::new();
+    let mut c = open(wanted[0].0);
+    for (file, command, _, _) in wanted {
+        if got.last().is_some_and(|(last, ..)| *last != file) {
+            c = open(file);
+        }
+        let text = c.run(command, json!({})).to_string();
+        got.push((file, command, fnv1a(&text), text.len()));
+    }
+    let now: Vec<String> = got.iter().map(|(file, command, digest, len)| format!("{file} {command}: ({digest:#018x}, {len})")).collect();
+    assert_eq!(got, wanted, "an answer changed; digests and lengths now:\n{}", now.join("\n"));
+}
