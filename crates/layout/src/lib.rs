@@ -116,19 +116,34 @@ fn place(doc: &mut Document, id: NodeId, x: f64, y: f64) {
     let lin = linear(n.transform);
     let b = figcraft_geom::transform_rect_bbox(lin, n.local_rect());
     let t = Affine::translate((x - b.x0, y - b.y0)) * lin;
+    // Already there, to the bit: touched as before, but not copied (most layers of a layout that
+    // runs again stay where they are; a prototype's run lays out after nearly every action, PF2).
+    if n.transform.as_coeffs().map(f64::to_bits) == t.as_coeffs().map(f64::to_bits) {
+        touch(doc, id);
+        return;
+    }
     if let Some(n) = doc.node_mut(id) {
         n.transform = t;
     }
 }
 
+/// Record layer `id` as touched, as [`Document::node_mut`] does, for a write that would change
+/// nothing: the layer stays shared with the versions before it instead of being copied.
+fn touch(doc: &mut Document, id: NodeId) {
+    doc.mark_dirty([id]);
+}
+
 /// Resize a node's own box (vectors scale their network to stay inside it).
 pub fn set_size(doc: &mut Document, id: NodeId, w: f64, h: f64) {
-    let Some(n) = doc.node_mut(id) else { return };
+    let Some(n) = doc.node(id) else { return };
     let (w, h) = (if w.is_finite() { w.max(0.0) } else { n.width }, if h.is_finite() { h.max(0.0) } else { n.height });
-    let (ow, oh) = (n.width, n.height);
-    if (ow - w).abs() < 1e-9 && (oh - h).abs() < 1e-9 {
+    if (n.width - w).abs() < 1e-9 && (n.height - h).abs() < 1e-9 {
+        // The size it has (touched all the same, not copied).
+        touch(doc, id);
         return;
     }
+    let Some(n) = doc.node_mut(id) else { return };
+    let (ow, oh) = (n.width, n.height);
     let sx = if ow > 1e-9 { w / ow } else { 1.0 };
     let sy = if oh > 1e-9 { h / oh } else { 1.0 };
     match &mut n.kind {
@@ -267,13 +282,14 @@ fn fit_hug_text(doc: &mut Document, id: NodeId, m: &dyn Measure) {
     let w = clamp_size(nw, min_w, max_w);
     let limited = (w - nw).abs() > 1e-6;
     let h = if limited { m.text_height(doc, id, w).unwrap_or(nh) } else { nh };
-    if let Some(n) = doc.node_mut(id)
+    let mode = if limited { TextAutoResize::Height } else { TextAutoResize::WidthAndHeight };
+    if doc.node(id).is_some_and(|n| matches!(&n.kind, NodeKind::Text(t) if t.auto_resize == mode)) {
+        // The mode it has: touched, not copied.
+        touch(doc, id);
+    } else if let Some(n) = doc.node_mut(id)
         && let NodeKind::Text(t) = &mut n.kind
     {
-        let mode = if limited { TextAutoResize::Height } else { TextAutoResize::WidthAndHeight };
-        if t.auto_resize != mode {
-            t.auto_resize = mode;
-        }
+        t.auto_resize = mode;
     }
     set_size(doc, id, w, h);
 }
@@ -663,11 +679,15 @@ fn resize_child(doc: &mut Document, id: NodeId, w: f64, h: f64, m: &dyn Measure)
         .node(id)
         .is_some_and(|n| matches!(&n.kind, NodeKind::Text(t) if t.auto_resize != TextAutoResize::None && t.auto_resize != TextAutoResize::Truncate));
     if is_text_height {
-        if let Some(n) = doc.node_mut(id)
-            && let NodeKind::Text(t) = &mut n.kind
-            && t.auto_resize == TextAutoResize::WidthAndHeight
-        {
-            t.auto_resize = TextAutoResize::Height;
+        // Auto width becomes auto height; a text that is auto height already is only touched.
+        if doc.node(id).is_some_and(|n| matches!(&n.kind, NodeKind::Text(t) if t.auto_resize == TextAutoResize::WidthAndHeight)) {
+            if let Some(n) = doc.node_mut(id)
+                && let NodeKind::Text(t) = &mut n.kind
+            {
+                t.auto_resize = TextAutoResize::Height;
+            }
+        } else {
+            touch(doc, id);
         }
         let th = m.text_height(doc, id, w).unwrap_or(h);
         set_size(doc, id, w, th);

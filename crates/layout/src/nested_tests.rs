@@ -423,3 +423,37 @@ fn coherent_sizing_rules() {
     assert_eq!(cl(&d, t), (Sizing::Hug, Sizing::Hug));
     assert!(!coherent_sizing(&mut d, NodeId(u64::MAX)));
 }
+
+#[test]
+fn a_layout_that_moves_nothing_shares_the_layers_and_touches_them_as_before() {
+    // Laying out again what is laid out already changes no layer: each stays the `Arc` the version
+    // before holds (nothing is copied), and every layer the layout looked at is touched, as it
+    // was when each was written in place.
+    let mut d = Document::new("t");
+    let p = page(&d);
+    let f = al(&mut d, p, LayoutMode::Vertical, (10.0, 10.0), (Sizing::Hug, Sizing::Hug));
+    let inner = al(&mut d, f, LayoutMode::Horizontal, (10.0, 10.0), (Sizing::Fill, Sizing::Hug));
+    let r = rect(&mut d, inner, 30.0, 20.0);
+    let t = fill_text(&mut d, inner);
+    let hug = text(&mut d, f, "Hug");
+    sizing(&mut d, hug, Sizing::Hug, Sizing::Hug);
+    let m = FakeMeasure([(t, (40.0, 12.0, 0.0)), (hug, (25.0, 14.0, 0.0))].into_iter().collect());
+    layout_frame(&mut d, f, &m);
+    let settled = d.clone();
+    d.take_dirty();
+    layout_frame(&mut d, f, &m);
+    assert_eq!(d, settled, "nothing moves the second time");
+    for id in [f, inner, r, t, hug] {
+        assert!(std::sync::Arc::ptr_eq(d.node_arc(id).unwrap(), settled.node_arc(id).unwrap()), "{id:?} is shared, not copied");
+    }
+    // What the layout writes to is touched all the same (the frames it sizes and the hugging text
+    // it fits), so what follows a layout sees the same layers as touched.
+    let touched: Vec<NodeId> = d.take_dirty().into_iter().collect();
+    assert_eq!(touched, vec![f, inner, hug]);
+    // A layer that does move is written (and so copied) as before.
+    d.get_mut(r).unwrap().width = 50.0;
+    let before = d.clone();
+    layout_frame(&mut d, inner, &m);
+    assert!(!std::sync::Arc::ptr_eq(d.node_arc(t).unwrap(), before.node_arc(t).unwrap()), "the text moves along");
+    assert_ne!(pos(&d, t), pos(&before, t));
+}
