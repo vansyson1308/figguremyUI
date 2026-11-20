@@ -96,7 +96,7 @@ fn variable(sim: &Sim, key: &str, want: &Value) -> Option<String> {
 
 /// Whether `want` names the variant called `name` with id `component`: the id, the whole name,
 /// one `Property=Value` pair of it, or one of its property values.
-fn names_variant(want: &str, component: NodeId, name: &str) -> bool {
+pub(crate) fn names_variant(want: &str, component: NodeId, name: &str) -> bool {
     let want = want.trim();
     if want.parse::<NodeId>().is_ok_and(|id| id == component) || want == name.trim() {
         return true;

@@ -46,14 +46,14 @@ pub(super) fn specs() -> Vec<CommandSpec> {
         spec!(
             "design.get",
             "Design context",
-            "{}  → {brief, briefRevision, stage, assumptions, decisions, scenarios, endStates, findings, alternatives, missingLinks: [{node, from}] (links whose layer no longer exists), counts}",
+            "{}  → {brief (with `required`: the elements it must show, [{id, text, screens, nodes, author, status}]), briefRevision, stage, assumptions, decisions, scenarios, endStates, states (the states screens are declared to have: [{frame, kind, name?, shownBy?, reason?, author, status}]; proto.state.list adds whether each is designed and reachable), findings, alternatives, missingLinks: [{node, from}] (links whose layer no longer exists), requiredFacts: [{id, node, shownIn}] (layers of required elements the file hides that count as shown in a declared state: \"the error state of `Form`\"), counts}",
             false,
             get_all
         ),
         spec!(
             "design.forNode",
             "Design context of a layer",
-            "{id}  what links to exactly this layer (not to the layers around or inside it) → {assumptions: [ids], decisions: [ids], scenarios: [ids], findings: [ids], alternatives: [set ids], endState: bool}",
+            "{id}  what links to exactly this layer (not to the layers around or inside it) → {assumptions: [ids], decisions: [ids], scenarios: [ids], findings: [ids], alternatives: [set ids], required: [required element ids], states: [{frame, kind, name?}] (declared states of this screen, or shown by this layer), endState: bool}",
             false,
             for_node
         ),
@@ -138,9 +138,14 @@ fn get_all(s: &mut Session, _: &Value) -> Result<Value> {
         "decisions": ctx.decisions,
         "scenarios": ctx.scenarios,
         "endStates": ctx.end_states,
+        "states": ctx.states,
         "findings": ctx.findings,
         "alternatives": ctx.alternatives,
         "missingLinks": missing.iter().map(|(node, from)| json!({"node": node, "from": from})).collect::<Vec<_>>(),
+        "requiredFacts": super::checks::shown_in_states(doc)
+            .into_iter()
+            .map(|(id, node, state)| json!({"id": id, "node": node, "shownIn": state}))
+            .collect::<Vec<_>>(),
         "counts": {
             "assumptions": ctx.assumptions.len(),
             "untestedAssumptions": untested,
@@ -148,6 +153,9 @@ fn get_all(s: &mut Session, _: &Value) -> Result<Value> {
             "proposedDecisions": proposed,
             "scenarios": ctx.scenarios.len(),
             "endStates": ctx.end_states.len(),
+            "states": ctx.states.len(),
+            "requiredElements": ctx.brief.required.len(),
+            "unlinkedRequiredElements": ctx.brief.required.iter().filter(|r| r.nodes.is_empty()).count(),
             "findings": ctx.findings.len(),
             "openFindings": open,
             "alternatives": ctx.alternatives.len(),
@@ -171,6 +179,13 @@ fn for_node(s: &mut Session, p: &Value) -> Result<Value> {
         "scenarios": ids(ctx.scenarios.iter().filter(|sc| scenario_names(sc)).map(|sc| &sc.id).collect()),
         "findings": ids(ctx.findings.iter().filter(|f| f.nodes.contains(&id)).map(|f| &f.id).collect()),
         "alternatives": ids(ctx.alternatives.iter().filter(|v| v.source == id || v.members.iter().any(|m| m.node == id)).map(|v| &v.id).collect()),
+        "required": ids(ctx.brief.required.iter().filter(|r| r.nodes.contains(&id) || r.screens.contains(&id)).map(|r| &r.id).collect()),
+        "states": ctx
+            .states
+            .iter()
+            .filter(|st| st.frame == id || st.shown_by.as_ref().is_some_and(|b| b.node() == id))
+            .map(|st| if st.name.is_empty() { json!({"frame": st.frame, "kind": st.kind}) } else { json!({"frame": st.frame, "kind": st.kind, "name": st.name}) })
+            .collect::<Vec<_>>(),
         "endState": ctx.end_states.iter().any(|e| e.node == id),
     }))
 }

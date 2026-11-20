@@ -1505,9 +1505,10 @@ Headless (one session, no windows) and in the browser the two commands do nothin
  "roots": null,
  "workingDocument": {"id": 1, "name": "Untitled", "revision": 1, "front": true},
  "documents": [{"id": 1, "name": "Untitled", "revision": 1, "front": true}],
- "commands": 686,
+ "commands": 696,
  "features": {"prototypeSimulator": true, "prototypeSnapshot": true, "scenarios": true, "flowCheck": true,
-              "designContext": true, "checks": ["contrast.text", "contrast.unmeasured", "text.clipped", "…", "flow.brokenTarget", "…", "scenario.fails", "…"],
+              "designContext": true, "declaredStates": true, "requiredElements": true,
+              "checks": ["contrast.text", "contrast.unmeasured", "text.clipped", "…", "context.requiredMissing", "flow.brokenTarget", "…", "scenario.fails", "…", "states.none", "…"],
               "workingDocument": true, "conflictDetection": true, "historyAuthors": true,
               "structuredErrors": true, "engineErrorCodes": true, "appIdentity": true},
  "limits": {"maxLineBytes": 33554432, "maxResponseBytes": 8388608, "maxScreenshotSide": 8192, "historySteps": 20},
@@ -1515,8 +1516,9 @@ Headless (one session, no windows) and in the browser the two commands do nothin
              "save": ["figcraft", "fig"], "export": ["png", "jpg", "svg", "webp", "pdf", "xml", "fig"]}}
 ```
 
-(The numbers are this build's, which has 17 check rules: the design rules and the flow and scenario
-rules. An app from before the simulator answers `prototypeSimulator: false`.)
+(The numbers are this build's, which has 23 check rules: the design rules, the flow and scenario
+rules and the declared-state rules; `crates/mcp/tests/it/guidance.rs` holds this count to the
+engine's. An app from before the simulator answers `prototypeSimulator: false`.)
 
 - `backend` is `headless` (an engine in the server's process: no window, so no prototype player)
   or `attached` (the running app). `window` and `player` say the same as booleans; `app` is what an
@@ -1524,8 +1526,9 @@ rules. An app from before the simulator answers `prototypeSimulator: false`.)
 - `roots` are the folders files may be read from and written to (`{read, write}`), `null` when
   file access is not confined.
 - `features` is read from what is there, never assumed: `prototypeSimulator`, `scenarios`,
-  `flowCheck` and `designContext` are true exactly when the commands `proto.simulate`,
-  `proto.scenario.run`, `proto.check` and `design.get` are in the backend's command list,
+  `flowCheck`, `designContext`, `declaredStates` and `requiredElements` are true exactly when the
+  commands `proto.simulate`, `proto.scenario.run`, `proto.check`, `design.get`, `proto.state.list`
+  and `design.required.add` are in the backend's command list,
   `prototypeSnapshot` when `proto.snapshot` is (the picture `simulate_prototype {image: true}`
   returns), and `checks` are the rule ids `design.check.rules` returns. Attached to an app built before
   revisions, `conflictDetection` and `historyAuthors` are false, and `engineErrorCodes` is false
@@ -1708,7 +1711,7 @@ each step proves, and the prompts spell it out for particular jobs:
 
 | Tool | Engine command | Establishes | Does not establish |
 |---|---|---|---|
-| `design_context` | `design.get` | What is on record: the brief, the stage, assumptions with their status, decisions with who stands behind them, scenarios, end states, findings, alternatives, links to layers that are gone | That any of it is true. An assumption is `untested` until a person records evidence; a `proposed` decision is an agent's until a person accepts it |
+| `design_context` | `design.get` | What is on record: the brief with its required elements, the stage, assumptions with their status, decisions with who stands behind them, scenarios, end states, the states screens are declared to have, findings, alternatives, links to layers that are gone | That any of it is true. An assumption is `untested` until a person records evidence; a `proposed` decision is an agent's until a person accepts it |
 | `check_prototype` | `proto.check` | Facts of the flow graph: starts, which screens an interaction leads to, dead ends against declared end states, actions whose target is gone, overlays without a way out | That a person finds the way. Every interaction counts as a possible step; `ok` means only that these rules found no blocker or major problem |
 | `run_scenarios` | `proto.scenario.run` | Each stored walk reaches the states it expects, under the simulator's rules | That the scenarios cover what matters. `total: 0` is nothing run |
 | `simulate_prototype` | `proto.simulate`, and `proto.snapshot` for the image | These steps produce this state; with `image: true`, what that state looks like | Anything the simulator does not model (below), or that a person used it |
@@ -1725,7 +1728,59 @@ problem, however the layers it names shift.
 `check_prototype` answers `prototyped` (whether the page is a prototype at all), `starts` (each
 with `source`: `flow`, `otherPage` for a frame that an interaction on another page navigates to,
 or `firstFrame`), `screens` (each with `reachable`, `endState`, `deadEnd`, `component`, `out`, and
-`endStateProposedBy` for a frame an agent declared as an end state), `problems` and `ok`.
+`endStateProposedBy` for a frame an agent declared as an end state), `states` (the states declared
+for the page's screens, as `proto.state.list` gives them), `problems` and `ok`.
+
+**States where time passes.** A screen's states are declared, never inferred: `proto.state.set
+{frame, kind, name?, shownBy?, reason?}` with `kind` one of `firstUse`, `empty`, `loading`,
+`error`, `returning`, `success`, `other` (`other` needs a `name`; one declaration per frame, kind
+and name) and `shownBy` either `{node}` (a top-level frame such as an overlay, or a layer in the
+screen) or `{instance, variant}` (an instance in the screen and the variant that shows the state);
+without `shownBy` the state is declared and not designed. `proto.state.remove {frame, kind,
+name?}`, `proto.state.accept {frame, kind, name?}` (a person's) and `proto.state.list {frame?}`
+complete it. The list says of each: `designed` (what `shownBy` names is there), `reachable` with
+`reachedBy`: `scenario` (a stored scenario shows it), `flow` (navigate and overlay actions reach the
+top-level frame or overlay `shownBy` names) or `screen` (for a layer or a variant only its screen is
+reached: the graph doesn't follow variables or bindings, so `reachable` stays false and
+`screenReachable` is true until a scenario shows it), and `coveredBy` (the scenarios whose headless
+run shows it, at the start or after a step that passed). A declaration whose frame has gone, or is
+no longer a top-level frame, is not designed and says where the frame is now; it can still be
+changed and removed, but nothing new is declared on it. A person's change to an agent's declaration
+is recorded as `editedBy`, and from then on the agent doesn't change it. The rules: `states.none`
+(note, from `ready`: nothing declared, said once as that, not a finding about the design),
+`states.notDesigned` (minor without `shownBy`; major when what it names is gone, or the frame is no
+longer a screen: "`A` is no longer a screen: it is inside `B`"), `states.unreachable` (from
+`ready`: minor when the frame or overlay that shows it is reached neither by the flow nor by a
+scenario; a note when only its screen is reached and no scenario shows it: add a scenario step that
+shows it) and `states.errorEmpty` (note, from `ready`: a screen that declares states, none of them
+`error` or `empty`, asked as a question against the brief's context).
+
+**Required elements.** What the design must show is part of the brief: `design.required.add
+{text, screens?, nodes?}`, `design.required.set {id, text?, screens?, nodes?}`,
+`design.required.remove {id}`, `design.required.accept {id}`; ids `R1`, `R2`… Adding or removing one,
+or changing its words or screens, raises `briefRevision`; linking layers (`nodes`) doesn't.
+`context.requiredMissing` (from `converging`) looks for each through its layers: minor when none is
+linked; major when a linked layer is gone, hidden (itself or a layer around it), below 5% effective
+opacity (its own times those of the layers around it: this product's choice, not a standard's), not
+on one of its screens (the screen's frame or inside it), or entirely outside a frame around it that
+clips and doesn't scroll that way; major when a screen it must be on holds none of its layers, or
+is gone or no longer a top-level frame; major when a linked text is below the contrast it needs
+(WCAG 2.2 SC 1.4.3, measured as `contrast.text` does). The file is looked at as it is, so a layer
+that only shows in some state of the prototype is hidden in it; when what hides it is, or is inside,
+what shows a declared state, it counts as shown in that state: no finding, and `design.get` lists it
+under `requiredFacts` (`{id, node, shownIn: "the error state of `Form`"}`). No text-size threshold
+is applied. At most 20 findings per element and 200 in all are listed, then one note counts the
+rest. `context.missingLink` leaves the gone layers of states and required elements to these two
+rules. An agent adds links to anybody's element but removes or replaces links, and changes the
+words and screens, only of its own pending proposals; a person's change to an agent's entry is
+recorded as `editedBy`.
+
+**Steps to the goal.** Every run (`proto.simulate`, each result of `proto.scenario.run`) reports
+`stepsTaken`, `screens` (the screens it went through, each once, in the order first shown; overlays
+aren't screens) and `screenCount`. `design.alternative.compare` gives each member and the source a
+`stepsToGoal`: the stored scenarios that start on that frame (`via: start`) or show it on the way
+(`via: path`), each with its steps and screens, side by side as facts. Only a top-level frame that
+isn't a component is attributed; for anything else `attributed` is false and `why` says so.
 
 `simulate_prototype` with `image: true` plays the run again for the picture (`proto.snapshot`, with
 the start the run used and the steps it took, so a run that stopped at a failing step is drawn
@@ -1753,8 +1808,10 @@ still returned, with `image: {error}`.
   `design.finding.accept`, `design.finding.reopen`, `design.finding.remove`.
 - Alternatives: `design.alternative.create` (copies the source beside itself), `update`,
   `question`, `compare` (facts, never a ranking), `choose`, `remove`.
+- Required elements of the brief: `design.required.add` / `set` / `remove` / `accept`.
 - The prototype: `proto.check`, `proto.simulate`, `proto.snapshot`, `proto.scenario.add` / `set` /
-  `remove` / `list` / `run`, `proto.endState.set` / `list` / `accept`.
+  `remove` / `list` / `run`, `proto.endState.set` / `list` / `accept`, `proto.state.set` /
+  `remove` / `accept` / `list`.
 
 `proto.snapshot {start?, steps?, scale?, path?}` is the picture on its own: it plays the steps
 `proto.simulate` takes (a step's `expect` is not looked at, and every step runs) on a copy of the
@@ -1786,6 +1843,8 @@ refuses:
 | Finding of kind `judgement` or `feedback` | add its own judgement (its `source` is always the agent), relay a person's feedback with their words (the person stays the `source`, the agent is `recordedBy`), claim a fix | confirm it is met (`verify`), accept it as it is, remove feedback; address or reopen one a person accepted or verified |
 | Scenario | add one, change or remove the ones it wrote (`author`) | change or remove a person's |
 | End state | declare one with its `reason` (`proto.endState.set`): a proposal, `status: proposed`, which leaves the frame a dead end for `flow.deadEnd`; change or take back its own proposal | declare one that counts at once; accept an agent's (`proto.endState.accept`) |
+| Declared state of a screen | declare one (`proto.state.set`): a proposal, `status: proposed`, which the `states.*` rules count all the same; change or take back its own proposal | declare one; accept an agent's (`proto.state.accept`); change or remove any |
+| Required element | list one (`design.required.add`): a proposal; link layers to any element; change the words and screens of, or remove, its own proposal | accept an agent's (`design.required.accept`); change or remove any |
 | Alternatives | create, describe, compare; its `choose` records a proposal (a `proposed` decision), and `chosen` stays as it was | choose, or accept that decision |
 | Undo history | undo and redo its own steps | take anybody's step (an agent passes `others: true` only when the person asked it to) |
 | Unsaved work and history | revert, close or reload a file whose unsaved work and undo steps are all its own | throw away anybody's (`file.revert`, `file.close {force}`…); delete versions |
@@ -2503,9 +2562,9 @@ A name a tool or command doesn't take (`run_command {args}` for `params`, a step
 | `figguremyui://document` | The working document (like `inspect_document` at depth 8). |
 | `figguremyui://commands` | The command catalog. |
 | `figguremyui://comments` | Every open comment thread on every page of the working document, as JSON. |
-| `figguremyui://design` | The working document's design context (what `design_context` returns). |
+| `figguremyui://design` | The working document's design context (what `design_context` returns), with the brief's `required` elements and the declared `states`. |
 | `figguremyui://design/findings` | The findings stored in the working document (`design.finding.list`): what was recorded, not a new measurement. |
-| `figguremyui://prototype/flow` | The current page's prototype as facts (what `check_prototype` returns). |
+| `figguremyui://prototype/flow` | The current page's prototype as facts (what `check_prototype` returns), with the page's declared `states` and whether each is designed, reachable and shown by a scenario. |
 | `figguremyui://prototype/scenarios` | The stored scenarios (`proto.scenario.list`): stored, not run. |
 | `figguremyui://node/{id}` (template) | One layer of the working document with children to depth 2. |
 | `figguremyui://command/{id}` (template) | One command's docs, e.g. `figguremyui://command/layout.add`. |
@@ -2518,15 +2577,15 @@ the `figguremyui://` ones ([`migration.md`](migration.md#mcp)).
 
 | Prompt | Arguments | What it teaches |
 |---|---|---|
-| `design_from_brief` | `brief` (default: the one stored in the document) | Brief → screens → components and variables → interactions → scenarios, including the places where time passes (first use, empty, loading, error, success, return) → verify → hand over |
+| `design_from_brief` | `brief` (default: the one stored in the document) | Brief (with its required elements, `design.required.add`) → screens → components and variables → interactions → scenarios, with the places where time passes (first use, empty, loading, error, success, return) declared per screen (`proto.state.set`) before any embellishment → verify, steps to the goal reported → hand over |
 | `explore_alternatives` | `source` (required), `question`, `count` (default 3) | The fixed constraints first; alternatives that differ in structure, order of information or form (a recolour is not one); `design.alternative.create` and `compare`; facts and trade-offs, the person chooses, nothing is ranked by a score |
 | `verify_prototype` | `start` (default: the first flow) | Flow facts, scenarios, simulated states with pictures; what failed, what did not run, and what a simulation cannot show |
 | `critique_and_fix` | `scope` (default: the current page), `max_findings` (default 10) | `check_design` with `record`; one finding at a time; `design.finding.address`, then `recheck`; measured findings kept apart from the agent's judgement and from people's feedback; a bounded report grouped by consequence |
 | `hand_over` | `path` (default: the document's own) | Save; check that the file reopens and still runs; list untested assumptions, proposals waiting for a person, failed or skipped checks, and what was simulated rather than seen |
-| `mobile_screen` | `screen` (required), `device` (default "iPhone 16"), `brand_color` | One screen from what a person must do on it, in auto layout, its other states named |
+| `mobile_screen` | `screen` (required), `device` (default "iPhone 16"), `brand_color` | One screen from what a person must do on it, in auto layout, its other states declared (`proto.state.set`) and what it must show listed (`design.required.add`) |
 | `design_system` | `name`, `primary` | Variables, styles and a button with variants, named for their role and tried on a real screen in every mode |
 | `landing_page` | `product` (required), `width` (default 1440), `accent` | A page ordered by what the arriving person needs to know next, its primary action wired |
-| `prototype_flow` | `screens` (comma-separated), `transition` | One person's walk wired through the screens, stored as scenarios and run |
+| `prototype_flow` | `screens` (comma-separated), `transition` | One person's walk wired through the screens, its states where time passes declared, stored as scenarios and run, steps to the goal reported |
 | `fix_comments` | `page` (default "all"), `auto_resolve` (default "yes"), `author` (default "AI") | Each open thread: the smallest change, a reply, then resolved once verified |
 | `watch_comments` | `minutes` (default 5) | The same, for feedback as it arrives |
 

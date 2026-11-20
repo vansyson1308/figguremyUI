@@ -34,8 +34,12 @@ pub(in crate::design) fn missing_links(doc: &Document) -> Vec<(NodeId, String)> 
     out
 }
 
-/// `context.missingLink`: one finding per link to a layer that is gone.
+/// `context.missingLink`: one finding per link to a layer that is gone. The links of declared
+/// states and required elements are left out: `states.notDesigned` and `context.requiredMissing`
+/// report a gone layer of theirs.
 pub(super) fn missing_link(doc: &Document) -> Vec<Found> {
+    let required: BTreeSet<&str> = doc.design.brief.required.iter().map(|r| r.id.as_str()).collect();
+    let reported_elsewhere = |from: &str| from.starts_with("state ") || required.contains(from);
     let found = |(node, from): (NodeId, String)| Found {
         rule: MISSING_LINK,
         severity: Severity::Minor,
@@ -45,7 +49,7 @@ pub(super) fn missing_link(doc: &Document) -> Vec<Found> {
         evidence: format!("{from} → {node}"),
         suggestion: "point it at the layer that took its place, or remove the link".into(),
     };
-    missing_links(doc).into_iter().map(found).collect()
+    missing_links(doc).into_iter().filter(|(_, from)| !reported_elsewhere(from)).map(found).collect()
 }
 
 /// `context.briefIncomplete`: a file with screens whose brief leaves out who it is for, what

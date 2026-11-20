@@ -8,6 +8,7 @@
 mod clipping;
 mod context;
 mod contrast;
+mod required;
 mod target;
 
 use std::collections::BTreeSet;
@@ -18,6 +19,7 @@ use figcraft_doc::{Document, NodeId};
 use crate::check::{Facts, Found, Rule, Scope};
 
 pub(super) use context::missing_links;
+pub use required::shown_in_states;
 
 /// Every rule `design.check` knows: the design module's own, then those other modules provide.
 pub fn rules() -> Vec<Rule> {
@@ -60,7 +62,7 @@ pub fn rules() -> Vec<Rule> {
         },
         Rule {
             id: context::MISSING_LINK,
-            about: "A link from the design context (an assumption, decision, scenario, end state, finding or alternative) to a layer that no longer exists.",
+            about: "A link from the design context (an assumption, decision, scenario, end state, finding or alternative) to a layer that no longer exists. Links of declared states and required elements are left to states.notDesigned and context.requiredMissing, which report a gone layer of theirs, so it isn't reported twice.",
             run: |f, _| context::missing_link(f.doc),
             unsettled: None,
         },
@@ -82,6 +84,12 @@ pub fn rules() -> Vec<Rule> {
             run: |f, _| context::stale_decision(f.doc),
             unsettled: None,
         },
+        Rule {
+            id: required::MISSING,
+            about: "The brief's required elements (design.required.add) looked for through the layers linked to each: minor when no layer is linked (it can't be checked until one is); major when a linked layer is gone, hidden (itself or a layer around it), below 5% effective opacity (its own times those of the layers around it; this product's choice, not a standard's), not on one of the screens the element must be on (the screen's frame or inside it), or entirely outside a frame around it that clips its content and doesn't scroll that way; major when a screen it must be on holds none of its layers, and when a screen it names is gone or no longer a top-level frame; a layer hidden in the file because it, or the layer that hides it, is or is inside what shows a declared state (proto.state.set's shownBy) counts as shown in that state and isn't reported (design.get lists it under requiredFacts); major when a linked text is below the contrast it needs (WCAG 2.2 SC 1.4.3 Contrast (Minimum), level AA: 4.5:1, or 3:1 for large text, measured as contrast.text measures it; text whose contrast can't be measured with certainty isn't reported here). No text-size threshold is applied: none of these rules has one. Elements of the whole file; at most 20 findings per element and 200 in all, then one note counts the rest.",
+            run: |f, scope| required::missing(f.doc, scope),
+            unsettled: None,
+        },
     ];
     all.extend(external_rules());
     all
@@ -98,7 +106,14 @@ fn external_rules() -> Vec<Rule> {
 pub fn min_stage(rule_id: &str) -> Stage {
     match rule_id {
         "flow.brokenTarget" | context::MISSING_LINK | clipping::NO_FONT => Stage::Exploring,
-        context::BRIEF_INCOMPLETE | context::UNTESTED_ASSUMPTION | context::STALE_DECISION | "scenario.none" | "scenario.unvisited" => Stage::Ready,
+        context::BRIEF_INCOMPLETE
+        | context::UNTESTED_ASSUMPTION
+        | context::STALE_DECISION
+        | "scenario.none"
+        | "scenario.unvisited"
+        | "states.none"
+        | "states.unreachable"
+        | "states.errorEmpty" => Stage::Ready,
         _ => Stage::Converging,
     }
 }

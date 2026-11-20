@@ -1,6 +1,6 @@
 //! Scenarios and flow: the walks through the prototype stored in the file, run on the headless
 //! simulator with what each step did; what the flow check finds on the page, as facts; and the
-//! frames declared as places where a flow may end.
+//! frames declared as places where a flow may end; then the states of the screens (`states.rs`).
 //!
 //! Scenario steps are written by AI agents and from the command line (`proto.scenario.add`); this
 //! panel reads, runs and removes them.
@@ -59,6 +59,7 @@ pub(super) fn show(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
     scenarios(app, ui, cx);
     flow_check(app, ui, cx);
     end_states(app, ui, cx);
+    super::states::show(app, ui, cx);
 }
 
 /// Run `proto.scenario.run` (one scenario, or all) and keep what it answered.
@@ -66,6 +67,8 @@ fn run(app: &mut FigApp, id: Option<&str>) {
     let params = id.map_or_else(|| json!({}), |id| json!({"id": id}));
     if let Some(result) = act(app, id.unwrap_or("scenarios"), "proto.scenario.run", params) {
         keep(app, result, |r, ran| r.scenario_run = Some(ran));
+        // What the scenarios show of the declared states goes with them.
+        super::states::check_states(app);
     }
 }
 
@@ -215,6 +218,10 @@ fn outcome(ui: &mut Ui, r: &Value, steps: usize) {
             chip(ui, tr("Passed"));
             quiet(ui, tr("every step ran and every expectation held"));
         });
+        // Steps to the goal, as a fact: how many actions and screens the walk took.
+        if let (Some(taken), Some(screens)) = (r["stepsTaken"].as_u64(), r["screenCount"].as_u64()) {
+            quiet(ui, &trf("Steps to the end: {steps}. Screens: {screens}.", &[("steps", &taken), ("screens", &screens)]));
+        }
         return;
     }
     let at = match r["failedStep"].as_u64() {
@@ -256,6 +263,7 @@ fn flow_check(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
             && let Some(result) = act(app, "flow", "proto.check", json!({}))
         {
             keep(app, result, |r, ran| r.flow = Some(ran));
+            super::states::check_states(app);
         }
         refusal_for(app, ui, "flow");
     });

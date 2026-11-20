@@ -43,9 +43,13 @@ impl FigApp {
     /// entry (`D1`, `S2`…) the focused control belongs to.
     fn focus_inspect(&self) -> Value {
         let region = self.ui.nav.region;
-        let context = self.ui.context.open && !self.ui.left_collapsed && region == a11y::Region::Layers;
+        // The icon rail beside the left panel takes the keyboard with it, but isn't the panel
+        // (QC2-11): it is named as itself.
+        let on_rail =
+            region == a11y::Region::Layers && self.ui.nav.focused_rect.zip(self.ui.nav.rail_rect).is_some_and(|(f, r)| r.contains(f.center()));
+        let context = self.ui.context.open && !self.ui.left_collapsed && region == a11y::Region::Layers && !on_rail;
         let mut v = json!({
-            "region": if context { "designContext" } else { region.id() },
+            "region": if on_rail { "rail" } else if context { "designContext" } else { region.id() },
             "keyboard": self.ui.nav.keyboard,
             "control": self.ui.nav.focused_name,
         });

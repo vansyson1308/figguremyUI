@@ -1,6 +1,7 @@
 //! Prototype verification commands: the flow graph check (`proto.check`), running triggers
 //! against the simulator (`proto.simulate`), stored scenarios (`proto.scenario.*`) and the frames
-//! where a flow may end (`proto.endState.*`).
+//! where a flow may end (`proto.endState.*`), and the states each screen is declared to have
+//! (`proto.state.*`).
 //!
 //! All of it is headless and deterministic: the same file gives the same answer, the file is
 //! never changed by a check or a run (the simulator plays a copy), and what is reported is what
@@ -27,6 +28,9 @@ mod parse;
 mod run;
 pub use run::{KNOWN_DIFFERENCES, NOT_MODELLED};
 mod scenario;
+pub(crate) use scenario::{Walk, walks};
+mod states;
+pub(crate) use states::not_a_screen;
 
 #[cfg(test)]
 mod tests;
@@ -52,7 +56,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "proto.check",
             "Check prototype flow",
-            "{page? (a page id; default: the current page)}  the page's prototype as a graph, without changing or playing anything → {page, prototyped (a flow start is declared, a screen plays an action that moves between screens, or another page leads here), starts: [{frame, name, source: flow|firstFrame|otherPage (an interaction on another page navigates here), flow}], screens: [{id, name, reachable, endState (declared and accepted by a person), endStateProposedBy? (the AI agent whose declaration waits to be accepted), deadEnd, overlay, component (a component or component set: never a start, dead end or unreachable), out: [{from, fromName, trigger, action, to?, toName?, key?, ms?}]}], problems: [{rule, severity, nodes, subject? (what it is about when that isn't the layers), message, evidence, suggestion}], ok}. The page is read as the player has it: instances play their main components' interactions, wherever those live. Every interaction on a screen is an edge (all branches of a conditional and every variant a change-to leads to count as possible), so `reachable` means an interaction leads there, not that a viewer will get there. `screens` is complete whether or not there are problems. Rules: flow.brokenTarget, flow.deadEnd, flow.trappedOverlay, flow.unreachable, flow.noStart, scenario.fails, scenario.none, scenario.unvisited (design.check.rules describes each). `ok` says only that these rules found no blocker or major problem; it doesn't say the prototype is right",
+            "{page? (a page id; default: the current page)}  the page's prototype as a graph, without changing or playing anything → {page, prototyped (a flow start is declared, a screen plays an action that moves between screens, or another page leads here), starts: [{frame, name, source: flow|firstFrame|otherPage (an interaction on another page navigates here), flow}], screens: [{id, name, reachable, endState (declared and accepted by a person), endStateProposedBy? (the AI agent whose declaration waits to be accepted), deadEnd, overlay, component (a component or component set: never a start, dead end or unreachable), out: [{from, fromName, trigger, action, to?, toName?, key?, ms?}]}], states: [the states declared for the page's frames, as proto.state.list gives them], problems: [{rule, severity, nodes, subject? (what it is about when that isn't the layers), message, evidence, suggestion}], ok}. The page is read as the player has it: instances play their main components' interactions, wherever those live. Every interaction on a screen is an edge (all branches of a conditional and every variant a change-to leads to count as possible), so `reachable` means an interaction leads there, not that a viewer will get there. `screens` is complete whether or not there are problems. Rules: flow.brokenTarget, flow.deadEnd, flow.trappedOverlay, flow.unreachable, flow.noStart, scenario.fails, scenario.none, scenario.unvisited (design.check.rules describes each; the states.* rules run in design.check). `ok` says only that these rules found no blocker or major problem; it doesn't say the prototype is right",
             false,
             check::check
         ),
@@ -78,6 +82,34 @@ pub fn specs() -> Vec<CommandSpec> {
             end_state::list
         ),
         spec!(
+            "proto.state.set",
+            "Declare screen state",
+            "{frame (a top-level frame: the screen), kind: firstUse|empty|loading|error|returning|success|other, name? (required for other; a label otherwise: one declaration per frame, kind and name), shownBy? ({node} a top-level frame (another screen, an overlay) or a layer in the screen | {instance, variant} an instance in the screen and the variant it shows the state with (its name, one property value, or the variant's id) | null: not designed yet), reason? (why the screen has this state)}  declares a state the screen has because time passes (first use, nothing yet, waiting, failure, coming back) or its outcome, or changes the given keys of one declared already; what `shownBy` names must exist. The user's declaration stands; an AI agent's is a proposal until a person accepts it (proto.state.accept), and an agent changes and takes back only its own proposals that nobody else edited (a change by anyone but its author is recorded as editedBy). A new declaration needs a top-level frame; one whose frame has since moved or gone can still be changed and removed. Proposals count in the states.* checks all the same → {state: {frame, frameName, kind, name?, shownBy?, shownByName?, reason?, author, status: proposed|accepted, acceptedBy?, exists}}",
+            true,
+            states::set
+        ),
+        spec!(
+            "proto.state.remove",
+            "Remove screen state",
+            "{frame, kind, name?}  takes a declaration back (also one whose frame is gone); an AI agent takes back only its own proposals → {removed}",
+            true,
+            states::remove
+        ),
+        spec!(
+            "proto.state.accept",
+            "Accept screen state",
+            "{frame, kind, name?}  a person stands behind a state an AI agent declared; refused to an AI agent; the person is recorded as acceptedBy → {state}",
+            true,
+            states::accept
+        ),
+        spec!(
+            "proto.state.list",
+            "List screen states",
+            "{frame? (only this screen's)}  every declared state with what can be said about it → {states: [{frame, frameName, kind, name?, shownBy?, shownByName?, reason?, author, status, acceptedBy?, exists (the screen), designed (shownBy is given and what it names is there: a top-level frame, a layer in the screen, or an instance in the screen whose component set has the variant), notDesigned? (why not), reachable (a scenario shows it, or the flow reaches the top-level frame shownBy names), screenReachable? (true for a layer or a variant whose screen the flow reaches: not counted as reachable, since variables and bindings aren't followed), reachedBy: [scenario | flow (navigate and overlay actions reach the frame or overlay shownBy names) | screen (only the screen holding the layer or variant is reached)], coveredBy: [scenario ids whose headless run shows it, at the start or after a step that passed], editedBy? (who changed somebody else's declaration last)}], summary: {total, designed, reachable, proposed}}",
+            false,
+            states::list
+        ),
+        spec!(
             "proto.simulate",
             "Simulate prototype",
             concat!(
@@ -85,7 +117,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 steps_doc!(),
                 ", expect? ",
                 expect_doc!(),
-                " (checked after the last step), stopOnFailure? (default true: stop at the first step that fails)}  plays the steps headless on a copy of the file, which never changes. The result is the simulator's: it follows the player's rules for what state comes next, and nobody watched the player do it → {passed, simulated: true, notModelled: [what the simulator leaves out], knownDifferences: [where the simulator and the app's player still differ], start, state: {screen, screenName, overlays: [{id, name}], history, variables (those the run changed), modes, variants: [{instance, component, name}], endState}, steps: [{index, action, note?, fired, effects, problem?, failures, state: {screen, screenName, overlays}}], failures (of the final expect), failedStep?, stepsTaken}. A step fails when it can't run (the layer isn't on what shows: the top overlay if one is open, else the screen), when a gesture or key sets nothing off, when an action can't run, or when its expect doesn't hold. A gesture reaches the first interaction with its trigger on the layer or a layer around it; hover and press last until the next step; wait fires every pending after-delay; scrolling, timing, devices and the player's own keys aren't simulated"
+                " (checked after the last step), stopOnFailure? (default true: stop at the first step that fails)}  plays the steps headless on a copy of the file, which never changes. The result is the simulator's: it follows the player's rules for what state comes next, and nobody watched the player do it → {passed, simulated: true, notModelled: [what the simulator leaves out], knownDifferences: [where the simulator and the app's player still differ], start, state: {screen, screenName, overlays: [{id, name}], history, variables (those the run changed), modes, variants: [{instance, component, name}], endState}, steps: [{index, action, note?, fired, effects, problem?, failures, state: {screen, screenName, overlays}}], failures (of the final expect), failedStep?, stepsTaken, screens (the screens it went through, each once, in the order first shown: the start, then the screen after each step that ran; overlays aren't screens), screenCount}. A step fails when it can't run (the layer isn't on what shows: the top overlay if one is open, else the screen), when a gesture or key sets nothing off, when an action can't run, or when its expect doesn't hold. A gesture reaches the first interaction with its trigger on the layer or a layer around it; hover and press last until the next step; wait fires every pending after-delay; scrolling, timing, devices and the player's own keys aren't simulated"
             ),
             false,
             simulate
@@ -127,7 +159,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "proto.scenario.run",
             "Run scenarios",
-            "{id? (a scenario id: S1; default: every stored scenario)}  runs them headless on a copy of the file, each stopping at its first failing step; simulated, as proto.simulate → {passed (no scenario failed), simulated: true, notModelled: [what the simulator leaves out], knownDifferences: [where it and the player still differ], total, failed, results: [{id, name, passed, failedStep? (index), failures (of that step, else of the final expect), steps (as proto.simulate), stepsTaken}]}",
+            "{id? (a scenario id: S1; default: every stored scenario)}  runs them headless on a copy of the file, each stopping at its first failing step; simulated, as proto.simulate → {passed (no scenario failed), simulated: true, notModelled: [what the simulator leaves out], knownDifferences: [where it and the player still differ], total, failed, results: [{id, name, passed, failedStep? (index), failures (of that step, else of the final expect), steps (as proto.simulate), stepsTaken, screens, screenCount (as proto.simulate)}]}",
             false,
             scenario::run_stored
         ),
@@ -167,6 +199,8 @@ fn simulate(s: &mut Session, p: &Value) -> Result<Value> {
         "steps": run::steps_json(&steps, &r),
         "failures": r.failures,
         "stepsTaken": r.steps.len(),
+        "screens": r.screens(start),
+        "screenCount": r.screens(start).len(),
     });
     if let (Some(o), Some(i)) = (out.as_object_mut(), r.failed_step) {
         o.insert("failedStep".into(), json!(i));

@@ -21,16 +21,18 @@ mod compare;
 mod context;
 mod findings;
 mod input;
+mod required;
 #[cfg(test)]
 mod tests;
 
 use crate::cmd::CommandSpec;
 
-pub use checks::{min_stage, rules};
+pub use checks::{min_stage, rules, shown_in_states};
 pub(crate) use input::{USER, actor, agent, author_name};
 
 pub fn specs() -> Vec<CommandSpec> {
     let mut all = context::specs();
+    all.extend(required::specs());
     all.extend(findings::specs());
     all.extend(alternatives::specs());
     all

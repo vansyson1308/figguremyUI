@@ -1,15 +1,21 @@
 //! The brief as plain questions. Every answer is optional and none is ever marked as missing: a
 //! brief is something to come back to, not a form to complete. An answer is written to the file
 //! when its field loses the keyboard (`design.brief.set` with that one field), so each answer is
-//! one undo step.
+//! one undo step. Below the answers, what the design must show (`design.required.*`), each with
+//! the layers that are it, which the checks look for.
 
 use egui::Ui;
-use figcraft_doc::design::Brief;
+use figcraft_doc::NodeId;
+use figcraft_doc::design::{Brief, RequiredElement};
 use serde_json::json;
 
-use super::{Cx, act, pad, quiet, refusal_for, stage, strong};
+use super::records::submit;
+use super::{
+    Cx, Form, FormEnd, FormKind, act, authorship, body, button, draft, entry, flow_row, form_end, heading, layer_links, pad, quiet, refusal_for,
+    stage, strong,
+};
 use crate::FigApp;
-use crate::i18n::{tr, tr_noop, trn};
+use crate::i18n::{tr, tr_noop, trf, trn};
 use crate::widgets;
 
 /// The brief's text answers: the command's field and the question the panel asks for it.
@@ -90,6 +96,7 @@ pub(super) fn show(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
             act(app, "brief", "design.brief.set", json!({field: next}));
         }
     }
+    required(app, ui, cx);
     pad(ui, |ui| {
         refusal_for(app, ui, "brief");
         if cx.design.brief_revision > 0 {
@@ -104,4 +111,135 @@ pub(super) fn show(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
             );
         }
     });
+}
+
+/// What the design must show: each element with the layers that are it and the screens it must
+/// be on, and a form to add one.
+fn required(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
+    heading(
+        ui,
+        tr("What must it show?"),
+        tr("Things the design has to show, such as consent, a price or a permission. Link the layers that are each one, so the checks can find it."),
+    );
+    let mut form = app.ui.context.form.take();
+    let editing = |form: &Option<Form>, id: Option<&str>| form.as_ref().is_some_and(|f| f.kind == FormKind::Required(id.map(str::to_string)));
+    for r in &cx.design.brief.required {
+        entry(app, ui, &r.id, |app, ui| {
+            if editing(&form, Some(&r.id)) {
+                required_form(app, ui, cx, &mut form);
+            } else {
+                element(app, ui, cx, r, &mut form);
+            }
+        });
+    }
+    ui.add_space(8.0);
+    pad(ui, |ui| {
+        if cx.design.brief.required.is_empty() {
+            quiet(ui, tr("Nothing is listed yet."));
+            ui.add_space(4.0);
+        }
+        if editing(&form, None) {
+            required_form(app, ui, cx, &mut form);
+        } else if button(ui, tr("Add something it must show")) {
+            let mut f = Form::new(FormKind::Required(None));
+            f.checks = vec![("link".into(), !cx.selection.is_empty()), ("screens".into(), false)];
+            form = Some(f);
+        }
+    });
+    app.ui.context.form = form;
+}
+
+fn element(app: &mut FigApp, ui: &mut Ui, cx: &Cx, r: &RequiredElement, form: &mut Option<Form>) {
+    flow_row(ui, |ui| {
+        quiet(ui, &r.id);
+        authorship(ui, &r.author, &r.accepted_by);
+    });
+    body(ui, &r.text);
+    if !r.screens.is_empty() {
+        ui.add_space(2.0);
+        quiet(ui, tr("On these screens"));
+        layer_links(app, ui, cx, &r.screens, false);
+    }
+    ui.add_space(2.0);
+    if r.nodes.is_empty() {
+        quiet(ui, tr("No layer is linked, so the checks can't find it yet."));
+    } else {
+        quiet(ui, tr("The layers that are it"));
+        if let Some(gone) = layer_links(app, ui, cx, &r.nodes, true) {
+            let next: Vec<NodeId> = r.nodes.iter().copied().filter(|n| *n != gone).collect();
+            act(app, &r.id, "design.required.set", json!({"id": r.id, "nodes": next}));
+        }
+        // Hidden in the file, shown in a declared state: a fact, not a problem.
+        for (id, node, state) in figcraft_engine::design::shown_in_states(&cx.doc) {
+            if id == r.id {
+                quiet(ui, &trf("{layer} shows in {state}", &[("layer", &cx.name(node).unwrap_or_default()), ("state", &state)]));
+            }
+        }
+    }
+    let mut more = r.nodes.clone();
+    more.extend(cx.selection.iter().filter(|s| !r.nodes.contains(s)));
+    ui.add_space(4.0);
+    flow_row(ui, |ui| {
+        if !r.status.is_accepted() && widgets::button(ui, tr("Accept"), true, true).clicked() {
+            act(app, &r.id, "design.required.accept", json!({"id": r.id}));
+        }
+        if more.len() > r.nodes.len() && button(ui, tr("Link the selected layer")) {
+            act(app, &r.id, "design.required.set", json!({"id": r.id, "nodes": more}));
+        }
+        if button(ui, tr("Edit")) {
+            *form = Some(Form::new(FormKind::Required(Some(r.id.clone()))).with_text(0, &r.text));
+        }
+        if button(ui, tr("Remove")) {
+            act(app, &r.id, "design.required.remove", json!({"id": r.id}));
+        }
+    });
+    refusal_for(app, ui, &r.id);
+}
+
+fn required_form(app: &mut FigApp, ui: &mut Ui, cx: &Cx, slot: &mut Option<Form>) {
+    let Some(f) = slot.as_mut() else { return };
+    let FormKind::Required(id) = f.kind.clone() else { return };
+    let focus = std::mem::take(&mut f.focus);
+    let [what, ..] = &mut f.text;
+    draft(ui, cx.id(("required", &id, "text")), tr("What must the design show, and where?"), what, 2, focus);
+    // A new element can start linked to what is selected, and limited to the screens it is on.
+    let screens: Vec<NodeId> = {
+        let mut out: Vec<NodeId> = Vec::new();
+        for top in cx.selection.iter().filter_map(|s| cx.doc.top_level_frame(*s)) {
+            if !out.contains(&top) {
+                out.push(top);
+            }
+        }
+        out
+    };
+    if id.is_none() && !cx.selection.is_empty() {
+        let labels = [tr("The selected layers are it"), tr("Only on their screens")];
+        for ((_, on), label) in f.checks.iter_mut().zip(labels) {
+            if widgets::checkbox(ui, *on, label) {
+                *on = !*on;
+            }
+        }
+    }
+    match form_end(ui, f, tr("Save")) {
+        FormEnd::Open => {}
+        FormEnd::Cancel => *slot = None,
+        FormEnd::Submit => {
+            let on = |i: usize| f.checks.get(i).is_some_and(|(_, on)| *on);
+            let params = match &id {
+                Some(id) => json!({"id": id, "text": f.text(0)}),
+                None => {
+                    let mut p = json!({"text": f.text(0)});
+                    if on(0) {
+                        p["nodes"] = json!(cx.selection);
+                    }
+                    if on(1) {
+                        p["screens"] = json!(screens);
+                    }
+                    p
+                }
+            };
+            let cmd = if id.is_some() { "design.required.set" } else { "design.required.add" };
+            submit(app, slot, cmd, params);
+        }
+    }
 }

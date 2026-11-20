@@ -72,6 +72,12 @@ impl Cut {
     }
 }
 
+/// What cuts layer `id` out of view whole, as evidence (the frame around it that clips its
+/// content and doesn't scroll that way); `None` when some of it can be seen.
+pub(super) fn cut_whole(doc: &Document, id: NodeId) -> Option<String> {
+    cut(doc, id).filter(|c| c.whole).map(|c| c.evidence(doc))
+}
+
 /// The nearest frame around layer `id` that cuts part of it off where the viewer can't scroll to:
 /// a frame that clips its content, on the axes it doesn't scroll. A frame that scrolls an axis
 /// makes what is past it on that axis reachable, also past the frames further out.

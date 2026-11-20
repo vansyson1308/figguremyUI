@@ -315,6 +315,7 @@ impl FigApp {
         // right, the "right" (Design) panel on the left. Their ids and widths stay as they are.
         let mirrored = self.ui.mirrored;
         let side = |start: bool, id: &'static str| if start != mirrored { egui::Panel::left(id) } else { egui::Panel::right(id) };
+        self.ui.nav.rail_rect = None;
         if !hidden && !minimized && (!narrow || mobile == Some(MobilePanel::Left)) {
             side(true, "left_rail")
                 .exact_size(layers::RAIL_WIDTH)
@@ -322,6 +323,7 @@ impl FigApp {
                 .frame(egui::Frame::NONE.fill(t.panel).stroke(egui::Stroke::new(1.0, t.border)))
                 .show(ui, |ui| {
                     a11y::region(&mut self.ui.nav, ui, a11y::Region::Layers, egui::accesskit::Role::Navigation, i18n::tr("Sidebar"));
+                    self.ui.nav.rail_rect = Some(ui.max_rect());
                     layers::rail(self, ui)
                 });
         }

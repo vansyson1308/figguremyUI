@@ -17,8 +17,16 @@ use serde_json::{Value, json};
 const BUILDER: &str = "Example builder (agent)";
 
 /// The rules `check_design` skips at `converging` (they run from `ready`).
-const SKIPPED_AT_CONVERGING: [&str; 5] =
-    ["context.briefIncomplete", "context.untestedAssumption", "context.staleDecision", "scenario.none", "scenario.unvisited"];
+const SKIPPED_AT_CONVERGING: [&str; 8] = [
+    "context.briefIncomplete",
+    "context.untestedAssumption",
+    "context.staleDecision",
+    "scenario.none",
+    "scenario.unvisited",
+    "states.none",
+    "states.unreachable",
+    "states.errorEmpty",
+];
 
 struct Example {
     file: &'static str,
@@ -28,6 +36,11 @@ struct Example {
     screens: &'static [(&'static str, bool, bool)],
     /// The frame names of the accepted end states.
     end_states: &'static [&'static str],
+    /// Declared states: (screen, kind, what shows it, the scenarios that show it). Each is
+    /// designed, reachable, the builder's and accepted by the maintainers' step.
+    states: &'static [(&'static str, &'static str, &'static str, &'static [&'static str])],
+    /// Required elements of the brief: (id, the names of the layers that are it).
+    required: &'static [(&'static str, &'static [&'static str])],
 }
 
 const EXAMPLES: [Example; 3] = [
@@ -40,6 +53,7 @@ const EXAMPLES: [Example; 3] = [
             ("S4", "Resend toast closes by itself"),
             ("S5", "Continue explains itself while consent is off"),
             ("S6", "Fixing the form updates the error"),
+            ("S7", "Confirm without a code says what to type"),
         ],
         screens: &[
             ("Welcome", true, false),
@@ -55,6 +69,13 @@ const EXAMPLES: [Example; 3] = [
             ("Segment", false, false),
         ],
         end_states: &["Done"],
+        states: &[
+            ("Sign-up form", "error", "Error summary", &["S2", "S5", "S6"]),
+            ("Verify code", "error", "Code field", &["S7"]),
+            ("Verify code", "success", "Done", &["S1"]),
+            ("Verify code", "other", "Toast: code sent again", &["S4"]),
+        ],
+        required: &[("R1", &["Consent text", "Consent checkbox"])],
     },
     Example {
         file: "pantry-dashboard",
@@ -76,6 +97,13 @@ const EXAMPLES: [Example; 3] = [
             ("StockRow", false, false),
         ],
         end_states: &[],
+        states: &[
+            ("Pantry dashboard", "loading", "Loading", &["S1", "S2", "S3", "S4", "S5"]),
+            ("Pantry dashboard", "empty", "Empty state", &["S2"]),
+            ("Pantry dashboard", "error", "Error banner", &["S3"]),
+            ("Pantry dashboard", "success", "List", &["S1", "S2", "S3", "S4", "S5"]),
+        ],
+        required: &[("R1", &["Updated"])],
     },
     Example {
         file: "bike-repair-booking",
@@ -100,6 +128,12 @@ const EXAMPLES: [Example; 3] = [
             ("Steps", false, false),
         ],
         end_states: &["Booked"],
+        states: &[
+            ("Choose service", "error", "Hint", &["S1", "S2", "S3", "S4", "S5", "S6"]),
+            ("Details", "error", "Hint", &["S1", "S2", "S3", "S4", "S5", "S6"]),
+            ("Confirm", "success", "Booked", &["S1", "S4"]),
+        ],
+        required: &[("R1", &["Value"])],
     },
 ];
 
@@ -250,6 +284,62 @@ fn each_example_passes_its_flow_check_scenarios_and_design_check() {
     }
 }
 
+/// Each example declares the states its screens have where time passes, each linked to what
+/// shows it, designed, reached and shown by the scenarios listed; and lists what its brief
+/// requires, linked to the layers that are it. The builder proposed them; the maintainers' step
+/// accepted them.
+#[test]
+fn each_example_declares_its_states_and_required_elements() {
+    for e in &EXAMPLES {
+        let mut c = open(e.file);
+        let listed = c.run("proto.state.list", json!({}));
+        let got: Vec<(String, String, String, Vec<String>)> = listed["states"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| {
+                assert_eq!((&s["designed"], &s["reachable"], &s["status"]), (&json!(true), &json!(true), &json!("accepted")), "{}: {s}", e.file);
+                assert_eq!((&s["author"], &s["acceptedBy"]), (&json!(BUILDER), &json!("user")), "{}: {s}", e.file);
+                assert!(!s["reason"].as_str().unwrap_or("").is_empty(), "{}: {s}", e.file);
+                let covered = s["coveredBy"].as_array().unwrap().iter().map(|x| x.as_str().unwrap().to_string()).collect();
+                (
+                    s["frameName"].as_str().unwrap().to_string(),
+                    s["kind"].as_str().unwrap().to_string(),
+                    s["shownByName"].as_str().unwrap().to_string(),
+                    covered,
+                )
+            })
+            .collect();
+        let want: Vec<(String, String, String, Vec<String>)> = e
+            .states
+            .iter()
+            .map(|(f, k, by, cov)| (f.to_string(), k.to_string(), by.to_string(), cov.iter().map(|x| x.to_string()).collect()))
+            .collect();
+        assert_eq!(got, want, "{}: declared states", e.file);
+        let ctx = c.ok("design_context", json!({}));
+        let required = ctx["brief"]["required"].as_array().unwrap();
+        let got: Vec<(String, Vec<String>)> = required
+            .iter()
+            .map(|r| {
+                assert_eq!((&r["author"], &r["acceptedBy"]), (&json!(BUILDER), &json!("user")), "{}: {r}", e.file);
+                let names = r["nodes"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|n| c.ok("get_node", json!({"id": n, "depth": 0, "fields": ["name"]}))["name"].as_str().unwrap().to_string())
+                    .collect();
+                (r["id"].as_str().unwrap().to_string(), names)
+            })
+            .collect();
+        let want: Vec<(String, Vec<String>)> =
+            e.required.iter().map(|(id, names)| (id.to_string(), names.iter().map(|n| n.to_string()).collect())).collect();
+        assert_eq!(got, want, "{}: required elements", e.file);
+        // The rules about them run at the file's stage and find nothing.
+        let v = c.ok("check_design", json!({"rules": ["states.none", "states.notDesigned", "states.unreachable", "context.requiredMissing"]}));
+        assert_eq!(v["findings"], json!([]), "{}", e.file);
+    }
+}
+
 #[test]
 fn every_example_brief_says_who_it_is_for_what_they_need_where_and_how_success_shows() {
     for e in &EXAMPLES {
@@ -314,7 +404,7 @@ fn shots_dir() -> PathBuf {
 }
 
 #[test]
-fn the_dashboard_holds_its_layout_at_four_widths_in_every_state() {
+fn the_dashboard_holds_its_layout_at_five_widths_in_every_state() {
     let mut c = open("pantry-dashboard");
     let dash = named(&mut c, "Pantry dashboard");
     let list = named(&mut c, "Low stock");
@@ -325,7 +415,8 @@ fn the_dashboard_holds_its_layout_at_four_widths_in_every_state() {
         .collect();
     let shots = shots_dir();
     // (width, KPI cards per row, side panel under the list)
-    for (width, per_row, stacked) in [(360.0, 1, true), (768.0, 2, false), (1440.0, 4, false), (1100.0, 4, false)] {
+    // 1024: four across, not three and a lone fourth (QC2-03).
+    for (width, per_row, stacked) in [(360.0, 1, true), (768.0, 2, false), (1440.0, 4, false), (1100.0, 4, false), (1024.0, 4, false)] {
         for status in ["loading", "ready", "empty", "error"] {
             dashboard_state(&mut c, status);
             c.ok("set_properties", json!({"ids": [dash], "props": {"width": width}}));

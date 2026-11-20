@@ -15,7 +15,7 @@ const TARGET: &str = "target.small";
 
 /// Every rule `design.check` knows, in the order it lists them: the design rules, then the
 /// prototype flow and scenario rules.
-const ALL_RULES: [&str; 18] = [
+const ALL_RULES: [&str; 23] = [
     CONTRAST,
     UNMEASURED,
     TEXT_CLIPPED,
@@ -26,6 +26,7 @@ const ALL_RULES: [&str; 18] = [
     "context.briefIncomplete",
     "context.untestedAssumption",
     "context.staleDecision",
+    "context.requiredMissing",
     "flow.brokenTarget",
     "flow.deadEnd",
     "flow.trappedOverlay",
@@ -34,6 +35,10 @@ const ALL_RULES: [&str; 18] = [
     "scenario.fails",
     "scenario.none",
     "scenario.unvisited",
+    "states.none",
+    "states.notDesigned",
+    "states.unreachable",
+    "states.errorEmpty",
 ];
 
 /// What `rule` finds on the current page.
@@ -407,6 +412,7 @@ fn the_stage_decides_which_rules_run_and_the_rest_are_listed_as_skipped() {
             "context.briefIncomplete",
             "context.untestedAssumption",
             "context.staleDecision",
+            "context.requiredMissing",
             "flow.deadEnd",
             "flow.trappedOverlay",
             "flow.unreachable",
@@ -414,6 +420,10 @@ fn the_stage_decides_which_rules_run_and_the_rest_are_listed_as_skipped() {
             "scenario.fails",
             "scenario.none",
             "scenario.unvisited",
+            "states.none",
+            "states.notDesigned",
+            "states.unreachable",
+            "states.errorEmpty",
         ]
     );
     assert_eq!(r["findings"], json!([]), "the low contrast isn't reported while exploring");
@@ -444,17 +454,28 @@ fn the_stage_decides_which_rules_run_and_the_rest_are_listed_as_skipped() {
             CLIPPED,
             TARGET,
             "context.missingLink",
+            "context.requiredMissing",
             "flow.brokenTarget",
             "flow.deadEnd",
             "flow.trappedOverlay",
             "flow.unreachable",
             "flow.noStart",
             "scenario.fails",
+            "states.notDesigned",
         ]
     );
     assert_eq!(
         skipped(&r),
-        ["context.briefIncomplete", "context.untestedAssumption", "context.staleDecision", "scenario.none", "scenario.unvisited"]
+        [
+            "context.briefIncomplete",
+            "context.untestedAssumption",
+            "context.staleDecision",
+            "scenario.none",
+            "scenario.unvisited",
+            "states.none",
+            "states.unreachable",
+            "states.errorEmpty"
+        ]
     );
     assert_eq!(r["summary"]["byRule"], json!({CONTRAST: 1}));
 
@@ -463,9 +484,9 @@ fn the_stage_decides_which_rules_run_and_the_rest_are_listed_as_skipped() {
     let r = ex(&mut s, "design.check", json!({}));
     assert_eq!(ran(&r), ALL_RULES);
     assert_eq!(r["skipped"], json!([]));
-    assert_eq!(r["summary"]["byRule"], json!({CONTRAST: 1, "context.briefIncomplete": 1, "context.untestedAssumption": 1}));
-    assert_eq!(r["summary"]["bySeverity"], json!({"blocker": 0, "major": 1, "minor": 0, "note": 2}));
-    assert_eq!(r["summary"]["total"], 3);
+    assert_eq!(r["summary"]["byRule"], json!({CONTRAST: 1, "context.briefIncomplete": 1, "context.untestedAssumption": 1, "states.none": 1}));
+    assert_eq!(r["summary"]["bySeverity"], json!({"blocker": 0, "major": 1, "minor": 0, "note": 3}));
+    assert_eq!(r["summary"]["total"], 4);
 
     // Rules asked for by name run whatever the stage, and exactly those.
     ex(&mut s, "design.stage.set", json!({"stage": "exploring"}));
@@ -525,11 +546,13 @@ fn the_rule_list_says_what_each_measures_and_from_which_stage() {
             "exploring",
             "converging",
             "converging",
-            // context.missingLink, .briefIncomplete, .untestedAssumption, .staleDecision
+            // context.missingLink, .briefIncomplete, .untestedAssumption, .staleDecision,
+            // .requiredMissing
             "exploring",
             "ready",
             "ready",
             "ready",
+            "converging",
             // flow.brokenTarget, .deadEnd, .trappedOverlay, .unreachable, .noStart
             "exploring",
             "converging",
@@ -537,6 +560,11 @@ fn the_rule_list_says_what_each_measures_and_from_which_stage() {
             "converging",
             "converging",
             // scenario.fails, .none, .unvisited
+            "converging",
+            "ready",
+            "ready",
+            // states.none, .notDesigned, .unreachable, .errorEmpty
+            "ready",
             "converging",
             "ready",
             "ready",
@@ -560,7 +588,9 @@ struct Mixed {
 /// major), a dot too small to hit that goes on to "Done" (`target.small`, major) and a banner
 /// the card cuts off (`layout.clippedContent`, minor); the brief is empty
 /// (`context.briefIncomplete`, note) and no scenario walks the flow (`scenario.none`, note). The
-/// flow itself is sound: it starts on the card and may end on "Done".
+/// flow itself is sound: it starts on the card and may end on "Done"; the card's empty state is
+/// declared and shown by the card itself, which the flow starts on (so `states.none` and
+/// `states.unreachable` have nothing to say).
 fn mixed_page(s: &mut Session) -> Mixed {
     let (card, text) = card_with_text(s, "#DDDDDD");
     let done = frame(s, "Done", 500.0, 320.0, 200.0);
@@ -569,6 +599,7 @@ fn mixed_page(s: &mut Session) -> Mixed {
     ex(s, "proto.interaction.add", json!({"id": dot, "dest": done}));
     ex(s, "proto.flow.add", json!({"start": card}));
     ex(s, "proto.endState.set", json!({"id": done, "reason": "The task is finished here"}));
+    ex(s, "proto.state.set", json!({"frame": card, "kind": "empty", "shownBy": {"node": card}}));
     ex(s, "design.stage.set", json!({"stage": "ready"}));
     Mixed { card, text, banner, dot }
 }
@@ -663,7 +694,11 @@ fn flow_findings_come_through_design_check_by_stage_and_are_settled_by_recheck()
     // Ready, the flow that now works is expected to be covered by a stored scenario.
     ex(&mut s, "design.stage.set", json!({"stage": "ready"}));
     let r = ex(&mut s, "design.check", json!({}));
-    assert_eq!(listed(&r), [("note", "context.briefIncomplete", json!([])), ("note", "scenario.none", json!([home]))]);
+    // And, with nothing declared, that no states are (said once, not a failure).
+    assert_eq!(
+        listed(&r),
+        [("note", "context.briefIncomplete", json!([])), ("note", "scenario.none", json!([home])), ("note", "states.none", json!([]))]
+    );
     assert_eq!(r["findings"][1]["evidence"], format!("1 flow start(s), the first at `Home` ({home}); 0 scenarios start on this page"));
 }
 

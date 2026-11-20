@@ -12,6 +12,7 @@ use crate::{EngineError, Session};
 mod flow;
 mod scenarios;
 mod simulate;
+mod states;
 
 /// `proto.check` on the current page.
 fn check(s: &mut Session) -> Value {

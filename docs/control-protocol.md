@@ -310,7 +310,8 @@ the rail, View ▸ Panels ▸ Design context or `view.designContext {section?, o
 `flow`, `findings` or `alternatives`), the file's `stage` and `briefRevision`, `counts`
 (`assumptions`, `decisions`, `proposedDecisions`, `scenarios`, `endStates`, `findings`,
 `openFindings`, `alternatives`), the `form` open in it (`assumption`, `decision`, `finding`,
-`findingAction`, `alternative`, `alternativeMember`, `alternativeSet`, `choose`, else `null`), what
+`findingAction`, `alternative`, `alternativeMember`, `alternativeSet`, `choose`, `state` (declaring
+or editing a state of a screen), `required` (an element the brief requires), else `null`), what
 the engine last `refused` there (`{about, message}`: the entry or form and the engine's error as
 shown, else `null`), the entry a followed link points out (`highlight`), what refers to the
 selected layer (`selected`: `{node, refs}` with `design.forNode`'s answer), and the results it
@@ -318,13 +319,17 @@ shows, each with `stale: true` once the file has changed since: `scenarioRun` (`
 failed, results: [{id, passed, failedStep, failures}]}`), `flowCheck` (`{problems: [{rule,
 severity, nodes, message}], screens}`), `checks` (`{findings: [{rule, severity, nodes, message}],
 summary, skipped: [rule ids], stage}`), `recorded` (what `design.check.record` last answered) and
-`compare` (`{set, members, warnings}`); each is `null` until it has been run in the panel. The
+`compare` (`{set, members, warnings}`); each is `null` until it has been run in the panel;
+`states` (`{declared, proposed, summary}`: how many states the screens are declared to have, how
+many an agent proposed, and `proto.state.list`'s summary as the panel last read it) and `required`
+(`{total, unlinked, proposed}`: the brief's required elements). The
 panel reads the file every frame, so what a command changes shows on the next one.
 `textPreview` is true while a live text preview shows on the canvas (a hovered text style or named
 instance, a dragged axis slider; see `text.preview` in [mcp.md](mcp.md)).
 `focus` is keyboard navigation's state: the `region` with the keyboard (`toolbar`, `layers`,
 `canvas` or `properties`; `designContext` while the Design context panel shows in the layers'
-place, with the `entry` (`D1`, `S2`…) the focused control belongs to, or null), whether `keyboard` mode is on (F6 or Tab moved the focus since the last
+place, with the `entry` (`D1`, `S2`, `R1`, `state <frame> <kind> <name>`…) the focused control belongs to, or null; `rail`
+while it is on the icon rail beside the left panel, which F6 counts with the layers), whether `keyboard` mode is on (F6 or Tab moved the focus since the last
 pointer press, so the focus ring shows) and the name of the `control` with the keyboard (what a
 screen reader announces; empty when nothing has it). `reduceMotion` is true when the preference or
 the system's accessibility setting turns the interface's animations off. `uiScale` is the interface

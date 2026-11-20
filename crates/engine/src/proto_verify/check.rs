@@ -14,7 +14,8 @@ use figcraft_doc::{Document, Node, NodeId};
 use serde_json::{Value, json};
 
 use super::flow::{self, Edge, Graph};
-use super::scenario;
+use super::scenario::{self, ScenarioFacts};
+use super::states;
 use crate::check::{Facts, Found, Rule, Scope};
 use crate::params::opt_id;
 use crate::{Result, Session, bad};
@@ -24,8 +25,9 @@ pub(crate) struct PageFacts {
     pub(super) graph: Graph,
     /// What the `flow.*` rules find.
     pub(super) flow: Vec<Found>,
-    /// What the `scenario.*` rules find: the stored scenarios are run the first time it is asked.
-    scenarios: OnceCell<Vec<Found>>,
+    /// What the `scenario.*` rules find and which declared states the runs show: the stored
+    /// scenarios are run the first time it is asked.
+    scenarios: OnceCell<ScenarioFacts>,
 }
 
 impl PageFacts {
@@ -35,7 +37,7 @@ impl PageFacts {
         PageFacts { graph, flow, scenarios: OnceCell::new() }
     }
 
-    pub(super) fn scenarios(&self, doc: &Document) -> &[Found] {
+    pub(super) fn scenarios(&self, doc: &Document) -> &ScenarioFacts {
         self.scenarios.get_or_init(|| scenario::findings(doc, &self.graph))
     }
 }
@@ -89,7 +91,7 @@ pub(super) fn check(s: &mut Session, p: &Value) -> Result<Value> {
     let page_facts = facts.flow(page);
     let g = &page_facts.graph;
     let mut problems = page_facts.flow.clone();
-    problems.extend(page_facts.scenarios(doc).iter().cloned());
+    problems.extend(page_facts.scenarios(doc).found.iter().cloned());
     sort(&mut problems);
     let name = |id: NodeId| doc.node(id).map(|n| n.name.clone());
     let starts: Vec<Value> =
@@ -115,11 +117,13 @@ pub(super) fn check(s: &mut Session, p: &Value) -> Result<Value> {
         })
         .collect();
     let ok = !problems.iter().any(|f| matches!(f.severity, Severity::Blocker | Severity::Major));
+    let declared = states::on_page(&facts, page);
     Ok(json!({
         "page": page,
         "prototyped": g.prototyped,
         "starts": starts,
         "screens": screens,
+        "states": declared,
         "problems": problems.iter().map(found_json).collect::<Vec<_>>(),
         "ok": ok,
     }))
@@ -190,7 +194,7 @@ fn scoped(facts: &Facts<'_>, scope: Scope<'_>, rule: &str, kind: Kind) -> Vec<Fo
         let page_facts = facts.flow(page);
         let all = match kind {
             Kind::Flow => page_facts.flow.as_slice(),
-            Kind::Scenario => page_facts.scenarios(doc),
+            Kind::Scenario => page_facts.scenarios(doc).found.as_slice(),
         };
         let holds_page = scope.layers.iter().any(|s| *s == page || (doc.top_level_frame(*s) == Some(*s) && doc.page_of(*s) == Some(page)));
         let kept = |f: &&Found| {
@@ -252,6 +256,30 @@ pub(super) fn rules() -> Vec<Rule> {
             id: scenario::UNVISITED,
             about: "Note: screens a start reaches that no stored scenario shows, as its start or as the screen or an overlay after any of its steps. One finding per page, listing them, while any is left. Reported only when at least 1 stored scenario starts on the page.",
             run: |f, scope| scoped(f, scope, scenario::UNVISITED, Kind::Scenario),
+            unsettled: None,
+        },
+        Rule {
+            id: states::NONE,
+            about: "Note, the lowest severity, from stage ready: the file has top-level frames and 0 declared states (proto.state.set). Said once for the file, as \"no states declared\": without a declaration, whether a screen lacks a state is a guess, so this is not a finding about the design.",
+            run: states::none,
+            unsettled: None,
+        },
+        Rule {
+            id: states::NOT_DESIGNED,
+            about: "A declared state (proto.state.set) with nothing designed to show it: minor when no `shownBy` is given; major when what `shownBy` names is gone, is neither a top-level frame nor a layer in the screen, or is an instance (in the screen) whose component set has no such variant; major, with a finding of its own, when the declared frame is gone or no longer a top-level frame (\"`A` is no longer a screen: it is inside `B`\"; remove it or declare it on B). Compares the declaration with the file; declarations of the whole file, whatever the page.",
+            run: states::not_designed_rule,
+            unsettled: None,
+        },
+        Rule {
+            id: states::UNREACHABLE,
+            about: "A designed declared state that nothing is known to show. Minor when `shownBy` names a top-level frame (a screen, an overlay) that no flow start reaches through the interactions of its page and no stored scenario shows. Note (the lowest severity) when it names a layer or a variant whose screen is reached: the flow graph doesn't follow variables or bindings, so only a stored scenario shows it is ever shown (its headless run, at the start or after a step that passed: the frame is the screen or an open overlay, the layer is showing, the instance is showing with that variant); add a scenario step that shows it. A declaration whose frame is no longer a screen is states.notDesigned's, not this rule's.",
+            run: states::unreachable,
+            unsettled: None,
+        },
+        Rule {
+            id: states::ERROR_EMPTY,
+            about: "Note, the lowest severity: a screen that declares states, none of them `error` or `empty`. Asked as a question against the brief's context of use (can this screen fail, or have nothing to show?), not reported as a defect: a person who knows it can't accepts the finding.",
+            run: states::error_empty,
             unsettled: None,
         },
     ]

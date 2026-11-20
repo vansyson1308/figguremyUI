@@ -248,7 +248,12 @@ fn finding(app: &mut FigApp, ui: &mut Ui, cx: &Cx, f: &Finding, form: &mut Optio
     body(ui, &f.message);
     part(ui, if check { tr("What was measured") } else { tr("What was observed") }, &f.evidence);
     part(ui, tr("What would help"), &f.suggestion);
-    part(ui, tr("Raised by"), &f.source);
+    // A check was measured by its rule, not raised by somebody (QC2-08).
+    if check {
+        part(ui, tr("Measured by the rule"), &f.rule);
+    } else {
+        part(ui, tr("Raised by"), author_name(&f.source));
+    }
     // Who stored it, when that isn't who raised it: an agent passing on what a person said, or
     // whoever ran the checks.
     if !f.recorded_by.is_empty() {

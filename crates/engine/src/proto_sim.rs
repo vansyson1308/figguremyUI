@@ -101,6 +101,7 @@ mod vars;
 #[cfg(test)]
 pub(crate) mod tests;
 
+pub(crate) use expect::names_variant;
 pub use render::{render, render_png};
 pub use state::{OverlayInfo, State, VariantInfo};
 pub(crate) use steps::gesture_name;

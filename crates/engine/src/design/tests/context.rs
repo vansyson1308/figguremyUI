@@ -321,13 +321,13 @@ fn get_reports_everything_with_counts_and_missing_links() {
         json!({"kind": "judgement", "rule": "hierarchy", "message": "The button competes with the title", "nodes": [button]}),
     );
     let r = ex(&mut s, "design.get", json!({}));
-    for key in ["brief", "assumptions", "decisions", "scenarios", "endStates", "findings", "alternatives", "missingLinks", "counts"] {
+    for key in ["brief", "assumptions", "decisions", "scenarios", "endStates", "states", "findings", "alternatives", "missingLinks", "counts"] {
         assert!(r.get(key).is_some(), "design.get has no `{key}`: {r}");
     }
     assert_eq!(r["missingLinks"], json!([]));
     assert_eq!(
         r["counts"],
-        json!({"assumptions": 2, "untestedAssumptions": 1, "decisions": 1, "proposedDecisions": 1, "scenarios": 0, "endStates": 0, "findings": 1, "openFindings": 1, "alternatives": 0, "missingLinks": 0})
+        json!({"assumptions": 2, "untestedAssumptions": 1, "decisions": 1, "proposedDecisions": 1, "scenarios": 0, "endStates": 0, "states": 0, "requiredElements": 0, "unlinkedRequiredElements": 0, "findings": 1, "openFindings": 1, "alternatives": 0, "missingLinks": 0})
     );
     assert_eq!(r["assumptions"][0]["links"], json!([button]));
     assert_eq!(r["decisions"][0]["author"], AGENT_NAME);
@@ -336,7 +336,7 @@ fn get_reports_everything_with_counts_and_missing_links() {
     let on_button = ex(&mut s, "design.forNode", json!({"id": button}));
     assert_eq!(
         on_button,
-        json!({"assumptions": ["A1"], "decisions": ["D1"], "scenarios": [], "findings": ["F1"], "alternatives": [], "endState": false})
+        json!({"assumptions": ["A1"], "decisions": ["D1"], "scenarios": [], "findings": ["F1"], "alternatives": [], "required": [], "states": [], "endState": false})
     );
     let on_frame = ex(&mut s, "design.forNode", json!({"id": home.to_string()}));
     assert_eq!(on_frame["assumptions"], json!([]), "a link to a layer inside isn't a link to the frame");

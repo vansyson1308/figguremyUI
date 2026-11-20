@@ -450,7 +450,11 @@ fn the_rules_are_listed_for_design_check_and_follow_its_scope() {
             "flow.noStart",
             "scenario.fails",
             "scenario.none",
-            "scenario.unvisited"
+            "scenario.unvisited",
+            "states.none",
+            "states.notDesigned",
+            "states.unreachable",
+            "states.errorEmpty"
         ]
     );
     assert!(crate::proto_verify::rules().iter().all(|r| r.about.len() > 40), "each says what it measures");

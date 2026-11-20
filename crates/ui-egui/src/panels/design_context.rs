@@ -29,6 +29,7 @@ mod brief;
 mod findings;
 mod flow;
 mod records;
+mod states;
 
 /// The narrowest the left sidebar is drawn while it shows the design context: sentences need
 /// more room than layer names.
@@ -119,6 +120,8 @@ pub(crate) struct Results {
     pub recorded: Option<Ran>,
     /// The last `design.alternative.compare` shown, and its set.
     pub compare: Option<(String, Ran)>,
+    /// What `proto.state.list` says about the declared states (asked when the file changed).
+    pub states: Option<Ran>,
 }
 
 impl Results {
@@ -126,7 +129,8 @@ impl Results {
     /// results are about: those that were up to date before it are about `now` too, so they
     /// aren't shown as being about an earlier state.
     fn carry_over(&mut self, before: &Arc<Document>, now: &Arc<Document>) {
-        let rans = [self.scenario_run.as_mut(), self.flow.as_mut(), self.checks.as_mut(), self.compare.as_mut().map(|(_, r)| r)];
+        let rans =
+            [self.scenario_run.as_mut(), self.flow.as_mut(), self.checks.as_mut(), self.compare.as_mut().map(|(_, r)| r), self.states.as_mut()];
         for ran in rans.into_iter().flatten() {
             if !ran.stale(before) {
                 ran.doc = now.clone();
@@ -158,6 +162,13 @@ pub(crate) enum FormKind {
     Set(String),
     /// Choosing a member of a set: 0 rationale.
     Choose(String, NodeId),
+    /// A state of this screen: a new one (`None`; pick 0 its kind), or the one with this kind id
+    /// and name. 0 name, 1 why, 2 the variant an instance shows it with; `checks[0]`: the selected
+    /// layer shows it.
+    State(NodeId, Option<(String, String)>),
+    /// A required element of the brief: a new one, or the one with this id. 0 what must show;
+    /// `checks[0]`: the selected layers are it, `checks[1]`: only on their screens.
+    Required(Option<String>),
 }
 
 /// A form open in the panel: one at a time, drawn where it belongs.
@@ -371,6 +382,7 @@ pub(crate) fn go_to_entry(app: &mut FigApp, id: &str) {
         Some('S') => Section::Flow,
         Some('F') => Section::Findings,
         Some('V') => Section::Alternatives,
+        Some('R') => Section::Brief,
         _ => return,
     };
     let ui = &mut app.ui.context;
@@ -500,7 +512,8 @@ pub(crate) fn draft(ui: &mut Ui, id: Id, label: &str, text: &mut String, rows: u
     if focus {
         // A form just opened: the keyboard goes to its first field, brought into view.
         r.request_focus();
-        r.scroll_to_me(None);
+        // The whole focus ring, not only the field, comes into view (QC2-06).
+        crate::a11y::scroll_ring_into_view(ui, r.rect.expand(6.0));
     }
     ui.add_space(4.0);
     r
@@ -606,7 +619,9 @@ pub(crate) fn layer_links(app: &mut FigApp, ui: &mut Ui, cx: &Cx, layers: &[Node
                         quiet(ui, &missing);
                     }
                 }
-                if unlink && icons::button(ui, Icon::Close, 16.0, false, tr("Remove this link")).clicked() {
+                // Named after what it takes away: several in a row aren't heard alike (QC2-11).
+                let what = trf("Remove the link to {name}", &[("name", &text)]);
+                if unlink && icons::button(ui, Icon::Close, 16.0, false, &what).clicked() {
                     gone = Some(*id);
                 }
             });
@@ -822,12 +837,13 @@ fn selected_layer(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
     };
     let Some(name) = cx.name(node) else { return };
     let ids = |key: &str| -> Vec<String> { refs[key].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect() };
-    let entries: Vec<String> = ["assumptions", "decisions", "scenarios", "findings", "alternatives"].into_iter().flat_map(ids).collect();
+    let entries: Vec<String> = ["assumptions", "decisions", "scenarios", "findings", "alternatives", "required"].into_iter().flat_map(ids).collect();
     let end = refs["endState"].as_bool() == Some(true);
+    let states = refs["states"].as_array().is_some_and(|a| !a.is_empty());
     ui.add_space(8.0);
     pad(ui, |ui| {
         quiet(ui, &trf("Selected: {name}", &[("name", &name)]));
-        if entries.is_empty() && !end {
+        if entries.is_empty() && !end && !states {
             quiet(ui, tr("Nothing in the design context refers to this layer."));
             return;
         }
@@ -839,6 +855,9 @@ fn selected_layer(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
                 }
             }
             if end && link(ui, tr("an end of the flow")).clicked() {
+                app.ui.context.section = Section::Flow;
+            }
+            if states && link(ui, tr("a state of a screen")).clicked() {
                 app.ui.context.section = Section::Flow;
             }
         });
@@ -924,6 +943,12 @@ pub fn inspect(app: &FigApp) -> Value {
         "checks": checks,
         "recorded": shown.and_then(|r| r.recorded.as_ref()).map(|ran| &ran.result),
         "compare": compare,
+        "states": design.as_ref().map(|c| states::inspect(c, shown.and_then(|r| r.states.as_ref()).map(|ran| &ran.result))),
+        "required": design.as_ref().map(|c| json!({
+            "total": c.brief.required.len(),
+            "unlinked": c.brief.required.iter().filter(|r| r.nodes.is_empty()).count(),
+            "proposed": c.brief.required.iter().filter(|r| !r.status.is_accepted()).count(),
+        })),
     })
 }
 
@@ -937,6 +962,8 @@ fn form_name(kind: &FormKind) -> &'static str {
         FormKind::Member(..) => "alternativeMember",
         FormKind::Set(_) => "alternativeSet",
         FormKind::Choose(..) => "choose",
+        FormKind::State(..) => "state",
+        FormKind::Required(_) => "required",
     }
 }
 
