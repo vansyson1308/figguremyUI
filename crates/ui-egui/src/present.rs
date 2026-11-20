@@ -285,6 +285,8 @@ pub struct Presenter {
     fit: Option<(f64, f64)>,
     rev: u64,
     display: Option<(u64, Document)>,
+    /// The screens the next and previous arrows step through, for a revision and frame shown.
+    screens: Option<(u64, NodeId, Vec<NodeId>)>,
     scroll_anim: Option<ScrollAnim>,
     anim: Option<Anim>,
     anim_tex: Option<egui::TextureHandle>,
@@ -369,6 +371,7 @@ impl Presenter {
             fit: None,
             rev: 0,
             display: None,
+            screens: None,
             scroll_anim: None,
             anim: None,
             anim_tex: None,

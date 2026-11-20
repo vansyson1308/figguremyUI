@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use figcraft_doc::proto::{Action, ConditionalBlock, Expr, Interaction};
+use figcraft_doc::proto::{Action, ConditionalBlock, Expr, Interaction, Trigger};
 use figcraft_doc::{Document, NodeId, NodeKind, VariableType, VariableValue, Variables};
 use figcraft_geom::Rect;
 use serde_json::Value;
@@ -195,9 +195,18 @@ pub fn change_to_target(doc: &Document, node: NodeId, dest: NodeId) -> Option<No
     std::iter::once(node).chain(doc.ancestors(node)).find(in_set).or_else(|| crate::components::owning_instance(doc, node))
 }
 
+/// Whether a person sets trigger `t` off on the layer itself, with the pointer (a click or tap,
+/// hovering, pressing, dragging, the mouse entering, leaving, going down or up), rather than a
+/// timer (after delay) or a key that fires wherever the pointer is.
+pub fn pointer_trigger(t: &Trigger) -> bool {
+    !matches!(t, Trigger::AfterDelay { .. } | Trigger::KeyPress { .. })
+}
+
 /// The hotspots of the screen `root` (a presented frame or overlay): its visible layers with
-/// interactions, bottom-most first, with their bounds on the page clipped by the frames around
-/// them that clip content (the presenter flashes them after a click where nothing reacts).
+/// interactions a person sets off with the pointer ([`pointer_trigger`]; a frame that only moves
+/// on after a delay is no hotspot, QC-12), bottom-most first, with their bounds on the page
+/// clipped by the frames around them that clip content (the presenter flashes them after a click
+/// where nothing reacts).
 pub fn hotspots(doc: &Document, root: NodeId) -> Vec<(NodeId, Rect)> {
     let mut out = Vec::new();
     // Each visible layer's clip: its bounds cut by the clipping frames around it (inside `root`).
@@ -222,7 +231,7 @@ pub fn hotspots(doc: &Document, root: NodeId) -> Vec<(NodeId, Rect)> {
             (c, _) => c,
         };
         clips.insert(id, own);
-        if n.interactions.is_empty() {
+        if !n.interactions.iter().any(|it| pointer_trigger(&it.trigger)) {
             continue;
         }
         let Some(b) = bounds else { continue };
@@ -232,4 +241,29 @@ pub fn hotspots(doc: &Document, root: NodeId) -> Vec<(NodeId, Rect)> {
         }
     }
     out
+}
+
+/// The screens of `page` the presenter steps through with its next and previous arrows (QC-11),
+/// in reading order: its top-level frames, but not components or component sets, nor frames only
+/// ever shown as overlays (some interaction opens or swaps them in as an overlay, and none
+/// navigates to them and no flow starts on them), as the flow check counts screens. `current`,
+/// the frame shown, is always among them, so the arrows know where they are.
+pub fn screens(doc: &Document, page: NodeId, current: NodeId) -> Vec<NodeId> {
+    let (mut navigated, mut overlaid) = (BTreeSet::new(), BTreeSet::new());
+    for n in doc.nodes() {
+        if let NodeKind::Page { flows, .. } = &n.kind {
+            navigated.extend(flows.iter().map(|f| f.start));
+        }
+        for a in n.interactions.iter().flat_map(|it| figcraft_doc::proto::walk(&it.actions)) {
+            match a {
+                Action::Navigate { dest, .. } => navigated.extend(navigate_target(doc, *dest, &HashMap::new())),
+                Action::OpenOverlay { dest, .. } | Action::SwapOverlay { dest } => {
+                    overlaid.insert(*dest);
+                }
+                _ => {}
+            }
+        }
+    }
+    let component = |id: NodeId| doc.node(id).is_some_and(|n| matches!(n.kind, NodeKind::Component { .. } | NodeKind::ComponentSet { .. }));
+    doc.top_frames(page).into_iter().filter(|f| *f == current || !(component(*f) || (overlaid.contains(f) && !navigated.contains(f)))).collect()
 }

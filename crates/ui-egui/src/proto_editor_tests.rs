@@ -115,6 +115,57 @@ fn a_click_where_nothing_reacts_flashes_the_hotspots() {
     assert_eq!(u.app.inspect()["presentOptions"]["hotspotHints"], json!(false));
 }
 
+/// QC-12: a frame that moves on after a delay is no hotspot: the hints marked the whole screen as
+/// something to click, and a click anywhere on it counted as a click on a hotspot (nothing
+/// flashed). The button on it still is one.
+#[test]
+fn a_timer_on_the_screen_is_no_hotspot() {
+    let (mut s, a, b, btn) = setup();
+    s.execute("proto.interaction.add", &json!({"id": a, "trigger": {"type": "afterDelay", "ms": 60000}, "action": {"type": "navigate", "dest": b}}))
+        .unwrap();
+    s.execute("proto.interaction.add", &json!({"id": a, "trigger": {"type": "keyPress", "key": "K"}, "action": {"type": "navigate", "dest": b}}))
+        .unwrap();
+    let mut u = Ui::new(s);
+    u.run("proto.present", json!({"start": a}));
+    let hot = presenter(&u)["hotspots"].as_array().cloned().unwrap_or_default();
+    assert_eq!(hot.iter().map(|h| h["id"].clone()).collect::<Vec<_>>(), vec![json!(btn)], "only the button: {hot:?}");
+    let r = rect_of(&hot[0]["rect"]);
+    click(&mut u, pos2(r.center().x, r.max.y + r.height() * 2.0));
+    assert_eq!(presenter(&u)["hotspotFlash"], json!(true), "a click beside the button flashes the hints");
+    assert_eq!(presenter(&u)["current"], json!(a));
+}
+
+/// QC-11: the next and previous arrows (and the arrow keys) walked into components and frames only
+/// shown as overlays. They step through the screens: A, then B, skipping the component between
+/// them and the overlay B opens.
+#[test]
+fn the_arrows_step_through_screens_only() {
+    let (mut s, a, b, _) = setup();
+    let ex = |s: &mut Session, c: &str, p: Value| s.execute(c, &p).unwrap();
+    // Reading order on the page: A (x 0), the component (x 500), B (x 1000), the overlay (x 1500).
+    ex(&mut s, "node.set", json!({"ids": [b], "props": {"x": 1000}}));
+    let card = id(&ex(&mut s, "frame.create", json!({"x": 500, "y": 0, "width": 200, "height": 100, "name": "Card"})));
+    let card = id(&ex(&mut s, "component.create", json!({"ids": [card]})));
+    let sheet = id(&ex(&mut s, "frame.create", json!({"x": 1500, "y": 0, "width": 200, "height": 100, "name": "Sheet"})));
+    let open = id(&ex(&mut s, "shape.rectangle", json!({"x": 20, "y": 20, "width": 60, "height": 30, "parent": b})));
+    ex(&mut s, "proto.interaction.add", json!({"id": open, "action": {"type": "openOverlay", "dest": sheet}}));
+    assert_eq!(s.doc().unwrap().top_frames(s.page().unwrap()), vec![a, card, b, sheet], "the page's frames in reading order");
+    let mut u = Ui::new(s);
+    u.run("proto.present", json!({"start": a}));
+    u.frame(vec![]);
+    press(&mut u, Key::ArrowRight, Modifiers::NONE);
+    assert_eq!(presenter(&u)["current"], json!(b), "past the component");
+    press(&mut u, Key::ArrowRight, Modifiers::NONE);
+    assert_eq!(presenter(&u)["current"], json!(b), "the overlay is no screen to step to");
+    press(&mut u, Key::ArrowLeft, Modifiers::NONE);
+    assert_eq!(presenter(&u)["current"], json!(a));
+    // Presented from the component itself, the arrows still know where they are.
+    u.run("proto.present", json!({"start": card}));
+    u.frame(vec![]);
+    press(&mut u, Key::ArrowRight, Modifiers::NONE);
+    assert_eq!(presenter(&u)["current"], json!(b));
+}
+
 fn condition(u: &Ui, btn: NodeId, block: usize) -> String {
     let doc = u.app.session.doc().unwrap();
     let Some(Action::Conditional { blocks }) = doc.node(btn).unwrap().interactions[0].actions.get(1) else { panic!() };

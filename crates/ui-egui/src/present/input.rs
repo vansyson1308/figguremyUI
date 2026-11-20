@@ -130,9 +130,10 @@ fn step_frames(p: &mut Presenter, ctx: &egui::Context, key: &egui::Key, mods: &e
     };
     if let Some(forward) = forward
         && p.overlays.is_empty()
-        && let Some(base) = p.doc.as_ref()
+        && p.doc.is_some()
     {
-        let frames = base.top_frames(base.page_of(p.current).unwrap_or(p.current));
+        // The screens: not components or frames only shown as overlays (QC-11).
+        let frames = p.screens();
         if let Some(i) = frames.iter().position(|f| *f == p.current) {
             let next = if forward { frames.get(i + 1) } else { i.checked_sub(1).and_then(|j| frames.get(j)) };
             if let Some(n) = next.copied() {

@@ -120,6 +120,20 @@ impl Presenter {
         Some(d)
     }
 
+    /// The screens the next and previous arrows step through, in order (QC-11: not components or
+    /// frames only shown as overlays; [`figcraft_engine::proto_run::screens`]), cached per revision.
+    pub(super) fn screens(&mut self) -> Vec<NodeId> {
+        if let Some((rev, current, list)) = &self.screens
+            && (*rev, *current) == (self.rev, self.current)
+        {
+            return list.clone();
+        }
+        let Some(doc) = self.doc.as_ref() else { return Vec::new() };
+        let list = figcraft_engine::proto_run::screens(doc, doc.page_of(self.current).unwrap_or(self.current), self.current);
+        self.screens = Some((self.rev, self.current, list.clone()));
+        list
+    }
+
     /// The player's state for `ui.inspect`.
     pub fn inspect(&self) -> Value {
         let doc = self.doc.as_ref();
