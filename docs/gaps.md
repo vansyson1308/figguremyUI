@@ -39,6 +39,27 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 | 23 | CMYK output intent for print PDFs | File format | 2–4 | [file-format-parity](file-format-parity.md) |
 | 24 | Boards: the whiteboard tail (widgets, mind maps…) | Feature | 20–44 | [boards-parity](boards-parity.md) |
 
+## Figgure My UI: the fork's own work
+
+What this fork added (design context, prototype verification and the agent workflow) still lacks,
+from its acceptance matrix ([`acceptance.md`](acceptance.md)), the reviews
+([`review-record.md`](review-record.md)) and the book note's traceability
+([`design/book-to-product.md`](design/book-to-product.md#9-traceability)). Ranked by how much it
+limits a person and an agent designing and verifying a prototype together. Hours are estimates.
+
+| # | Gap | Kind | Hours |
+|---|---|---|---|
+| F1 | Performance budgets not all met: see [`benchmarks.md`](benchmarks.md) for which, by how much and why | Performance | 4–12 |
+| F2 | Two prototype engines: the app's player and the headless simulator are separate, held together by a parity test with five documented differences (no animation timing, scroll, drag direction, devices or hit-testing in the simulator) | Verification | 15–30 |
+| F3 | Not run on macOS or Windows; Codex and Claude Desktop setups not tried (Claude Code was); no screen-reader pass over the Design context panel | Platforms | 6–12 + people |
+| F4 | No releases: the release workflows still carry upstream's names and need a separate CI pull request and signing secrets ([`migration.md`](migration.md#release-workflow-follow-up)); install is from source | Distribution | 2–4 + owner |
+| F5 | Live sessions sync the design context as one value: two people editing it at once lose one side; per-entry sync is backlog | Collaboration | 6–12 |
+| F6 | Scenario steps can't be written in the panel (agents and the command line write them); the panel runs, shows and removes them | Feature | 6–10 |
+| F7 | Book-derived decisions only partly built (11 rows of the traceability): no usefulness/polish lane, no lever labels on alternatives, assumption states without provenance, the brief keeps no earlier texts, scenarios have no who/situation fields, no hand-over summary command | Feature | 15–30 |
+| F8 | Rule and simulator messages are English only (the panel around them is translated; Vietnamese reviewed by the team, not a native review) | Localization | 4–8 |
+| F9 | The two phone examples are designed at 390 px only; only the dashboard example is responsive and tested across widths | Examples | 2–4 |
+| F10 | Engine refusals and some rule suggestions shown in the panel name command ids (QC-07, kept: agents need them); reduce motion doesn't change prototype transitions (QC-13, documented) | UI/UX | 2–4 |
+
 ## Entries
 
 ### 1. `.fig` files: the import's tail

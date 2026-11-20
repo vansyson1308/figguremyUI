@@ -63,6 +63,9 @@ blockers.
 | M11 Plugins | runtime, API, menu, manager and SDK done (#101); plugin panels and settings (ABI v2); widgets (API 3), panels side by side, colour picker on plugin fields; a plugin directory on `figguremyui-server` (publish, browse, install, update); widget fields and property menus (API 4) | a public catalogue, publisher accounts and signatures, the directory in the browser, widget hover and timers; Figma plugin compatibility is an owner decision | 6–22 |
 | M12 Boards (new) | first slice landed (2026-10-24): board files, sticky notes, shapes with text, connectors that follow, marker, highlighter, eraser, stamps, board toolbar and contextual bar, live sessions; then a shared timer and voting sessions | widgets, templates, tables, mind maps ([boards-parity](boards-parity.md)) | 20–44 |
 | M13 AI features (new, owner decision) | not started | local models | 30–60 |
+| FM1 Design context, prototype verification and the agent workflow (this fork) | landed (2026-11-20): brief, assumptions and decisions in the file; alternatives with a fact comparison; flow check, stored scenarios run headless, declared states and required elements; deterministic checks with a findings loop; MCP capabilities, revisions and conflicts, roots; `figguremyui-cli doctor`; the rename to Figgure My UI. Acceptance in [acceptance](acceptance.md), reviews in [review-record](review-record.md) | the fork's gaps F1–F10 in [gaps](gaps.md#figgure-my-ui-the-forks-own-work) | 60–120 |
+
+The fork's commits for FM1 carry the ids `M11.1`–`M11.46` and `M12.1`–`M12.36`: they number the fork's own steps and are not upstream's M11 Plugins or M12 Boards.
 
 ## Next, after the current focus
 

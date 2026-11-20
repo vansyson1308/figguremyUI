@@ -1,4 +1,6 @@
-# Acceptance matrix: milestone M11 (design context, prototype verification, agent workflow, rebrand)
+# Acceptance matrix: fork milestone FM1 (design context, prototype verification, agent workflow, rebrand)
+
+The milestone is called FM1 in [`roadmap.md`](roadmap.md); its commits carry the fork's own ids `M11.x` and `M12.x`, which are not upstream's M11 Plugins or M12 Boards.
 
 > **Written:** 2026-11-13, before the milestone's implementation landed · **Baseline commit:**
 > `011f08e5` · **Status column** is filled in from runs on the delivered commit; a row without
@@ -67,3 +69,4 @@ Machine, document sizes and commands are recorded with the numbers in
 | Date | Change | Summary |
 |---|---|---|
 | 2026-11-13 | major | Created before implementation: criteria, checks and performance budgets for M11. |
+| 2026-11-20 | major | Status filled from runs on the delivered commit (`9f05ba8e` for the scripted runs, the fresh tester at `eeee288e`); milestone named FM1 to keep it apart from upstream's M11 and M12. |
