@@ -409,6 +409,31 @@ fn at_exploring_missing_link_reports_the_gone_layers_of_states_and_required_elem
     assert!(got.iter().any(|g| g.starts_with("states.notDesigned")), "{got:?}");
 }
 
+/// P3-7: re-sending an element's links as they are, a gone one among them, isn't refused, for an
+/// agent or a person; only a layer added must exist, and only a screen added must be one.
+#[test]
+fn re_sending_an_elements_links_and_screens_with_a_gone_one_among_them_is_taken() {
+    let (mut s, form, done, consent) = form();
+    let box_ = rect(&mut s, form, [20.0, 360.0, 24.0, 24.0], json!({"name": "Box"}));
+    let other = frame(&mut s, "Other", 800.0, 320.0, 480.0);
+    ex(&mut s, "design.required.add", json!({"text": "Consent", "screens": [form, done, other], "nodes": [consent, box_]}));
+    ex(&mut s, "edit.delete", json!({"ids": [box_]}));
+    ex(&mut s, "node.reparent", json!({"ids": [done, other], "parent": form}));
+    let label_ = label(&mut s, form, "Price", [20.0, 300.0], json!({"name": "Price"}));
+    let r = as_agent(&mut s, "design.required.set", json!({"id": "R1", "nodes": [consent, box_, label_]}));
+    assert_eq!(r["required"]["nodes"], json!([consent, box_, label_]), "{r}");
+    // A person takes one moved screen off; the other moved one stays as it was.
+    let r = ex(&mut s, "design.required.set", json!({"id": "R1", "screens": [form, other]}));
+    assert_eq!(r["required"]["screens"], json!([form, other]), "{r}");
+    // Near misses: a gone layer, or a frame that isn't a screen, that the element didn't have.
+    let gone = rect(&mut s, form, [0.0, 0.0, 4.0, 4.0], json!({}));
+    ex(&mut s, "edit.delete", json!({"ids": [gone]}));
+    let e = err(&mut s, "design.required.set", json!({"id": "R1", "nodes": [consent, gone]}));
+    assert!(e.contains(&format!("`nodes`: no layer {gone}")), "{e}");
+    let e = err(&mut s, "design.required.set", json!({"id": "R1", "screens": [form, other, done]}));
+    assert!(e.contains("isn't a top-level frame"), "{e}");
+}
+
 /// P2-2: a hostile context (500 assumptions, each linked to the same 500 layers that are gone)
 /// gives a bounded `context.missingLink`: at most 20 findings for an entry and 200 in all, then a
 /// note that counts the rest, and a `design.get` that lists 200 gone links and counts them all.

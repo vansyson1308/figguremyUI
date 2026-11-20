@@ -13,7 +13,7 @@ use figcraft_doc::design::{DesignContext, ProposalStatus, RequiredElement};
 use figcraft_doc::{Document, NodeId};
 use serde_json::{Value, json};
 
-use super::input::{USER, actor, agent, edit, layers, req_entry_id, req_text, room_for, text_not_empty};
+use super::input::{USER, actor, agent, edit, layers, layers_keeping, req_entry_id, req_text, room_for, text_not_empty};
 use crate::cmd::CommandSpec;
 use crate::{Result, Session, bad, spec};
 
@@ -29,7 +29,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
         spec!(
             "design.required.set",
             "Edit required element",
-            "{id, text?, screens?: [top-level frame ids], nodes?: [layer ids]}  only the given fields change; a change of text or screens raises briefRevision, linking layers doesn't, and a change of text or screens by anyone but its author is recorded as editedBy. An AI agent adds links to any entry but removes or replaces links, and changes the text and screens, only of its own pending proposals that nobody else edited → {required}",
+            "{id, text?, screens?: [top-level frame ids], nodes?: [layer ids]}  only the given fields change; screens and layers the element has are taken back as they are even when gone or moved (only those added must exist and be screens); a change of text or screens raises briefRevision, linking layers doesn't, and a change of text or screens by anyone but its author is recorded as editedBy. An AI agent adds links to any entry but removes or replaces links, and changes the text and screens, only of its own pending proposals that nobody else edited → {required}",
             true,
             set
         ),
@@ -50,10 +50,12 @@ pub(super) fn specs() -> Vec<CommandSpec> {
     ]
 }
 
-/// `key` as a list of top-level frames of `doc`, when given.
-fn screens(cmd: &str, doc: &Document, p: &Value, key: &str) -> Result<Option<Vec<NodeId>>> {
-    let Some(list) = layers(cmd, doc, p, key)? else { return Ok(None) };
-    match list.iter().find(|id| doc.top_level_frame(**id) != Some(**id)) {
+/// `key` as a list of top-level frames of `doc`, when given. The screens in `kept` (those the
+/// element has) are taken as they are, even gone or moved, so re-sending them is never refused
+/// (`context.requiredMissing` reports them); only a screen added must be one.
+fn screens(cmd: &str, doc: &Document, p: &Value, key: &str, kept: &[NodeId]) -> Result<Option<Vec<NodeId>>> {
+    let Some(list) = layers_keeping(cmd, doc, p, key, kept)? else { return Ok(None) };
+    match list.iter().find(|id| !kept.contains(id) && doc.top_level_frame(**id) != Some(**id)) {
         Some(id) => Err(bad(cmd, format!("`{key}`: {} isn't a top-level frame (a screen)", crate::proto_sim::label(doc, *id)))),
         None => Ok(Some(list)),
     }
@@ -90,7 +92,7 @@ fn add(s: &mut Session, p: &Value) -> Result<Value> {
     let words = req_text(cmd, p, "text")?;
     let me = agent(s).map(str::to_string);
     edit(s, |ctx, doc| {
-        let on = screens(cmd, doc, p, "screens")?.unwrap_or_default();
+        let on = screens(cmd, doc, p, "screens", &[])?.unwrap_or_default();
         let nodes = layers(cmd, doc, p, "nodes")?.unwrap_or_default();
         room_for(cmd, "required elements", ctx.brief.required.len(), 1)?;
         let r = RequiredElement {
@@ -117,8 +119,11 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
     let me = agent(s).map(str::to_string);
     let who = actor(s);
     edit(s, |ctx, doc| {
-        let on = screens(cmd, doc, p, "screens")?;
-        let nodes = layers(cmd, doc, p, "nodes")?;
+        // What the element has is taken back as it is, a gone layer or a moved screen included:
+        // only what is added must exist (and be a screen).
+        let (had_screens, had_nodes) = find(cmd, ctx, &id).map(|r| (r.screens.clone(), r.nodes.clone()))?;
+        let on = screens(cmd, doc, p, "screens", &had_screens)?;
+        let nodes = layers_keeping(cmd, doc, p, "nodes", &had_nodes)?;
         let r = find(cmd, ctx, &id)?;
         let before = r.clone();
         // An agent adds links to anybody's element; it takes links away only from its own proposal.
