@@ -1200,6 +1200,32 @@ fn required_elements_are_listed_with_their_layers_and_added_from_the_brief() {
     assert_eq!(w.shown()["selected"]["refs"]["required"], json!(["R1", "R2"]));
 }
 
+/// P3-8: a screen that moved can be taken off a required element in the panel (the other one
+/// that moved stays, as it was), and which layers show only in a declared state is worked out
+/// once for each change of the file, not on every frame.
+#[test]
+fn a_required_elements_screen_is_removed_in_the_panel_and_its_facts_are_worked_out_once_per_change() {
+    let (mut s, home, done, go) = two_screens();
+    let third = idv(&ex(&mut s, "frame.create", json!({"x": 800, "y": 0, "width": 300, "height": 400, "name": "Third"})));
+    ex(&mut s, "design.required.add", json!({"text": "The price", "screens": [home, done, third], "nodes": [go]}));
+    ex(&mut s, "node.reparent", json!({"ids": [done, third], "parent": home}));
+    ex(&mut s, "node.set", json!({"id": go, "props": {"visible": false}}));
+    ex(&mut s, "proto.state.set", json!({"frame": home, "kind": "error", "shownBy": {"node": go}}));
+    let mut w = Win::new(s);
+    w.open(Section::Brief);
+    assert!(w.says("Continue shows in the error state of `Home`"), "{:?}", w.texts());
+    let uid = w.uid();
+    let facts = |w: &Win| w.app.ui.context.results(uid).and_then(|r| r.required_facts.clone()).expect("worked out when drawn");
+    let (doc, first) = facts(&w);
+    assert!(std::sync::Arc::ptr_eq(&doc, &w.app.session.ds().unwrap().doc));
+    w.frames(5);
+    assert!(std::sync::Arc::ptr_eq(&first, &facts(&w).1), "not worked out again while the file is the same");
+    w.button("Remove the link to Done");
+    assert_eq!(w.design().brief.required[0].screens, vec![home, third], "Third moved too, and stays until it is taken off");
+    assert!(!std::sync::Arc::ptr_eq(&first, &facts(&w).1), "the file changed: worked out again");
+    assert!(w.says("Continue shows in the error state of `Home`"));
+}
+
 /// The keyboard in a declared state's controls is reported by `ui.inspect` with that entry.
 #[test]
 fn ui_inspect_names_the_declared_state_the_keyboard_is_in() {

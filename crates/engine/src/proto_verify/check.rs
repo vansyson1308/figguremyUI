@@ -278,7 +278,7 @@ pub(super) fn rules() -> Vec<Rule> {
         },
         Rule {
             id: states::ERROR_EMPTY,
-            about: "Note, the lowest severity: a screen that declares states, none of them `error` or `empty`. Asked as a question against the brief's context of use (can this screen fail, or have nothing to show?), not reported as a defect: a person who knows it can't accepts the finding.",
+            about: "Note, the lowest severity: a screen that declares states, none of them `error` or `empty`. Asked as a question against the brief's context of use (can this screen fail, or have nothing to show?), not reported as a defect: a person who knows it can't accepts the finding. A frame that is no longer a top-level screen isn't asked about (states.notDesigned reports it).",
             run: states::error_empty,
             unsettled: None,
         },

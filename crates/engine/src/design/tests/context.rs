@@ -327,7 +327,7 @@ fn get_reports_everything_with_counts_and_missing_links() {
     assert_eq!(r["missingLinks"], json!([]));
     assert_eq!(
         r["counts"],
-        json!({"assumptions": 2, "untestedAssumptions": 1, "decisions": 1, "proposedDecisions": 1, "scenarios": 0, "endStates": 0, "states": 0, "requiredElements": 0, "unlinkedRequiredElements": 0, "findings": 1, "openFindings": 1, "alternatives": 0, "missingLinks": 0})
+        json!({"assumptions": 2, "untestedAssumptions": 1, "decisions": 1, "proposedDecisions": 1, "scenarios": 0, "endStates": 0, "states": 0, "requiredElements": 0, "unlinkedRequiredElements": 0, "findings": 1, "openFindings": 1, "alternatives": 0, "missingLinks": 0, "requiredFacts": 0})
     );
     assert_eq!(r["assumptions"][0]["links"], json!([button]));
     assert_eq!(r["decisions"][0]["author"], AGENT_NAME);
@@ -443,12 +443,13 @@ fn a_context_with_a_hundred_thousand_links_to_missing_layers_is_read_in_one_pass
     let took = started.elapsed();
     assert_eq!(got["counts"]["missingLinks"], 100_000);
     assert_eq!(got["missingLinks"][0], json!({"node": 1_000_000, "from": "A1"}));
-    assert_eq!(got["missingLinks"][99_999], json!({"node": 1_099_999, "from": "A200"}), "in file order");
+    assert_eq!(got["missingLinks"][199], json!({"node": 1_000_199, "from": "A1"}), "in file order");
+    assert_eq!(got["missingLinks"].as_array().unwrap().len(), 200, "listed up to the cap; counts has them all");
     // Comparing every link with every other would take minutes here; one pass takes a moment.
     assert!(took < std::time::Duration::from_secs(20), "design.get took {took:?}");
     // The check that reports them reads them the same way.
     let started = std::time::Instant::now();
     let r = ex(&mut s, "design.check", json!({"rules": ["context.missingLink"]}));
-    assert_eq!(r["summary"]["total"], 100_000);
+    assert_eq!(r["summary"]["total"], 201, "200 listed, then the note that counts the rest");
     assert!(started.elapsed() < std::time::Duration::from_secs(20));
 }

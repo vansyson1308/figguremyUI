@@ -122,7 +122,15 @@ pub(crate) struct Results {
     pub compare: Option<(String, Ran)>,
     /// What `proto.state.list` says about the declared states (asked when the file changed).
     pub states: Option<Ran>,
+    /// The layers of required elements the file hides and declared states show, by element, and
+    /// the document they were worked out for: worked out again only when the file changes, not
+    /// on every frame.
+    pub required_facts: Option<(Arc<Document>, Arc<RequiredFacts>)>,
 }
+
+/// Of each required element (by id), its layers that show only in declared states, with those
+/// states in words.
+pub(crate) type RequiredFacts = BTreeMap<String, Vec<(NodeId, String)>>;
 
 impl Results {
     /// The panel's own edit of the file (storing what the checks found) changed nothing the

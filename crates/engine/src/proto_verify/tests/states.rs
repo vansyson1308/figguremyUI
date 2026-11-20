@@ -432,3 +432,17 @@ fn a_run_reports_the_screens_it_went_through() {
     assert_eq!((&r["results"][0]["screens"], &r["results"][0]["screenCount"]), (&json!([home, list]), &json!(2)));
     let _ = oops;
 }
+
+/// P3-4: a frame that is no longer a top-level screen isn't asked whether it can fail:
+/// `states.notDesigned` says it is no longer a screen.
+#[test]
+fn error_empty_doesnt_ask_about_a_frame_that_is_no_longer_a_screen() {
+    let (mut s, [home, list, _, later, ..]) = screens();
+    ex(&mut s, "proto.state.set", json!({"frame": later, "kind": "returning"}));
+    ex(&mut s, "proto.state.set", json!({"frame": list, "kind": "loading"}));
+    let asked = |s: &Session| found(s.doc().unwrap(), "states.errorEmpty", &[]).into_iter().map(|f| f.subject).collect::<Vec<_>>();
+    assert_eq!(asked(&s), [format!("stateKinds:{list}"), format!("stateKinds:{later}")]);
+    ex(&mut s, "node.reparent", json!({"ids": [later], "parent": home}));
+    assert_eq!(asked(&s), [format!("stateKinds:{list}")], "Later is inside Home now");
+    assert!(found(s.doc().unwrap(), "states.notDesigned", &[]).iter().any(|f| f.evidence.contains("is no longer a screen")));
+}

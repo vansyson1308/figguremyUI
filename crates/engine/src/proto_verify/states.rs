@@ -647,11 +647,13 @@ pub(super) fn unreachable(f: &Facts<'_>, scope: Scope<'_>) -> Vec<Found> {
     in_scope(doc, scope, found)
 }
 
-/// `states.errorEmpty`: a screen with declared states, none of them an error or an empty one.
+/// `states.errorEmpty`: a screen with declared states, none of them an error or an empty one. A
+/// declaration whose frame is gone or no longer a top-level screen isn't asked about: it isn't a
+/// screen any more, and `states.notDesigned` says so.
 pub(super) fn error_empty(f: &Facts<'_>, scope: Scope<'_>) -> Vec<Found> {
     let doc = f.doc;
     let mut by_frame: BTreeMap<NodeId, Vec<&DeclaredState>> = BTreeMap::new();
-    for st in doc.design.states.iter().filter(|st| doc.contains(st.frame)) {
+    for st in doc.design.states.iter().filter(|st| not_a_screen(doc, st.frame).is_none()) {
         by_frame.entry(st.frame).or_default().push(st);
     }
     let context = doc.design.brief.context.trim();

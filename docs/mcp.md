@@ -1753,7 +1753,8 @@ longer a screen: "`A` is no longer a screen: it is inside `B`"), `states.unreach
 `ready`: minor when the frame or overlay that shows it is reached neither by the flow nor by a
 scenario; a note when only its screen is reached and no scenario shows it: add a scenario step that
 shows it) and `states.errorEmpty` (note, from `ready`: a screen that declares states, none of them
-`error` or `empty`, asked as a question against the brief's context).
+`error` or `empty`, asked as a question against the brief's context; a frame that is no longer a
+top-level screen isn't asked about, `states.notDesigned` reports it).
 
 **Required elements.** What the design must show is part of the brief: `design.required.add
 {text, screens?, nodes?}`, `design.required.set {id, text?, screens?, nodes?}`,
@@ -1766,14 +1767,32 @@ on one of its screens (the screen's frame or inside it), or entirely outside a f
 clips and doesn't scroll that way; major when a screen it must be on holds none of its layers, or
 is gone or no longer a top-level frame; major when a linked text is below the contrast it needs
 (WCAG 2.2 SC 1.4.3, measured as `contrast.text` does). The file is looked at as it is, so a layer
-that only shows in some state of the prototype is hidden in it; when what hides it is, or is inside,
-what shows a declared state, it counts as shown in that state: no finding, and `design.get` lists it
-under `requiredFacts` (`{id, node, shownIn: "the error state of `Form`"}`). No text-size threshold
-is applied. At most 20 findings per element and 200 in all are listed, then one note counts the
-rest. `context.missingLink` leaves the gone layers of states and required elements to these two
-rules. An agent adds links to anybody's element but removes or replaces links, and changes the
-words and screens, only of its own pending proposals; a person's change to an agent's entry is
+that only shows in some state of the prototype is hidden in it. When every layer that hides it (the
+layer itself, and each hidden layer around it) is the `shownBy` layer of an accepted declared state
+of its own screen, it counts as shown in those states: no finding, and `design.get` lists it under
+`requiredFacts` (`{id, node, shownIn: "the error state of `Form`"}`, at most 200; `counts.requiredFacts`
+gives them all). A state an agent only proposed excuses nothing until a person accepts it; a state of
+another screen excuses nothing, even when what shows it is the whole screen the layer is on; and an
+effective opacity below 5% is never excused. No text-size threshold is applied. The rule stops
+looking at an element after 20 findings and at the elements after 200 in all, then one note says
+how many linked layers, screens and elements it didn't look at; evidence names at most three
+screens and counts the rest ("`A`, `B`, `C` or 497 more"). `context.missingLink` (from
+`exploring`) leaves the gone layers of states and of required elements to `states.notDesigned` and
+`context.requiredMissing` at the stages those run (from `converging`); at `exploring` it reports
+them itself. It lists at most 20 findings for one entry and 200 in all, then one note counts the
+rest, and `design.get` lists at most 200 `missingLinks` (`counts.missingLinks` counts them all). An
+agent adds links to anybody's element but removes or replaces links, and changes the words and
+screens, only of its own pending proposals; links and screens an element already has are taken
+back as they are even when the layer has gone or the screen moved, so re-sending them is never
+refused (only those added must exist and be screens). A person's change to an agent's entry is
 recorded as `editedBy`.
+
+A stored file whose required elements or declared states the commands couldn't have written is
+repaired on load and says so: ids compare without case, the first element with an id keeps it, and
+one without an id, or with an id an earlier one has, gets a fresh id no element has; named
+declarations are kept first (a second of the same frame, kind and name is dropped), then an `other`
+without a name is named from its reason (else "unnamed"), with a number added when that name is
+taken, so it never pushes out a declaration a person named.
 
 **Steps to the goal.** Every run (`proto.simulate`, each result of `proto.scenario.run`) reports
 `stepsTaken`, `screens` (the screens it went through, each once, in the order first shown; overlays

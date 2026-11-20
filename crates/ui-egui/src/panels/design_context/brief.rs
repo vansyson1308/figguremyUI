@@ -4,6 +4,8 @@
 //! one undo step. Below the answers, what the design must show (`design.required.*`), each with
 //! the layers that are it, which the checks look for.
 
+use std::sync::Arc;
+
 use egui::Ui;
 use figcraft_doc::NodeId;
 use figcraft_doc::design::{Brief, RequiredElement};
@@ -11,8 +13,8 @@ use serde_json::json;
 
 use super::records::submit;
 use super::{
-    Cx, Form, FormEnd, FormKind, act, authorship, body, button, draft, entry, flow_row, form_end, heading, layer_links, pad, quiet, refusal_for,
-    stage, strong,
+    Cx, Form, FormEnd, FormKind, RequiredFacts, act, authorship, body, button, draft, entry, flow_row, form_end, heading, layer_links, pad, quiet,
+    refusal_for, stage, strong,
 };
 use crate::FigApp;
 use crate::i18n::{tr, tr_noop, trf, trn};
@@ -121,6 +123,7 @@ fn required(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
         tr("What must it show?"),
         tr("Things the design has to show, such as consent, a price or a permission. Link the layers that are each one, so the checks can find it."),
     );
+    let facts = required_facts(app, cx);
     let mut form = app.ui.context.form.take();
     let editing = |form: &Option<Form>, id: Option<&str>| form.as_ref().is_some_and(|f| f.kind == FormKind::Required(id.map(str::to_string)));
     for r in &cx.design.brief.required {
@@ -128,7 +131,7 @@ fn required(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
             if editing(&form, Some(&r.id)) {
                 required_form(app, ui, cx, &mut form);
             } else {
-                element(app, ui, cx, r, &mut form);
+                element(app, ui, cx, r, facts.get(&r.id).map_or(&[], Vec::as_slice), &mut form);
             }
         });
     }
@@ -149,7 +152,26 @@ fn required(app: &mut FigApp, ui: &mut Ui, cx: &Cx) {
     app.ui.context.form = form;
 }
 
-fn element(app: &mut FigApp, ui: &mut Ui, cx: &Cx, r: &RequiredElement, form: &mut Option<Form>) {
+/// Which layers of required elements show only in declared states, worked out once for each
+/// version of the file (kept with the file's results) rather than on every frame.
+fn required_facts(app: &mut FigApp, cx: &Cx) -> Arc<RequiredFacts> {
+    let results = app.ui.context.results_mut(cx.uid);
+    if let Some((doc, facts)) = &results.required_facts
+        && Arc::ptr_eq(doc, &cx.doc)
+    {
+        return facts.clone();
+    }
+    let (listed, _) = figcraft_engine::design::shown_in_states(&cx.doc, figcraft_engine::design::MAX_FACTS);
+    let mut facts = RequiredFacts::new();
+    for (id, node, state) in listed {
+        facts.entry(id).or_default().push((node, state));
+    }
+    let facts = Arc::new(facts);
+    results.required_facts = Some((cx.doc.clone(), facts.clone()));
+    facts
+}
+
+fn element(app: &mut FigApp, ui: &mut Ui, cx: &Cx, r: &RequiredElement, facts: &[(NodeId, String)], form: &mut Option<Form>) {
     flow_row(ui, |ui| {
         quiet(ui, &r.id);
         authorship(ui, &r.author, &r.accepted_by);
@@ -158,7 +180,12 @@ fn element(app: &mut FigApp, ui: &mut Ui, cx: &Cx, r: &RequiredElement, form: &m
     if !r.screens.is_empty() {
         ui.add_space(2.0);
         quiet(ui, tr("On these screens"));
-        layer_links(app, ui, cx, &r.screens, false);
+        // A screen can be taken off, so one that moved or went can be dropped (the panel acts
+        // for the person, whose change to an agent's entry is recorded as editedBy).
+        if let Some(gone) = layer_links(app, ui, cx, &r.screens, true) {
+            let next: Vec<NodeId> = r.screens.iter().copied().filter(|n| *n != gone).collect();
+            act(app, &r.id, "design.required.set", json!({"id": r.id, "screens": next}));
+        }
     }
     ui.add_space(2.0);
     if r.nodes.is_empty() {
@@ -170,10 +197,8 @@ fn element(app: &mut FigApp, ui: &mut Ui, cx: &Cx, r: &RequiredElement, form: &m
             act(app, &r.id, "design.required.set", json!({"id": r.id, "nodes": next}));
         }
         // Hidden in the file, shown in a declared state: a fact, not a problem.
-        for (id, node, state) in figcraft_engine::design::shown_in_states(&cx.doc) {
-            if id == r.id {
-                quiet(ui, &trf("{layer} shows in {state}", &[("layer", &cx.name(node).unwrap_or_default()), ("state", &state)]));
-            }
+        for (node, state) in facts {
+            quiet(ui, &trf("{layer} shows in {state}", &[("layer", &cx.name(*node).unwrap_or_default()), ("state", state)]));
         }
     }
     let mut more = r.nodes.clone();

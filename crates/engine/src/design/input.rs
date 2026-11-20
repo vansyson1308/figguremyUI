@@ -111,11 +111,17 @@ pub(super) fn texts(cmd: &str, p: &Value, key: &str) -> Result<Option<Vec<String
 
 /// `key` as a list of layers of `doc` when it is given, each once, in the order given.
 pub(super) fn layers(cmd: &str, doc: &Document, p: &Value, key: &str) -> Result<Option<Vec<NodeId>>> {
+    layers_keeping(cmd, doc, p, key, &[])
+}
+
+/// [`layers`], except that the ids in `kept` (the list as it is) are taken even when their layer
+/// is gone: re-sending a link an entry already has is never refused, only one added must exist.
+pub(super) fn layers_keeping(cmd: &str, doc: &Document, p: &Value, key: &str, kept: &[NodeId]) -> Result<Option<Vec<NodeId>>> {
     let Some(list) = entries(cmd, p, key)? else { return Ok(None) };
     let mut out: Vec<NodeId> = Vec::with_capacity(list.len());
     for v in list {
         let id = id_of(v).ok_or_else(|| bad(cmd, format!("`{key}`: {} isn't a layer id", shown(v))))?;
-        if !doc.contains(id) {
+        if !doc.contains(id) && !kept.contains(&id) {
             return Err(bad(cmd, format!("`{key}`: no layer {id}")));
         }
         if !out.contains(&id) {

@@ -218,8 +218,10 @@ fn findings_are_bounded_per_element_and_gone_layers_are_reported_once() {
     let f = found(&mut s);
     assert_eq!(f.len(), 21, "20 for the element, then one note: {}", f.len());
     let last = f.iter().find(|x| x["subject"] == "required:more").expect("the note that counts the rest");
-    assert!(last["message"].as_str().unwrap().starts_with("10 more problem(s)"), "{last}");
-    // The gone layers are this rule's: context.missingLink doesn't report them again.
+    assert!(last["evidence"].as_str().unwrap().ends_with("not looked at: 10 linked layer(s) of the elements listed"), "{last}");
+    // From converging, where this rule runs, the gone layers are its: context.missingLink
+    // doesn't report them again.
+    ex(&mut s, "design.stage.set", json!({"stage": "converging"}));
     let links = ex(&mut s, "design.check", json!({"rules": ["context.missingLink"]}));
     assert_eq!(links["findings"], json!([]), "{links}");
     assert_eq!(ex(&mut s, "design.get", json!({}))["missingLinks"].as_array().unwrap().len(), 30, "design.get still lists them");
@@ -277,4 +279,193 @@ fn the_rule_runs_from_converging_and_a_fixed_element_is_verified_by_rerunning_it
     ex(&mut s, "design.required.set", json!({"id": "R1", "nodes": [consent]}));
     let r = ex(&mut s, "design.finding.recheck", json!({}));
     assert_eq!(r["results"][0]["status"], "verified", "{r}");
+}
+
+/// P2-1: a declared state excuses a hidden layer only when it shows that very layer. A state of
+/// another screen that the whole Form screen shows excuses nothing hidden inside Form.
+#[test]
+fn a_state_shown_by_a_whole_screen_doesnt_excuse_a_hidden_layer_inside_it() {
+    let (mut s, form, done, consent) = form();
+    ex(&mut s, "design.required.add", json!({"text": "Consent", "screens": [form], "nodes": [consent]}));
+    ex(&mut s, "node.set", json!({"id": consent, "props": {"visible": false}}));
+    assert_eq!(found(&mut s).len(), 1);
+    ex(&mut s, "proto.state.set", json!({"frame": done, "kind": "success", "shownBy": {"node": form}}));
+    let f = found(&mut s);
+    assert_eq!(f.len(), 1, "Done's state shows Form, not the hidden consent in it: {f:?}");
+    assert_eq!(f[0]["evidence"], "`Consent` is hidden");
+    assert_eq!(ex(&mut s, "design.get", json!({}))["requiredFacts"], json!([]));
+    // Near miss: a state of Form that shows the consent itself does excuse it.
+    ex(&mut s, "proto.state.set", json!({"frame": form, "kind": "other", "name": "Asked", "shownBy": {"node": consent}}));
+    assert!(found(&mut s).is_empty());
+}
+
+/// P3-1: every hidden layer around a required layer must be shown by a state; a hidden group
+/// around an excused banner is still reported. Low opacity is never excused.
+#[test]
+fn every_hidden_layer_around_it_must_be_shown_by_a_state_and_opacity_is_never_excused() {
+    let (mut s, form, _, _) = form();
+    let banner = super::nid(&ex(&mut s, "frame.create", json!({"x": 20, "y": 20, "width": 280, "height": 60, "parent": form, "name": "Banner"})));
+    let message = label(&mut s, banner, "Your phone number is missing", [8.0, 8.0], json!({"name": "Message", "fill": "#1B2430"}));
+    let group = super::nid(&ex(&mut s, "object.group", json!({"ids": [banner]})));
+    ex(&mut s, "node.set", json!({"id": group, "props": {"name": "Holder"}}));
+    ex(&mut s, "node.set", json!({"id": banner, "props": {"visible": false}}));
+    ex(&mut s, "node.set", json!({"id": group, "props": {"visible": false}}));
+    ex(&mut s, "design.required.add", json!({"text": "What is missing", "screens": [form], "nodes": [message]}));
+    ex(&mut s, "proto.state.set", json!({"frame": form, "kind": "error", "shownBy": {"node": banner}}));
+    let f = found(&mut s);
+    assert_eq!(f.len(), 1, "the hidden group around the banner shows in no state: {f:?}");
+    assert_eq!(f[0]["evidence"], "`Message` is inside `Holder`, which is hidden");
+    assert_eq!(ex(&mut s, "design.get", json!({}))["requiredFacts"], json!([]));
+    // Each hidden layer shown by a state of the screen: a fact naming both.
+    ex(&mut s, "proto.state.set", json!({"frame": form, "kind": "loading", "shownBy": {"node": group}}));
+    assert!(found(&mut s).is_empty());
+    let facts = ex(&mut s, "design.get", json!({}))["requiredFacts"].clone();
+    assert_eq!(facts, json!([{"id": "R1", "node": message, "shownIn": "the error state of `Form` and the loading state of `Form`"}]));
+    // Shown by states, but at 0% opacity: that no state excuses.
+    ex(&mut s, "node.set", json!({"id": banner, "props": {"opacity": 0}}));
+    let f = found(&mut s);
+    assert_eq!(f.len(), 1, "{f:?}");
+    assert!(f[0]["evidence"].as_str().unwrap().starts_with("`Message` is at 0% effective opacity"), "{f:?}");
+    assert_eq!(ex(&mut s, "design.get", json!({}))["requiredFacts"], json!([]), "not a fact while it doesn't show");
+}
+
+/// P3-2: only an accepted declaration excuses a hidden layer, as only an accepted end state
+/// exempts a dead end: an agent's proposal doesn't silence a person's finding.
+#[test]
+fn an_agents_proposed_state_doesnt_excuse_a_hidden_layer_until_a_person_accepts_it() {
+    let (mut s, form, _, consent) = form();
+    ex(&mut s, "design.required.add", json!({"text": "Consent", "screens": [form], "nodes": [consent]}));
+    ex(&mut s, "node.set", json!({"id": consent, "props": {"visible": false}}));
+    as_agent(&mut s, "proto.state.set", json!({"frame": form, "kind": "other", "name": "Asked", "shownBy": {"node": consent}}));
+    assert_eq!(found(&mut s).len(), 1, "a proposal");
+    assert_eq!(ex(&mut s, "design.get", json!({}))["requiredFacts"], json!([]));
+    ex(&mut s, "proto.state.accept", json!({"frame": form, "kind": "other", "name": "Asked"}));
+    assert!(found(&mut s).is_empty(), "accepted by a person");
+}
+
+/// Size of what a `design.check` result carries in its findings' evidence.
+fn evidence_bytes(out: &Value) -> usize {
+    out["findings"].as_array().unwrap().iter().map(|f| f["evidence"].as_str().map_or(0, str::len)).sum()
+}
+
+/// P2-2: a hostile file (500 elements, each on 500 screens and linked to 500 layers none of
+/// which is on them) is bounded: the findings stop at the caps, evidence names a few screens
+/// and counts the rest, and the rule stops looking once the caps are reached. Work is counted
+/// (linked layers and screens looked at) rather than timed, so a slow machine can't make the
+/// test flaky and a fast one can't hide work.
+#[test]
+fn a_hostile_brief_gives_bounded_findings_evidence_and_work() {
+    use std::sync::Arc;
+
+    use figcraft_doc::design::DesignContext;
+    let mut s = Session::new();
+    let n = figcraft_doc::design::MAX_ENTRIES;
+    let screens: Vec<NodeId> = (0..n).map(|k| frame(&mut s, &format!("Screen number {k}"), k as f64 * 400.0, 320.0, 480.0)).collect();
+    let holder = frame(&mut s, "Holder", -1000.0, 320.0, 480.0);
+    let nodes: Vec<NodeId> = (0..n).map(|k| rect(&mut s, holder, [(k % 300) as f64, 0.0, 4.0, 4.0], json!({}))).collect();
+    let required: Vec<Value> =
+        (0..n).map(|k| json!({"id": format!("R{}", k + 1), "text": "x".repeat(200), "screens": screens, "nodes": nodes})).collect();
+    let ctx = DesignContext::from_stored(json!({"brief": {"required": required}}));
+    assert_eq!(ctx.brief.required.len(), n);
+    Arc::make_mut(&mut s.doc_mut().unwrap().design).brief = ctx.brief.clone();
+    let started = std::time::Instant::now();
+    let out = ex(&mut s, "design.check", json!({"rules": [RULE]}));
+    eprintln!("requiredMissing on the hostile brief: {:?}, {} bytes", started.elapsed(), out.to_string().len());
+    let f = out["findings"].as_array().unwrap();
+    assert_eq!(f.len(), 201, "200 findings, then the note");
+    assert!(evidence_bytes(&out) < 40_000, "evidence: {} bytes", evidence_bytes(&out));
+    assert!(out.to_string().len() < 400_000, "result: {} bytes", out.to_string().len());
+    let one = f.iter().find(|x| x["evidence"].as_str().unwrap().contains("isn't on")).unwrap();
+    assert!(one["evidence"].as_str().unwrap().ends_with("`Screen number 2` or 497 more, where it must be"), "{one}");
+    let note = f.iter().find(|x| x["subject"] == "required:more").unwrap();
+    assert!(note["evidence"].as_str().unwrap().contains("490 element(s)"), "{note}");
+    let work = crate::design::checks::required_work(s.doc().unwrap());
+    assert!(work <= 10 * (n + 20), "looked at {work} layers and screens");
+}
+
+/// P3-3: while a file is exploring, only `context.missingLink` of the rules that see a gone
+/// layer runs, so it reports the gone layers of required elements and declared states too;
+/// from converging it leaves them to the rules that report them there.
+#[test]
+fn at_exploring_missing_link_reports_the_gone_layers_of_states_and_required_elements() {
+    let (mut s, form, _, _) = form();
+    let a = rect(&mut s, form, [0.0, 0.0, 10.0, 10.0], json!({}));
+    let b = rect(&mut s, form, [20.0, 0.0, 10.0, 10.0], json!({}));
+    ex(&mut s, "design.required.add", json!({"text": "Box", "nodes": [a]}));
+    ex(&mut s, "proto.state.set", json!({"frame": form, "kind": "error", "shownBy": {"node": b}}));
+    ex(&mut s, "edit.delete", json!({"ids": [a, b]}));
+    let subjects = |s: &mut Session| -> Vec<String> {
+        let out = ex(s, "design.check", json!({}));
+        out["findings"].as_array().unwrap().iter().map(|f| format!("{} {}", f["rule"].as_str().unwrap(), f["subject"].as_str().unwrap())).collect()
+    };
+    let got = subjects(&mut s);
+    assert!(got.contains(&format!("context.missingLink link:R1:{a}")), "{got:?}");
+    assert!(got.contains(&format!("context.missingLink link:state error of {form}:{b}")), "{got:?}");
+    // Near miss: from converging the specific rules run and missingLink leaves those links to them.
+    ex(&mut s, "design.stage.set", json!({"stage": "converging"}));
+    let got = subjects(&mut s);
+    assert!(!got.iter().any(|g| g.starts_with("context.missingLink")), "{got:?}");
+    assert!(got.contains(&format!("{RULE} required:R1:{a}")), "{got:?}");
+    assert!(got.iter().any(|g| g.starts_with("states.notDesigned")), "{got:?}");
+}
+
+/// P3-7: re-sending an element's links as they are, a gone one among them, isn't refused, for an
+/// agent or a person; only a layer added must exist, and only a screen added must be one.
+#[test]
+fn re_sending_an_elements_links_and_screens_with_a_gone_one_among_them_is_taken() {
+    let (mut s, form, done, consent) = form();
+    let box_ = rect(&mut s, form, [20.0, 360.0, 24.0, 24.0], json!({"name": "Box"}));
+    let other = frame(&mut s, "Other", 800.0, 320.0, 480.0);
+    ex(&mut s, "design.required.add", json!({"text": "Consent", "screens": [form, done, other], "nodes": [consent, box_]}));
+    ex(&mut s, "edit.delete", json!({"ids": [box_]}));
+    ex(&mut s, "node.reparent", json!({"ids": [done, other], "parent": form}));
+    let label_ = label(&mut s, form, "Price", [20.0, 300.0], json!({"name": "Price"}));
+    let r = as_agent(&mut s, "design.required.set", json!({"id": "R1", "nodes": [consent, box_, label_]}));
+    assert_eq!(r["required"]["nodes"], json!([consent, box_, label_]), "{r}");
+    // A person takes one moved screen off; the other moved one stays as it was.
+    let r = ex(&mut s, "design.required.set", json!({"id": "R1", "screens": [form, other]}));
+    assert_eq!(r["required"]["screens"], json!([form, other]), "{r}");
+    // Near misses: a gone layer, or a frame that isn't a screen, that the element didn't have.
+    let gone = rect(&mut s, form, [0.0, 0.0, 4.0, 4.0], json!({}));
+    ex(&mut s, "edit.delete", json!({"ids": [gone]}));
+    let e = err(&mut s, "design.required.set", json!({"id": "R1", "nodes": [consent, gone]}));
+    assert!(e.contains(&format!("`nodes`: no layer {gone}")), "{e}");
+    let e = err(&mut s, "design.required.set", json!({"id": "R1", "screens": [form, other, done]}));
+    assert!(e.contains("isn't a top-level frame"), "{e}");
+}
+
+/// P2-2: a hostile context (500 assumptions, each linked to the same 500 layers that are gone)
+/// gives a bounded `context.missingLink`: at most 20 findings for an entry and 200 in all, then a
+/// note that counts the rest, and a `design.get` that lists 200 gone links and counts them all.
+/// What is left is one walk over the links the file stores, linear in what it holds (which the
+/// loader caps). What grew past MCP's response limit was the findings (250 000 of them, 68 MB,
+/// though built in little more than a second), so the work that matters is counted as what is
+/// built: the findings and the bytes are asserted. A generous time limit (60 s in a debug build)
+/// only guards against the walk becoming worse than linear; it can't tell the old code apart.
+#[test]
+fn a_hostile_context_gives_a_bounded_missing_link_check() {
+    use std::sync::Arc;
+
+    use figcraft_doc::design::DesignContext;
+    let mut s = Session::new();
+    let n = figcraft_doc::design::MAX_ENTRIES;
+    let _ = frame(&mut s, "Screen", 0.0, 320.0, 480.0);
+    let gone: Vec<u64> = (0..n as u64).map(|k| 900_000 + k).collect();
+    let assumptions: Vec<Value> = (0..n).map(|k| json!({"id": format!("A{}", k + 1), "text": "t", "status": "untested", "links": gone})).collect();
+    let ctx = DesignContext::from_stored(json!({"assumptions": assumptions}));
+    assert_eq!(ctx.assumptions.len(), n);
+    Arc::make_mut(&mut s.doc_mut().unwrap().design).assumptions = ctx.assumptions.clone();
+    let started = std::time::Instant::now();
+    let out = ex(&mut s, "design.check", json!({"rules": ["context.missingLink"]}));
+    let took = started.elapsed();
+    eprintln!("missingLink on the hostile context: {took:?}, {} bytes", out.to_string().len());
+    let f = out["findings"].as_array().unwrap();
+    assert_eq!(f.len(), 201, "200 findings, then the note");
+    assert!(out.to_string().len() < 200_000, "result: {} bytes", out.to_string().len());
+    assert_eq!(f.iter().filter(|x| x["subject"].as_str().unwrap().starts_with("link:A1:")).count(), 20, "20 for one entry");
+    let note = f.iter().find(|x| x["subject"] == "link:more").unwrap();
+    assert!(note["message"].as_str().unwrap().starts_with(&format!("{} more link(s)", n * n - 200)), "{note}");
+    assert!(took < std::time::Duration::from_secs(60), "{took:?}");
+    let got = ex(&mut s, "design.get", json!({}));
+    assert_eq!((got["missingLinks"].as_array().unwrap().len(), &got["counts"]["missingLinks"]), (200, &json!(n * n)));
 }
