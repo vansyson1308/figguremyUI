@@ -110,8 +110,8 @@ fn blank_families_and_aliases_are_handled() {
     for v in cycle.values.values_mut() {
         *v = VariableValue::Alias("V:cycle".into());
     }
-    doc.variables.variables.push(alias);
-    doc.variables.variables.push(cycle);
+    doc.variables.variables.push(alias.into());
+    doc.variables.variables.push(cycle.into());
     doc.get_mut(t).unwrap().bound.insert("fontFamily".into(), "V:alias".into());
     let other = text(&mut s, "FigCraft Missing G");
     s.doc_mut().unwrap().get_mut(other).unwrap().bound.insert("fontFamily".into(), "V:cycle".into());

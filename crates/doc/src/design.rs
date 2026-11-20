@@ -299,7 +299,11 @@ impl StateKind {
 
 /// What shows a declared state: a frame or overlay, a layer of the screen, or an instance in the
 /// screen showing one of its variants.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Read through a JSON `Value` (its `Deserialize`): which variant a stored value is depends on
+/// which fields it has, and a value with a key twice must read the same whether the file is read
+/// straight or through a `Value` ([`DesignContext::from_stored_text`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
 pub enum ShownBy {
     /// A layer: a top-level frame (another screen, an overlay) or a layer in the screen.
@@ -307,6 +311,28 @@ pub enum ShownBy {
     /// An instance in the screen and the variant it shows the state with: the variant's name
     /// (`State=Error`), one of its property values (`Error`), or the variant component's id.
     Variant { instance: NodeId, variant: String },
+}
+
+/// How a stored [`ShownBy`] is told apart: the first variant whose fields it has (a `node` makes it
+/// a layer, else an `instance` and a `variant`), other fields ignored.
+#[derive(Deserialize)]
+#[serde(untagged, rename = "ShownBy")]
+enum ShownByStored {
+    Node { node: NodeId },
+    Variant { instance: NodeId, variant: String },
+}
+
+impl<'de> Deserialize<'de> for ShownBy {
+    /// Through a `Value` first, which keeps the last of a key given twice, as a file read through a
+    /// `Value` always did. Read straight, serde's untagged buffering keeps both: a `node` given
+    /// twice failed `Node` and the value read as `Variant` instead.
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let raw = Value::deserialize(d)?;
+        match ShownByStored::deserialize(&raw).map_err(serde::de::Error::custom)? {
+            ShownByStored::Node { node } => Ok(ShownBy::Node { node }),
+            ShownByStored::Variant { instance, variant } => Ok(ShownBy::Variant { instance, variant }),
+        }
+    }
 }
 
 impl ShownBy {
@@ -796,9 +822,159 @@ const MAX_COUNTERS: usize = 64;
 /// entries that read are kept and the rest left out; anything past [`MAX_ENTRIES`] or
 /// [`MAX_TEXT`] is cut. What was left out or cut is in [`DesignContext::load_issues`] for the
 /// loader to report: it is never written back, so saving the file drops what couldn't be read.
+///
+/// The context's text is read straight into its types when that gives what reading it through a
+/// `Value` gives ([`DesignContext::from_stored_text`]); when it might not, this refuses with
+/// [`READ_AGAIN`], and [`document_from_json`] reads the whole document again the way it always
+/// was: through a `Value`, read from the document's own reader, so a file that reader refuses is
+/// refused with the same error, at the same place. Files are read that way (`figcraft-format`);
+/// a document deserialized from anything else (`serde_json::from_value`, in tests) gets the
+/// [`READ_AGAIN`] error instead for a context that needs it: one nested [`NESTING_TO_CHECK`] deep
+/// (a `Value` holds no lone surrogate and no number past `f64`).
 pub fn read_stored<'de, D: Deserializer<'de>>(d: D) -> Result<Arc<DesignContext>, D::Error> {
-    let raw = Value::deserialize(d)?;
-    Ok(Arc::new(DesignContext::from_stored(raw)))
+    if THROUGH_VALUE.with(std::cell::Cell::get) {
+        let raw = Value::deserialize(d)?;
+        return Ok(Arc::new(DesignContext::from_stored(raw)));
+    }
+    let raw = Box::<serde_json::value::RawValue>::deserialize(d)?;
+    match DesignContext::from_stored_text(raw.get()) {
+        Some(ctx) => Ok(Arc::new(ctx)),
+        None => Err(serde::de::Error::custom(READ_AGAIN)),
+    }
+}
+
+/// What [`read_stored`] refuses a context with when it must be read through a `Value`, from the
+/// document's own reader ([`document_from_json`] does that).
+pub const READ_AGAIN: &str = "the design context must be read through a JSON value (read the document with figcraft_doc::design::document_from_json)";
+
+thread_local! {
+    /// Set while [`document_from_json`] reads a document again with [`read_stored`] taking the
+    /// `Value` way.
+    static THROUGH_VALUE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// A [`Document`](crate::Document) from its JSON text (`document.json`), as
+/// `serde_json::from_str` reads it, its design context read as it always was: when reading the
+/// context straight might differ ([`READ_AGAIN`]), the text is read again with the context
+/// through a `Value`, which gives the old result or the old error exactly.
+pub fn document_from_json(text: &str) -> Result<crate::Document, serde_json::Error> {
+    match serde_json::from_str(text) {
+        Err(e) if e.to_string().contains(READ_AGAIN) => {
+            /// Clears the flag however the read ends.
+            struct Reset;
+            impl Drop for Reset {
+                fn drop(&mut self) {
+                    THROUGH_VALUE.with(|f| f.set(false));
+                }
+            }
+            THROUGH_VALUE.with(|f| f.set(true));
+            let _reset = Reset;
+            serde_json::from_str(text)
+        }
+        read => read,
+    }
+}
+
+/// serde_json refuses nesting this deep counted from where its reader starts; a context nested
+/// this deep, counted from itself, is read the way it always was (from the document, which is
+/// one or more levels up).
+const NESTING_TO_CHECK: usize = 100;
+
+/// Whether reading `text` through a `Value` might refuse what reading it straight accepts: reading
+/// it straight skips the fields a context doesn't know without decoding them, and counts nesting
+/// from the context rather than the document. A `Value` refuses a lone surrogate (`\ud800` not
+/// followed by `\udc00`–`\udfff`, or a lone `\udc00`–`\udfff`), a number past `f64`'s range and
+/// nesting 128 deep. This flags each (numbers and nesting generously), in one pass, so a context
+/// can't open where it used to be refused.
+fn may_read_differently(text: &str) -> bool {
+    let b = text.as_bytes();
+    let hex4 = |at: usize| -> Option<u32> {
+        let digits = b.get(at..at + 4)?;
+        let s = std::str::from_utf8(digits).ok()?;
+        u32::from_str_radix(s, 16).ok()
+    };
+    let (mut i, mut depth) = (0usize, 0usize);
+    while let Some(&c) = b.get(i) {
+        match c {
+            b'"' => {
+                // A string, to its closing quote: only its escapes are looked at.
+                i += 1;
+                loop {
+                    let Some(at) = next_quote_or_escape(b, i) else { return false };
+                    if b.get(at) == Some(&b'"') {
+                        i = at + 1;
+                        break;
+                    }
+                    if b.get(at + 1) != Some(&b'u') {
+                        i = at + 2;
+                        continue;
+                    }
+                    match hex4(at + 2) {
+                        Some(0xD800..=0xDBFF) => {
+                            let paired =
+                                b.get(at + 6) == Some(&b'\\') && b.get(at + 7) == Some(&b'u') && matches!(hex4(at + 8), Some(0xDC00..=0xDFFF));
+                            if !paired {
+                                return true;
+                            }
+                            i = at + 12;
+                        }
+                        Some(0xDC00..=0xDFFF) => return true,
+                        _ => i = at + 6,
+                    }
+                }
+                continue;
+            }
+            b'[' | b'{' => {
+                depth += 1;
+                if depth >= NESTING_TO_CHECK {
+                    return true;
+                }
+            }
+            b']' | b'}' => depth = depth.saturating_sub(1),
+            b'-' | b'0'..=b'9' => {
+                let start = i;
+                let mut exponent = false;
+                while let Some(&d) = b.get(i) {
+                    match d {
+                        b'0'..=b'9' | b'-' | b'+' | b'.' => {}
+                        b'e' | b'E' => exponent = true,
+                        _ => break,
+                    }
+                    i += 1;
+                }
+                // A long number may overflow; one with an exponent may be past f64 (1e400).
+                let past_f64 = || text.get(start..i).and_then(|n| n.parse::<f64>().ok()).is_none_or(|x| !x.is_finite() || x.abs() > 1e300);
+                if i - start > 300 || (exponent && past_f64()) {
+                    return true;
+                }
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Where the first `"` or `\` of `b` from `i` on is, looking at 8 bytes at a time (a context is
+/// mostly text, and in text only those two matter).
+fn next_quote_or_escape(b: &[u8], mut i: usize) -> Option<usize> {
+    const ONES: u64 = 0x0101_0101_0101_0101;
+    const HIGHS: u64 = 0x8080_8080_8080_8080;
+    while let Some(chunk) = b.get(i..i + 8) {
+        let mut w = [0u8; 8];
+        w.copy_from_slice(chunk);
+        let x = u64::from_le_bytes(w);
+        // A byte of `q` or `s` is zero where `x` has a quote or a backslash; the first such byte
+        // is the lowest one whose high bit `hit` sets.
+        let (q, s) = (x ^ (ONES * u64::from(b'"')), x ^ (ONES * u64::from(b'\\')));
+        let hit = ((q.wrapping_sub(ONES) & !q) | (s.wrapping_sub(ONES) & !s)) & HIGHS;
+        if hit != 0 {
+            return Some(i + (hit.trailing_zeros() / 8) as usize);
+        }
+        i += 8;
+    }
+    b.get(i..)?.iter().position(|&c| c == b'"' || c == b'\\').map(|k| i + k)
 }
 
 /// What reading the stored context left out or cut, taken out of it so it is reported once.
@@ -955,13 +1131,40 @@ impl Cut {
 }
 
 impl DesignContext {
+    /// [`from_stored`](Self::from_stored) of the JSON text `text`, or `None` when that must be
+    /// read through a `Value` from the document's own reader ([`read_stored`]).
+    ///
+    /// A context that reads whole is read straight into its types (building a `Value` first, and
+    /// dropping it, was most of the cost a design context added to opening a file, performance
+    /// budget PF6); one that doesn't is read through a `Value` of `text` as before, so what is kept
+    /// and said about it is the same. Read straight, a key given twice is refused where a `Value`
+    /// keeps the last, so such a context takes the `Value` way ([`ShownBy`] reads through a
+    /// `Value` itself, where serde would have kept both). `None` when a `Value` of `text` can't be
+    /// read, or [may refuse](may_read_differently) what reading straight accepts: the file was
+    /// refused then, with an error at its place in the document only that reader can give.
+    pub fn from_stored_text(text: &str) -> Option<DesignContext> {
+        if may_read_differently(text) {
+            return None;
+        }
+        match serde_json::from_str::<DesignContext>(text) {
+            Ok(ctx) => Some(DesignContext::settled(ctx, Vec::new())),
+            Err(_) => serde_json::from_str(text).ok().map(DesignContext::from_stored),
+        }
+    }
+
     /// The context a stored `design` value holds, read leniently (see [`read_stored`]).
     pub fn from_stored(raw: Value) -> DesignContext {
         let mut issues = Vec::new();
-        let mut ctx = match DesignContext::deserialize(&raw) {
+        let ctx = match DesignContext::deserialize(&raw) {
             Ok(ctx) => ctx,
             Err(why) => DesignContext::salvaged(raw, &why.to_string(), &mut issues),
         };
+        DesignContext::settled(ctx, issues)
+    }
+
+    /// `ctx` as read (`issues`: what reading it left out) cut to what a file may hold, its id
+    /// counters raised and its states and required elements repaired, with what was changed.
+    fn settled(mut ctx: DesignContext, mut issues: Vec<String>) -> DesignContext {
         let cut = ctx.clamp();
         if !cut.is_empty() {
             issues.push(format!("the design context was larger than a file may hold and was cut: {}", cut.join("; ")));
@@ -1275,7 +1478,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        Brief, Decision, DecisionStatus, DesignContext, EndState, EndStateStatus, Finding, MAX_ENTRIES, MAX_TEXT, Scenario, Stage, take_load_issues,
+        Brief, Decision, DecisionStatus, DesignContext, EndState, EndStateStatus, Finding, MAX_ENTRIES, MAX_TEXT, NESTING_TO_CHECK, Scenario,
+        ShownBy, Stage, THROUGH_VALUE, document_from_json, may_read_differently, next_quote_or_escape, take_load_issues,
     };
     use crate::{Document, NodeId};
 
@@ -1469,6 +1673,105 @@ mod tests {
         // A context within the limits is left alone.
         let mut small = DesignContext { brief: Brief { audience: "é".repeat(MAX_TEXT), ..Brief::default() }, ..DesignContext::default() };
         assert!(small.clamp().is_empty());
+    }
+
+    #[test]
+    fn a_context_read_straight_is_what_reading_it_through_a_value_gives() {
+        // The same context and the same report, whichever way it is read, and whether the file
+        // comes as text or as a JSON value: well formed, repaired, cut, salvaged, duplicate keys.
+        let long = "x".repeat(MAX_TEXT + 3);
+        let texts = [
+            json!({"brief": {"audience": "Nurses", "required": [{"id": "r1", "text": "Price", "nodes": [4, 4]}]}, "stage": "converging",
+                "scenarios": [{"id": "S1", "name": "Happy", "start": 4, "steps": [{"action": {"type": "wait"}, "expect": {"variables": {"n": 1.5}}}]}],
+                "states": [{"frame": 4, "kind": "other", "reason": "Offline", "author": "user", "status": "accepted"}], "counters": {"S": 1}})
+            .to_string(),
+            json!({"brief": {"audience": long}, "counters": {}}).to_string(),
+            json!({"brief": {"audience": "Nurses"}, "scenarios": [{"id": "S1", "name": "x"}]}).to_string(),
+            json!({"stage": "shipping"}).to_string(),
+            json!([1, 2]).to_string(),
+            r#"{"stage": "converging", "brief": {"audience": "A"}, "stage": "ready"}"#.to_string(),
+            r#"{"brief": {"audience": "A", "audience": "B"}}"#.to_string(),
+            // Nested: a state's `shownBy` (told apart by its fields), a step's action, a value set.
+            r#"{"states": [{"frame": 4, "kind": "error", "shownBy": {"node": 1, "instance": 2, "variant": "x", "node": 3}}]}"#.to_string(),
+            r#"{"states": [{"frame": 4, "kind": "error", "shownBy": {"node": "bad", "instance": 2, "variant": "x", "node": 3}}]}"#.to_string(),
+            r#"{"scenarios": [{"id": "S1", "name": "n", "start": 4, "steps": [{"action": {"type": "wait", "type": "key", "key": "K"}}]}]}"#.to_string(),
+            r#"{"scenarios": [{"id": "S1", "name": "n", "start": 4, "steps": [{"action": {"type": "setVariable", "variable": "v", "value": {"a": 1, "a": 2}}}]}]}"#.to_string(),
+        ];
+        for text in &texts {
+            let value: serde_json::Value = serde_json::from_str(text).unwrap();
+            let (straight, through) = (DesignContext::from_stored_text(text).expect("reads straight"), DesignContext::from_stored(value.clone()));
+            assert_eq!(straight, through, "{text}");
+            assert_eq!(straight.load_issues.0, through.load_issues.0, "{text}");
+            assert_eq!(serde_json::to_string(&straight).unwrap(), serde_json::to_string(&through).unwrap(), "{text}");
+            // Inside a document, from its text and from its value.
+            let doc_text = document_with(serde_json::Value::Null).to_string().replacen("\"design\":null", &format!("\"design\":{text}"), 1);
+            let from_text: Document = serde_json::from_str(&doc_text).unwrap();
+            let from_value: Document = serde_json::from_value(document_with(value)).unwrap();
+            assert_eq!(serde_json::to_string(&from_text).unwrap(), serde_json::to_string(&from_value).unwrap(), "{text}");
+            assert_eq!(from_text.design.load_issues.0, through.load_issues.0, "{text}");
+        }
+        assert_eq!(
+            DesignContext::from_stored_text(&texts[5]).map(|c| c.stage),
+            Some(Stage::Ready),
+            "the last of a duplicate key, as a `Value` keeps it"
+        );
+        let shown = DesignContext::from_stored_text(&texts[7]).and_then(|c| c.states.first().and_then(|s| s.shown_by.clone()));
+        assert_eq!(shown, Some(ShownBy::Node { node: NodeId(3) }), "the last `node`, as a `Value` keeps it");
+    }
+
+    #[test]
+    fn the_next_quote_or_escape_is_found_wherever_it_is() {
+        // Against a byte-by-byte search, from every place, with the two bytes at every place in
+        // and across the 8-byte steps, next to text of other bytes (é, 0x80 and up, 0x21, 0x5D).
+        let filler = "aé!]\u{7f}xyz".as_bytes();
+        for len in 0..40 {
+            for at in 0..=len {
+                for mark in *b"\"\\" {
+                    let mut b: Vec<u8> = filler.iter().copied().cycle().take(len).collect();
+                    if at < len {
+                        b[at] = mark;
+                    }
+                    for from in 0..=len {
+                        let naive = b.get(from..).and_then(|r| r.iter().position(|&c| c == b'"' || c == b'\\')).map(|k| from + k);
+                        assert_eq!(next_quote_or_escape(&b, from), naive, "{b:?} from {from}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn what_a_value_might_refuse_is_left_to_the_documents_reader() {
+        // Read straight these would open; a `Value` refuses them (or may: numbers and nesting are
+        // flagged generously), so they are read again from the document.
+        let deep = format!("{{\"x\":{}{}}}", "[".repeat(NESTING_TO_CHECK), "]".repeat(NESTING_TO_CHECK));
+        for text in [
+            r#"{"a":"\ud800"}"#,
+            r#"{"a":"\udc00"}"#,
+            r#"{"a":"\ud800\u0041"}"#,
+            r#"{"\ud800":1}"#,
+            r#"{"a":1e400}"#,
+            r#"{"a":-1E+301}"#,
+            deep.as_str(),
+        ] {
+            assert!(may_read_differently(text), "{text}");
+            assert!(DesignContext::from_stored_text(text).is_none(), "{text}");
+        }
+        // Text a `Value` reads the same: pairs, escaped quotes and backslashes, ordinary numbers,
+        // what only looks like a number or an escape inside a string.
+        for text in [r#"{"a":"\ud83d\ude00"}"#, r#"{"a":"\\ud800 \"1e400\""}"#, r#"{"a":[1.5,-2,3e10,1E-400]}"#, r#"{"a":"[[[[ \u0041"}"#] {
+            assert!(!may_read_differently(text), "{text}");
+        }
+        // And a document whose context must be read again reads as it always did.
+        let doc = document_with(serde_json::Value::Null).to_string();
+        let text =
+            doc.replacen("\"design\":null", r#""design":{"brief":{"audience":"Nurses"},"later":[1e301,"\ud83d\ude00",[[1]]],"stage":"ready"}"#, 1);
+        let read: Document = document_from_json(&text).unwrap();
+        assert_eq!((read.design.brief.audience.as_str(), read.design.stage), ("Nurses", Stage::Ready));
+        let refused = doc.replacen("\"design\":null", r#""design":{"brief":{"audience":"\ud800"}}"#, 1);
+        let old = serde_json::from_str::<serde_json::Value>(&refused).unwrap_err().to_string();
+        assert_eq!(document_from_json(&refused).unwrap_err().to_string(), old, "refused where it always was");
+        assert!(!THROUGH_VALUE.with(std::cell::Cell::get), "the flag is cleared");
     }
 
     #[test]

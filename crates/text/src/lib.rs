@@ -35,7 +35,7 @@ struct Cached<T> {
 
 /// Cached results by a cheap fingerprint; entries are confirmed with `TextData`'s full equality.
 struct LayoutCache<T> {
-    buckets: std::collections::HashMap<u64, Vec<Cached<T>>>,
+    buckets: figcraft_doc::fast_hash::FastMap<u64, Vec<Cached<T>>>,
     len: usize,
 }
 
@@ -78,10 +78,11 @@ pub fn layout_generation() -> u64 {
     LAYOUT_GENERATION.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// The parts of a text that usually tell texts apart, hashed cheaply (no formatting).
+/// The parts of a text that usually tell texts apart, hashed cheaply (no formatting; with the
+/// fast hash, as the cache is only read by key and every hit is confirmed in full).
 fn fingerprint(t: &figcraft_doc::TextData, w: Option<u64>, h: Option<u64>) -> u64 {
     use std::hash::{Hash, Hasher};
-    let mut hs = std::collections::hash_map::DefaultHasher::new();
+    let mut hs = figcraft_doc::fast_hash::FastHasher::default();
     t.characters.hash(&mut hs);
     t.style.font_family.hash(&mut hs);
     t.style.font_style.hash(&mut hs);

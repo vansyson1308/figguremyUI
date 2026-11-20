@@ -165,15 +165,18 @@ pub fn play_interactions(doc: &mut Document) {
         .filter_map(|n| {
             let NodeKind::Instance { component, .. } = &n.kind else { return None };
             let main = doc.node(*component)?;
-            let variants = crate::components::variant_set(doc, *component).and_then(|s| doc.node(s)).map_or(vec![*component], |s| s.children.clone());
+            let alone = [*component];
+            let variants: &[NodeId] = crate::components::variant_set(doc, *component).and_then(|s| doc.node(s)).map_or(&alone, |s| &s.children);
             let copied = |it: &Interaction| variants.iter().filter_map(|v| doc.node(*v)).any(|v| v.interactions.contains(it));
             let own: Vec<&Interaction> = n.interactions.iter().filter(|it| !copied(it)).collect();
-            let plays: Vec<Interaction> = own
-                .iter()
-                .map(|it| (*it).clone())
-                .chain(main.interactions.iter().filter(|it| own.iter().all(|o| o.trigger != it.trigger)).cloned())
-                .collect();
-            (plays != n.interactions).then_some((n.id, plays))
+            let inherited = || main.interactions.iter().filter(|it| own.iter().all(|o| o.trigger != it.trigger));
+            // Compared before anything is copied: most instances play what they hold (a
+            // prototype's run makes this copy after nearly every action, PF2).
+            if own.iter().copied().chain(inherited()).eq(n.interactions.iter()) {
+                return None;
+            }
+            let plays: Vec<Interaction> = own.iter().map(|it| (*it).clone()).chain(inherited().cloned()).collect();
+            Some((n.id, plays))
         })
         .collect();
     for (id, its) in plays {

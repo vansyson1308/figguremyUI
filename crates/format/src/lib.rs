@@ -519,7 +519,7 @@ fn parse_json(text: &str) -> Result<(Document, Vec<String>, ImageIndex), FormatE
     {
         return Err(FormatError::Newer(u32::try_from(ver).unwrap_or(u32::MAX)));
     }
-    let mut doc: Document = serde_json::from_str(text).map_err(corrupt)?;
+    let mut doc = figcraft_doc::design::document_from_json(text).map_err(corrupt)?;
     let mut issues = doc.validate();
     if !issues.is_empty() {
         doc.repair();

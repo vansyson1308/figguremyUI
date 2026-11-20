@@ -369,14 +369,16 @@ impl VariableType {
 #[serde(default)]
 pub struct Variables {
     pub collections: Vec<Collection>,
-    pub variables: Vec<Variable>,
+    /// Each shared with the copies of the document until one changes it ([`crate::shared::Shared`]):
+    /// a prototype's run sets one variable at a time on a copy of the document.
+    pub variables: Vec<crate::shared::Shared<Variable>>,
 }
 
 impl Variables {
     /// The variable a person named: the one with id `key`, else the one named `key`. A stored
     /// reference goes through [`get_by_id`](Self::get_by_id) instead.
     pub fn get(&self, key: &str) -> Option<&Variable> {
-        self.get_by_id(key).or_else(|| self.variables.iter().find(|v| v.name == key))
+        self.get_by_id(key).or_else(|| self.variables.iter().map(|v| &**v).find(|v| v.name == key))
     }
 
     /// The variable a command's caller names, the one way every command reads it: its id, else
@@ -395,7 +397,7 @@ impl Variables {
                     && key.ends_with(v.name.as_str())
             })
         };
-        let found: Vec<&Variable> = self.variables.iter().filter(|v| v.name == key || qualified(v)).collect();
+        let found: Vec<&Variable> = self.variables.iter().map(|v| &**v).filter(|v| v.name == key || qualified(v)).collect();
         match found.as_slice() {
             [one] => Ok(one),
             [] => Err(format!("no such variable `{key}` (name it by its id, `Collection/name` or a name only one variable has)")),
@@ -414,7 +416,7 @@ impl Variables {
     /// Look up an already resolved variable id (a stored binding or alias): exact ids only, so a
     /// variable named like an id never stands in for it.
     pub fn get_by_id(&self, id: &str) -> Option<&Variable> {
-        self.variables.iter().find(|v| v.id == id)
+        self.variables.iter().map(|v| &**v).find(|v| v.id == id)
     }
 
     /// The collection a person named: the one with id `key`, else the one named `key`. A stored

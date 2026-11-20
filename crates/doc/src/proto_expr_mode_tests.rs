@@ -18,19 +18,22 @@ fn more_vars() -> Variables {
         modes: vec![Mode { id: "hc".into(), name: "High contrast".into() }, Mode { id: "odd".into(), name: "a]b".into() }],
         extends: None,
     });
-    v.variables.push(Variable {
-        id: "k".into(),
-        name: "k-name".into(),
-        collection: "cs".into(),
-        kind: VariableType::Number,
-        values: BTreeMap::from([("hc".to_string(), VariableValue::Number(1.0)), ("odd".to_string(), VariableValue::Number(2.0))]),
-        description: String::new(),
-        scopes: None,
-        hidden_from_publishing: false,
-        extends: None,
-        overrides: Default::default(),
-        code_syntax: Default::default(),
-    });
+    v.variables.push(
+        Variable {
+            id: "k".into(),
+            name: "k-name".into(),
+            collection: "cs".into(),
+            kind: VariableType::Number,
+            values: BTreeMap::from([("hc".to_string(), VariableValue::Number(1.0)), ("odd".to_string(), VariableValue::Number(2.0))]),
+            description: String::new(),
+            scopes: None,
+            hidden_from_publishing: false,
+            extends: None,
+            overrides: Default::default(),
+            code_syntax: Default::default(),
+        }
+        .into(),
+    );
     v
 }
 
@@ -145,7 +148,7 @@ fn stored_variable_ids_keep_expression_evaluation_display_and_types() {
     let mut shadow = vars.get_by_id("s").unwrap().clone();
     shadow.id = "shadow".into();
     shadow.name = "n".into();
-    vars.variables.insert(0, shadow);
+    vars.variables.insert(0, shadow.into());
     let mut shadow = vars.collection("cs").unwrap().clone();
     shadow.id = "shadow".into();
     shadow.name = "c".into();

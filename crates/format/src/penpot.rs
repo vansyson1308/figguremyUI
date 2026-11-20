@@ -2305,19 +2305,22 @@ fn import_themed_tokens(
             warn(warnings, "Penpot token lookup work budget exhausted; remaining descriptions were skipped".into());
             break;
         }
-        doc.variables.variables.push(Variable {
-            id: var_id(path),
-            name: format!("{group}/{path}"),
-            collection: collection.clone(),
-            kind,
-            values,
-            description: description.chars().take(1024).collect(),
-            scopes: None,
-            hidden_from_publishing: false,
-            extends: None,
-            overrides: BTreeSet::new(),
-            code_syntax: BTreeMap::new(),
-        });
+        doc.variables.variables.push(
+            Variable {
+                id: var_id(path),
+                name: format!("{group}/{path}"),
+                collection: collection.clone(),
+                kind,
+                values,
+                description: description.chars().take(1024).collect(),
+                scopes: None,
+                hidden_from_publishing: false,
+                extends: None,
+                overrides: BTreeSet::new(),
+                code_syntax: BTreeMap::new(),
+            }
+            .into(),
+        );
         used_collections.insert(index);
         converted += 1;
     }
@@ -2422,24 +2425,27 @@ fn import_token_variables(
             if let Some((kind, item)) = converted_token {
                 let mut values = BTreeMap::new();
                 values.insert(mode_id.clone(), item);
-                doc.variables.variables.push(Variable {
-                    id: format!("{collection_id}:{name}"),
-                    name: format!("{set_name}/{name}"),
-                    collection: collection_id.clone(),
-                    kind,
-                    values,
-                    description: string(token, "description")
-                        .or_else(|| string(token, "$description"))
-                        .unwrap_or_default()
-                        .chars()
-                        .take(1024)
-                        .collect(),
-                    scopes: None,
-                    hidden_from_publishing: false,
-                    extends: None,
-                    overrides: BTreeSet::new(),
-                    code_syntax: BTreeMap::new(),
-                });
+                doc.variables.variables.push(
+                    Variable {
+                        id: format!("{collection_id}:{name}"),
+                        name: format!("{set_name}/{name}"),
+                        collection: collection_id.clone(),
+                        kind,
+                        values,
+                        description: string(token, "description")
+                            .or_else(|| string(token, "$description"))
+                            .unwrap_or_default()
+                            .chars()
+                            .take(1024)
+                            .collect(),
+                        scopes: None,
+                        hidden_from_publishing: false,
+                        extends: None,
+                        overrides: BTreeSet::new(),
+                        code_syntax: BTreeMap::new(),
+                    }
+                    .into(),
+                );
                 count += 1;
                 converted += 1;
             } else {

@@ -217,9 +217,9 @@ fn foundations(doc: &mut Document) -> (CollectionId, ModeId, ModeId) {
         code_syntax: Default::default(),
     };
     for (name, l, d) in COLORS {
-        doc.variables.variables.push(var(name, VariableType::Color, [VariableValue::Color(rgb(l)), VariableValue::Color(rgb(d))]));
+        doc.variables.variables.push(var(name, VariableType::Color, [VariableValue::Color(rgb(l)), VariableValue::Color(rgb(d))]).into());
     }
-    doc.variables.variables.push(var("Radius", VariableType::Number, [VariableValue::Number(6.0), VariableValue::Number(8.0)]));
+    doc.variables.variables.push(var("Radius", VariableType::Number, [VariableValue::Number(6.0), VariableValue::Number(8.0)]).into());
     for (name, hex) in [("Brand/Primary", 0x0D99FFu32), ("Brand/Accent", 0x9747FF), ("Text/Primary", 0x1E1E1E), ("Text/Secondary", 0x757575)] {
         doc.styles.push(Style {
             id: format!("ds:paint:{name}"),

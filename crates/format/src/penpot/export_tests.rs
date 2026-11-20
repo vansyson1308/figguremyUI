@@ -575,21 +575,30 @@ fn native_variables_become_token_sets_themes_and_applied_tokens() {
         modes: vec![Mode { id: "one".into(), name: "Default".into() }],
         extends: None,
     });
-    doc.variables.variables.push(variable(
-        "v1",
-        "brand/primary",
-        "c1",
-        VariableType::Color,
-        &[("light", VariableValue::Color(Color::from_hex("#ff0000").unwrap())), ("dark", VariableValue::Color(Color::from_hex("#880000").unwrap()))],
-    ));
-    doc.variables.variables.push(variable("v2", "space/m", "c2", VariableType::Number, &[("one", VariableValue::Number(16.0))]));
-    doc.variables.variables.push(variable(
-        "v3",
-        "brand/alias",
-        "c1",
-        VariableType::Color,
-        &[("light", VariableValue::Alias("v1".into())), ("dark", VariableValue::Alias("v1".into()))],
-    ));
+    doc.variables.variables.push(
+        variable(
+            "v1",
+            "brand/primary",
+            "c1",
+            VariableType::Color,
+            &[
+                ("light", VariableValue::Color(Color::from_hex("#ff0000").unwrap())),
+                ("dark", VariableValue::Color(Color::from_hex("#880000").unwrap())),
+            ],
+        )
+        .into(),
+    );
+    doc.variables.variables.push(variable("v2", "space/m", "c2", VariableType::Number, &[("one", VariableValue::Number(16.0))]).into());
+    doc.variables.variables.push(
+        variable(
+            "v3",
+            "brand/alias",
+            "c1",
+            VariableType::Color,
+            &[("light", VariableValue::Alias("v1".into())), ("dark", VariableValue::Alias("v1".into()))],
+        )
+        .into(),
+    );
     let p = page(&doc);
     let id = add(&mut doc, p, NodeKind::Rectangle, "Bound", 0.0, 0.0, 16.0, 10.0);
     doc.node_mut(id).unwrap().fills = vec![Paint::solid(Color::from_hex("#ff0000").unwrap())];
@@ -621,43 +630,51 @@ fn colour_calculations_export_as_the_colour_they_show() {
     let mut doc = Document::new("Calculated");
     doc.variables.collections.push(light_dark_colors());
     let hex = |h: &str| Color::from_hex(h).unwrap();
-    doc.variables.variables.push(variable(
-        "v1",
-        "brand/primary",
-        "c1",
-        VariableType::Color,
-        &[("light", VariableValue::Color(hex("#ff0000"))), ("dark", VariableValue::Color(hex("#0000ff")))],
-    ));
+    doc.variables.variables.push(
+        variable(
+            "v1",
+            "brand/primary",
+            "c1",
+            VariableType::Color,
+            &[("light", VariableValue::Color(hex("#ff0000"))), ("dark", VariableValue::Color(hex("#0000ff")))],
+        )
+        .into(),
+    );
     let mix = VariableValue::ColorMix {
         from: ColorOperand::Variable { variable: "v1".into() },
         to: ColorOperand::Literal { literal: hex("#00ff0080") },
         t: 0.5,
     };
-    doc.variables.variables.push(variable(
-        "v2",
-        "brand/veil",
-        "c1",
-        VariableType::Color,
-        &[("light", VariableValue::ColorAlpha { variable: "v1".into(), opacity: 0.5 }), ("dark", mix)],
-    ));
+    doc.variables.variables.push(
+        variable(
+            "v2",
+            "brand/veil",
+            "c1",
+            VariableType::Color,
+            &[("light", VariableValue::ColorAlpha { variable: "v1".into(), opacity: 0.5 }), ("dark", mix)],
+        )
+        .into(),
+    );
     let gone = VariableValue::ColorAlpha { variable: "v-gone".into(), opacity: 0.5 };
-    doc.variables.variables.push(variable("v3", "brand/lost", "c1", VariableType::Color, &[("light", gone.clone()), ("dark", gone.clone())]));
+    doc.variables.variables.push(variable("v3", "brand/lost", "c1", VariableType::Color, &[("light", gone.clone()), ("dark", gone.clone())]).into());
     // Aliases: to the lost one (same collection), to one lost only in Dark (from a collection with
     // one mode, which reads Color in its default mode, Light), to an alias that is left out, and to
     // one that always resolves.
     let alias = |to: &str| VariableValue::Alias(to.into());
-    doc.variables.variables.push(variable("v4", "brand/lost-too", "c1", VariableType::Color, &[("light", alias("v3")), ("dark", alias("v3"))]));
+    doc.variables
+        .variables
+        .push(variable("v4", "brand/lost-too", "c1", VariableType::Color, &[("light", alias("v3")), ("dark", alias("v3"))]).into());
     let half = VariableValue::ColorAlpha { variable: "v1".into(), opacity: 0.5 };
-    doc.variables.variables.push(variable("v5", "brand/half", "c1", VariableType::Color, &[("light", half), ("dark", gone)]));
+    doc.variables.variables.push(variable("v5", "brand/half", "c1", VariableType::Color, &[("light", half), ("dark", gone)]).into());
     doc.variables.collections.push(Collection {
         id: "c2".into(),
         name: "Theme".into(),
         modes: vec![Mode { id: "one".into(), name: "One".into() }],
         extends: None,
     });
-    doc.variables.variables.push(variable("v6", "theme/accent", "c2", VariableType::Color, &[("one", alias("v5"))]));
-    doc.variables.variables.push(variable("v7", "theme/veil", "c2", VariableType::Color, &[("one", alias("v2"))]));
-    doc.variables.variables.push(variable("v8", "theme/deep", "c2", VariableType::Color, &[("one", alias("v4"))]));
+    doc.variables.variables.push(variable("v6", "theme/accent", "c2", VariableType::Color, &[("one", alias("v5"))]).into());
+    doc.variables.variables.push(variable("v7", "theme/veil", "c2", VariableType::Color, &[("one", alias("v2"))]).into());
+    doc.variables.variables.push(variable("v8", "theme/deep", "c2", VariableType::Color, &[("one", alias("v4"))]).into());
     let (bytes, warnings) = export(&doc).unwrap();
     assert!(warnings.iter().any(|w| w == crate::CALCULATIONS_LEFT_OUT), "{warnings:?}");
     let tokens = tokens(&bytes);
@@ -1014,9 +1031,9 @@ fn stored_variable_ids_keep_penpot_token_identity() {
             modes: vec![Mode { id: "m".into(), name: "Default".into() }],
             extends: None,
         });
-        doc.variables.variables.push(variable("shadow", "target", "c", VariableType::Number, &[("m", VariableValue::Number(20.0))]));
+        doc.variables.variables.push(variable("shadow", "target", "c", VariableType::Number, &[("m", VariableValue::Number(20.0))]).into());
         if !missing {
-            doc.variables.variables.push(variable("target", "surface", "c", VariableType::Number, &[("m", VariableValue::Number(40.0))]));
+            doc.variables.variables.push(variable("target", "surface", "c", VariableType::Number, &[("m", VariableValue::Number(40.0))]).into());
         }
         let p = page(&doc);
         let r = add(&mut doc, p, NodeKind::Rectangle, "Bound", 0.0, 0.0, 40.0, 10.0);

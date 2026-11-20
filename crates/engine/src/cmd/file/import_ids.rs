@@ -50,7 +50,7 @@ impl Renames {
         });
         let vars = theirs.variables.iter().map(|v| {
             let here = doc.variables.get_by_id(&v.id);
-            (Asset::Variable(&v.id), here.map(|m| m == v), libs.variable_import(&v.id).is_some())
+            (Asset::Variable(&v.id), here.map(|m| *m == **v), libs.variable_import(&v.id).is_some())
         });
         // `taken`: ids `doc` uses; `differs`: what `doc` doesn't have the same of.
         let (mut taken, mut copies, mut differs) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
@@ -136,6 +136,7 @@ impl Renames {
             }
         }
         for v in &mut doc.variables.variables {
+            let v: &mut figcraft_doc::Variable = v;
             let values = std::mem::take(&mut v.values).into_iter().map(|(mut mode, mut val)| {
                 self.mode(theirs, &v.collection, &mut mode);
                 val.references_mut().into_iter().for_each(|r| rename(vars, r));

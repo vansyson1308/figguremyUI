@@ -159,19 +159,22 @@ fn create_everything(doc: &mut Document, who: usize, round: usize) {
         c.modes.push(Mode { id: m, name: "Dark".into() });
     }
     let vid = doc.new_variable_id();
-    doc.variables.variables.push(Variable {
-        id: vid,
-        name,
-        collection: cid,
-        kind: VariableType::Number,
-        values: Default::default(),
-        description: String::new(),
-        scopes: None,
-        hidden_from_publishing: false,
-        extends: None,
-        overrides: Default::default(),
-        code_syntax: Default::default(),
-    });
+    doc.variables.variables.push(
+        Variable {
+            id: vid,
+            name,
+            collection: cid,
+            kind: VariableType::Number,
+            values: Default::default(),
+            description: String::new(),
+            scopes: None,
+            hidden_from_publishing: false,
+            extends: None,
+            overrides: Default::default(),
+            code_syntax: Default::default(),
+        }
+        .into(),
+    );
     let k = doc.new_comment_id();
     let c = comment(k, doc);
     doc.comments.push(c);

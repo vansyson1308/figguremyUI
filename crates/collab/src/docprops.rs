@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use base64::Engine as _;
+use figcraft_doc::shared::Shared;
 use figcraft_doc::{Collection, Comment, DevSnapshot, Document, ImageData, Style, Variable};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -40,7 +41,7 @@ impl Keyed for Collection {
     }
 }
 
-impl Keyed for Variable {
+impl Keyed for Shared<Variable> {
     type Key = String;
     fn key(&self) -> String {
         self.id.clone()
@@ -120,7 +121,7 @@ const COLLECTIONS: List<Collection> = List {
     get_mut: |d| &mut d.variables.collections,
     index: |i| &mut i.collections,
 };
-const VARIABLES: List<Variable> = List {
+const VARIABLES: List<Shared<Variable>> = List {
     whole: DocProp::Variables,
     order: DocProp::VariableOrder,
     entry: Entry::Variable,

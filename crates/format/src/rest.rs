@@ -116,7 +116,7 @@ pub fn read_variables(v: &Value) -> Option<(figcraft_doc::Variables, Vec<String>
     variables::source(v)?;
     let mut cx = Ctx::new(Document::new("Variables"), &no_images);
     cx.variables(v);
-    let vars = std::mem::take(&mut cx.doc.variables);
+    let vars = std::mem::take(&mut cx.doc.variables).into_inner();
     let mut warnings = cx.warnings.finish();
     if vars.variables.is_empty() {
         warnings.push("no variables found: expected `meta.variables` (an object of variables by id, next to `meta.variableCollections`)".into());

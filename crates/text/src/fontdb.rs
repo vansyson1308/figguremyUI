@@ -119,7 +119,10 @@ pub struct Face {
     pub instances: Vec<NamedInstance>,
     /// The `trak` table's normal track: (size in points, tracking in font units), by size.
     track: Vec<(f64, f64)>,
-    charmap: HashMap<u32, u32>,
+    /// Character → glyph, made the first time a character is looked up (most faces that are
+    /// loaded, the built-in ones among them, are never asked: making every map when the faces
+    /// load was a large part of a process's first text layout, performance budget PF2).
+    charmap: OnceLock<HashMap<u32, u32>>,
     outlines: Mutex<HashMap<(u32, Coords), Arc<BezPath>>>,
     advances: Mutex<HashMap<(u32, Coords), f64>>,
     /// Colour glyph tables (see [`crate::color`]): bitmap strikes and/or COLR layers.
@@ -180,7 +183,6 @@ impl Face {
             .unwrap_or_default();
         gsub_features.sort_unstable();
         gsub_features.dedup();
-        let charmap: HashMap<u32, u32> = f.charmap().mappings().map(|(c, g)| (c, g.to_u32())).collect();
         let (axes, instances) = variation_info(&f);
         let has_table = |tag: &[u8; 4]| f.data_for_tag(skrifa::Tag::new(tag)).is_some();
         let track = f.data_for_tag(skrifa::Tag::new(b"trak")).map(|t| normal_track(t.as_bytes())).unwrap_or_default();
@@ -228,7 +230,7 @@ impl Face {
             track,
             axes,
             instances,
-            charmap,
+            charmap: OnceLock::new(),
             bytes,
             outlines: Mutex::new(HashMap::new()),
             advances: Mutex::new(HashMap::new()),
@@ -249,12 +251,20 @@ impl Face {
         self.gsub_features.iter().map(|t| String::from_utf8_lossy(t).into_owned()).collect()
     }
 
+    /// The face's character map: what its `cmap` table maps, read once.
+    fn charmap(&self) -> &HashMap<u32, u32> {
+        self.charmap.get_or_init(|| match skrifa::FontRef::from_index(self.bytes.data(), self.index) {
+            Ok(f) => f.charmap().mappings().map(|(c, g)| (c, g.to_u32())).collect(),
+            Err(_) => HashMap::new(),
+        })
+    }
+
     pub fn has_char(&self, c: char) -> bool {
-        self.charmap.get(&(c as u32)).is_some_and(|g| *g != 0)
+        self.charmap().get(&(c as u32)).is_some_and(|g| *g != 0)
     }
 
     pub fn glyph_for(&self, c: char) -> u32 {
-        self.charmap.get(&(c as u32)).copied().unwrap_or(0)
+        self.charmap().get(&(c as u32)).copied().unwrap_or(0)
     }
 
     pub fn hb(&self) -> Option<harfrust::FontRef<'_>> {
@@ -1348,10 +1358,16 @@ fn font_asset_dirs(store: &std::path::Path) -> Vec<std::path::PathBuf> {
     rd.flatten().filter(|e| e.file_name().to_str().is_some_and(|n| n.starts_with("com_apple_MobileAsset_Font"))).map(|e| e.path()).collect()
 }
 
+/// [`scan_dir_with`] with a buffer of its own.
+#[cfg(test)]
+fn scan_dir(dir: &std::path::Path, depth: usize, out: &mut BTreeMap<String, (String, Vec<Pending>)>) {
+    scan_dir_with(dir, depth, out, &mut IndexBuf::default());
+}
+
 /// Adds the faces of every font file under `dir` (up to six folders deep) to `out`, keyed by
 /// lowercased family: files named `.ttf`, `.otf`, `.ttc` or `.otc`, and files without an extension
-/// that start with a font signature.
-fn scan_dir(dir: &std::path::Path, depth: usize, out: &mut BTreeMap<String, (String, Vec<Pending>)>) {
+/// that start with a font signature. The files are read through `buf`.
+fn scan_dir_with(dir: &std::path::Path, depth: usize, out: &mut BTreeMap<String, (String, Vec<Pending>)>, buf: &mut IndexBuf) {
     if depth > 6 {
         return;
     }
@@ -1365,14 +1381,20 @@ fn scan_dir(dir: &std::path::Path, depth: usize, out: &mut BTreeMap<String, (Str
         };
         let Ok(meta) = meta else { continue };
         if meta.is_dir() {
-            scan_dir(&path, depth + 1, out);
+            scan_dir_with(&path, depth + 1, out, buf);
             continue;
         }
-        index_font_file(&path, &meta, out);
+        index_font_file_with(&path, &meta, out, buf);
     }
 }
 
+/// [`index_font_file_with`] with a buffer of its own.
+#[cfg(test)]
 fn index_font_file(path: &std::path::Path, meta: &std::fs::Metadata, out: &mut BTreeMap<String, (String, Vec<Pending>)>) {
+    index_font_file_with(path, meta, out, &mut IndexBuf::default());
+}
+
+fn index_font_file_with(path: &std::path::Path, meta: &std::fs::Metadata, out: &mut BTreeMap<String, (String, Vec<Pending>)>, buf: &mut IndexBuf) {
     // Font-like names can also belong to pipes or devices; opening a pipe can block.
     // `meta` follows symlinks, so links to regular font files remain supported.
     if !meta.is_file() {
@@ -1383,13 +1405,13 @@ fn index_font_file(path: &std::path::Path, meta: &std::fs::Metadata, out: &mut B
         return;
     }
     // Very large files are indexed all the same (Apple Color Emoji is ~180 MB and is where the
-    // system's colour emoji live): `index_bytes` reads headers and name tables out of a zeroed
+    // system's colour emoji live): `IndexBuf::read` reads headers and name tables out of a zeroed
     // buffer, so only those parts are ever touched.
     if meta.len() > MAX_FONT_FILE {
         return;
     }
-    let Some(bytes) = usize::try_from(meta.len()).ok().and_then(|l| index_bytes(path, l)) else { return };
-    for (index, family, style, postscript) in faces_in(&bytes) {
+    let Some(bytes) = usize::try_from(meta.len()).ok().and_then(|l| buf.read(path, l)) else { return };
+    for (index, family, style, postscript) in faces_in(bytes) {
         out.entry(family.to_lowercase()).or_insert_with(|| (family.clone(), Vec::new())).1.push(Pending {
             path: path.to_path_buf(),
             index,
@@ -1402,12 +1424,14 @@ fn index_font_file(path: &std::path::Path, meta: &std::fs::Metadata, out: &mut B
 
 fn scan_installed_fonts(out: &mut BTreeMap<String, (String, Vec<Pending>)>) {
     let dirs = system_font_dirs();
+    // One buffer for every file of the walk.
+    let mut buf = IndexBuf::default();
     for dir in &dirs {
-        scan_dir(dir, 0, out);
+        scan_dir_with(dir, 0, out, &mut buf);
     }
     for path in files_outside_dirs(font_manager_files(), &dirs) {
         if let Ok(meta) = std::fs::metadata(&path) {
-            index_font_file(&path, &meta, out);
+            index_font_file_with(&path, &meta, out, &mut buf);
         }
     }
 }
@@ -1445,43 +1469,77 @@ fn font_manager_files() -> Vec<std::path::PathBuf> {
 /// The largest font file read (CJK collections run to ~120 MB, Apple Color Emoji ~180 MB).
 pub const MAX_FONT_FILE: u64 = 256 * 1024 * 1024;
 
-/// The parts of a font file the scan reads: headers, table directories and `name` tables, at their
-/// offsets in a zeroed buffer of the file's length (reading whole files was most of the scan).
+/// [`IndexBuf::read`] into a buffer of its own.
+#[cfg(test)]
 fn index_bytes(path: &std::path::Path, len: usize) -> Option<Vec<u8>> {
-    use std::io::{Read, Seek, SeekFrom};
-    let mut file = std::fs::File::open(path).ok()?;
-    let mut buf = vec![0u8; len];
-    let mut fill = |buf: &mut Vec<u8>, at: usize, n: usize| -> Option<()> {
-        let dst = buf.get_mut(at..at.checked_add(n)?)?;
-        file.seek(SeekFrom::Start(u64::try_from(at).ok()?)).ok()?;
-        file.read_exact(dst).ok()
-    };
-    let be = |b: &[u8], at: usize, n: usize| b.get(at..at.checked_add(n)?).map(|s| s.iter().fold(0usize, |v, x| v << 8 | usize::from(*x)));
-    fill(&mut buf, 0, 12)?;
-    let fonts: Vec<usize> = if buf.get(..4) == Some(b"ttcf") {
-        let n = be(&buf, 8, 4)?.min(64);
-        fill(&mut buf, 12, 4 * n)?;
-        (0..n).filter_map(|i| be(&buf, 12 + 4 * i, 4)).collect()
-    } else {
-        vec![0]
-    };
-    'faces: for at in fonts {
-        let Some(tables) = fill(&mut buf, at, 12).and_then(|()| be(&buf, at.checked_add(4)?, 2)) else { continue };
-        let Some(dir) = at.checked_add(12) else { continue };
-        if fill(&mut buf, dir, 16 * tables).is_none() {
-            continue;
-        }
-        for t in 0..tables {
-            let Some(rec) = dir.checked_add(16 * t) else { continue 'faces };
-            let (Some(tag_end), Some(off_at), Some(len_at)) = (rec.checked_add(4), rec.checked_add(8), rec.checked_add(12)) else { continue 'faces };
-            if buf.get(rec..tag_end) == Some(b"name")
-                && let (Some(off), Some(n)) = (be(&buf, off_at, 4), be(&buf, len_at, 4))
-            {
-                let _ = fill(&mut buf, off, n);
+    IndexBuf::default().read(path, len).map(<[u8]>::to_vec)
+}
+
+/// The buffer [`IndexBuf::read`] reads font files into, kept for one walk of the font folders:
+/// zeroing a new buffer the length of each file was most of a walk (performance budget PF2: the
+/// first text a process lays out waits for it). It holds zeros but for the parts the last read
+/// wrote, which the next read zeroes again, so every read sees what a fresh zeroed buffer of the
+/// file's length would hold.
+#[derive(Default)]
+struct IndexBuf {
+    buf: Vec<u8>,
+    /// The ranges the last read wrote (or began to).
+    written: Vec<(usize, usize)>,
+}
+
+impl IndexBuf {
+    /// The headers, table directories and `name` tables of the font file at `path` (`len` bytes
+    /// long; reading whole files was most of the scan) at their offsets in an otherwise zeroed slice of that length.
+    fn read(&mut self, path: &std::path::Path, len: usize) -> Option<&[u8]> {
+        use std::io::{Read, Seek, SeekFrom};
+        for (at, n) in std::mem::take(&mut self.written) {
+            if let Some(part) = self.buf.get_mut(at..at.saturating_add(n)) {
+                part.fill(0);
             }
         }
+        if self.buf.len() < len {
+            // Zeroed by the allocator (fresh pages for a large one), not written here.
+            self.buf = vec![0u8; len];
+        }
+        let mut file = std::fs::File::open(path).ok()?;
+        let IndexBuf { buf, written } = self;
+        let buf = buf.get_mut(..len)?;
+        let mut fill = |buf: &mut [u8], at: usize, n: usize| -> Option<()> {
+            let dst = buf.get_mut(at..at.checked_add(n)?)?;
+            // Zeroed again before the next read, however much of it this one wrote.
+            written.push((at, n));
+            file.seek(SeekFrom::Start(u64::try_from(at).ok()?)).ok()?;
+            file.read_exact(dst).ok()
+        };
+        let be = |b: &[u8], at: usize, n: usize| b.get(at..at.checked_add(n)?).map(|s| s.iter().fold(0usize, |v, x| v << 8 | usize::from(*x)));
+        fill(buf, 0, 12)?;
+        let fonts: Vec<usize> = if buf.get(..4) == Some(b"ttcf") {
+            let n = be(buf, 8, 4)?.min(64);
+            fill(buf, 12, 4 * n)?;
+            (0..n).filter_map(|i| be(buf, 12 + 4 * i, 4)).collect()
+        } else {
+            vec![0]
+        };
+        'faces: for at in fonts {
+            let Some(tables) = fill(buf, at, 12).and_then(|()| be(buf, at.checked_add(4)?, 2)) else { continue };
+            let Some(dir) = at.checked_add(12) else { continue };
+            if fill(buf, dir, 16 * tables).is_none() {
+                continue;
+            }
+            for t in 0..tables {
+                let Some(rec) = dir.checked_add(16 * t) else { continue 'faces };
+                let (Some(tag_end), Some(off_at), Some(len_at)) = (rec.checked_add(4), rec.checked_add(8), rec.checked_add(12)) else {
+                    continue 'faces;
+                };
+                if buf.get(rec..tag_end) == Some(b"name")
+                    && let (Some(off), Some(n)) = (be(buf, off_at, 4), be(buf, len_at, 4))
+                {
+                    let _ = fill(buf, off, n);
+                }
+            }
+        }
+        Some(&*buf)
     }
-    Some(buf)
 }
 
 /// (index, family, style, PostScript name) of each face in a font file: outline fonts and colour fonts (Apple Color

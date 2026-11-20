@@ -1038,19 +1038,22 @@ fn var_create(s: &mut Session, p: &Value) -> Result<Value> {
         super::variables::check_resolves(cmd, &doc.variables, "", &coll.id, m, val)?;
     }
     let id = doc.new_variable_id();
-    doc.variables.variables.push(Variable {
-        id: id.clone(),
-        name,
-        collection: coll.id,
-        kind,
-        values,
-        description: string(p, "description").unwrap_or_default(),
-        scopes: None,
-        hidden_from_publishing: false,
-        extends: None,
-        overrides: Default::default(),
-        code_syntax: Default::default(),
-    });
+    doc.variables.variables.push(
+        Variable {
+            id: id.clone(),
+            name,
+            collection: coll.id,
+            kind,
+            values,
+            description: string(p, "description").unwrap_or_default(),
+            scopes: None,
+            hidden_from_publishing: false,
+            extends: None,
+            overrides: Default::default(),
+            code_syntax: Default::default(),
+        }
+        .into(),
+    );
     Ok(json!({"id": id}))
 }
 
@@ -1266,24 +1269,24 @@ fn apply_bindings_matching(doc: &mut Document, only: Option<&std::collections::B
         let (modes, known) = pass.modes(doc, id);
         let Some(n) = doc.node(id) else { continue };
         let was = doc.node_arc(id).cloned();
-        let binds = n.bound.clone();
         let has_layout = n.layout.is_some();
         let mut sets = serde_json::Map::new();
         let mut effect_sets: Vec<(usize, String, VariableValue)> = Vec::new();
         let mut paint_sets: Vec<(bool, usize, Option<usize>, Color)> = Vec::new();
         let mut grid_sets: Vec<(usize, String, f64)> = Vec::new();
         let mut prop_sets: Vec<(String, VariableValue)> = Vec::new();
-        for (field, var) in binds {
-            if !include(&field) {
+        // Read in place (not copied): a field is copied only when its value is set below.
+        for (field, var) in &n.bound {
+            if !include(field) {
                 continue;
             }
             // A binding never creates an auto layout: without one it waits for the next.
             if !has_layout && super::props::LAYOUT_KEYS.contains(&field.as_str()) {
                 continue;
             }
-            let Some(val) = pass.resolve(&doc.variables, known, &var, &modes) else { continue };
+            let Some(val) = pass.resolve(&doc.variables, known, var, &modes) else { continue };
             // One list item's value: a paint's colour, an effect's or a layout grid's field.
-            if let Some((list, i, prop)) = list_binding(&field) {
+            if let Some((list, i, prop)) = list_binding(field) {
                 match (list, &val) {
                     (BoundList::Fills | BoundList::Strokes, VariableValue::Color(c)) if prop == "color" => {
                         paint_sets.push((list == BoundList::Fills, i, None, *c));
@@ -1318,7 +1321,7 @@ fn apply_bindings_matching(doc: &mut Document, only: Option<&std::collections::B
                 // Resolved values are plain, so these never occur here.
                 VariableValue::Alias(_) | VariableValue::ColorAlpha { .. } | VariableValue::ColorMix { .. } => continue,
             };
-            sets.insert(field, jv);
+            sets.insert(field.clone(), jv);
         }
         if !sets.is_empty() {
             // Most bound values are already in place: leave those layers untouched (shared with the
@@ -1360,14 +1363,22 @@ fn apply_bindings_matching(doc: &mut Document, only: Option<&std::collections::B
 struct Pass {
     modes: figcraft_doc::ModesCache,
     /// Each set of modes met, by its place in `resolved`.
-    in_modes: std::collections::HashMap<std::sync::Arc<BTreeMap<CollectionId, ModeId>>, usize>,
-    resolved: Vec<std::collections::HashMap<String, Option<VariableValue>>>,
+    in_modes: figcraft_doc::fast_hash::FastMap<std::sync::Arc<BTreeMap<CollectionId, ModeId>>, usize>,
+    resolved: Vec<figcraft_doc::fast_hash::FastMap<String, Option<VariableValue>>>,
+    /// The set of modes met last and its place: layers next to each other share one (the same
+    /// `Arc` from `modes`), found without hashing it again.
+    last: Option<(std::sync::Arc<BTreeMap<CollectionId, ModeId>>, usize)>,
 }
 
 impl Pass {
     /// Layer `id`'s modes (`Document::modes_for`), and their place for [`Self::resolve`].
     fn modes(&mut self, doc: &Document, id: NodeId) -> (std::sync::Arc<BTreeMap<CollectionId, ModeId>>, usize) {
         let modes = self.modes.shared(doc, id);
+        if let Some((last, i)) = &self.last
+            && std::sync::Arc::ptr_eq(last, &modes)
+        {
+            return (modes, *i);
+        }
         let known = match self.in_modes.get(&*modes) {
             Some(i) => *i,
             None => {
@@ -1376,6 +1387,7 @@ impl Pass {
                 self.resolved.len() - 1
             }
         };
+        self.last = Some((modes.clone(), known));
         (modes, known)
     }
 
