@@ -1505,9 +1505,10 @@ Headless (one session, no windows) and in the browser the two commands do nothin
  "roots": null,
  "workingDocument": {"id": 1, "name": "Untitled", "revision": 1, "front": true},
  "documents": [{"id": 1, "name": "Untitled", "revision": 1, "front": true}],
- "commands": 686,
+ "commands": 696,
  "features": {"prototypeSimulator": true, "prototypeSnapshot": true, "scenarios": true, "flowCheck": true,
-              "designContext": true, "checks": ["contrast.text", "contrast.unmeasured", "text.clipped", "…", "flow.brokenTarget", "…", "scenario.fails", "…"],
+              "designContext": true, "declaredStates": true, "requiredElements": true,
+              "checks": ["contrast.text", "contrast.unmeasured", "text.clipped", "…", "context.requiredMissing", "flow.brokenTarget", "…", "scenario.fails", "…", "states.none", "…"],
               "workingDocument": true, "conflictDetection": true, "historyAuthors": true,
               "structuredErrors": true, "engineErrorCodes": true, "appIdentity": true},
  "limits": {"maxLineBytes": 33554432, "maxResponseBytes": 8388608, "maxScreenshotSide": 8192, "historySteps": 20},
@@ -1515,8 +1516,9 @@ Headless (one session, no windows) and in the browser the two commands do nothin
              "save": ["figcraft", "fig"], "export": ["png", "jpg", "svg", "webp", "pdf", "xml", "fig"]}}
 ```
 
-(The numbers are this build's, which has 17 check rules: the design rules and the flow and scenario
-rules. An app from before the simulator answers `prototypeSimulator: false`.)
+(The numbers are this build's, which has 23 check rules: the design rules, the flow and scenario
+rules and the declared-state rules; `crates/mcp/tests/it/guidance.rs` holds this count to the
+engine's. An app from before the simulator answers `prototypeSimulator: false`.)
 
 - `backend` is `headless` (an engine in the server's process: no window, so no prototype player)
   or `attached` (the running app). `window` and `player` say the same as booleans; `app` is what an
@@ -1524,8 +1526,9 @@ rules. An app from before the simulator answers `prototypeSimulator: false`.)
 - `roots` are the folders files may be read from and written to (`{read, write}`), `null` when
   file access is not confined.
 - `features` is read from what is there, never assumed: `prototypeSimulator`, `scenarios`,
-  `flowCheck` and `designContext` are true exactly when the commands `proto.simulate`,
-  `proto.scenario.run`, `proto.check` and `design.get` are in the backend's command list,
+  `flowCheck`, `designContext`, `declaredStates` and `requiredElements` are true exactly when the
+  commands `proto.simulate`, `proto.scenario.run`, `proto.check`, `design.get`, `proto.state.list`
+  and `design.required.add` are in the backend's command list,
   `prototypeSnapshot` when `proto.snapshot` is (the picture `simulate_prototype {image: true}`
   returns), and `checks` are the rule ids `design.check.rules` returns. Attached to an app built before
   revisions, `conflictDetection` and `historyAuthors` are false, and `engineErrorCodes` is false
@@ -1736,14 +1739,20 @@ screen) or `{instance, variant}` (an instance in the screen and the variant that
 without `shownBy` the state is declared and not designed. `proto.state.remove {frame, kind,
 name?}`, `proto.state.accept {frame, kind, name?}` (a person's) and `proto.state.list {frame?}`
 complete it. The list says of each: `designed` (what `shownBy` names is there), `reachable` with
-`reachedBy` (`flow`: a flow start reaches the frame that shows it, the top-level frame `shownBy`
-names or else the screen, through the page's interactions; the graph doesn't follow variables, so
-for a layer or a variant only its screen is reached; `scenario`: a stored scenario shows it) and
-`coveredBy` (the scenarios whose headless run shows it, at the start or after a step that passed).
-The rules: `states.none` (note: nothing declared, said once as that, not a finding about the
-design), `states.notDesigned` (minor without `shownBy`, major when what it names is gone),
-`states.unreachable` (minor, from stage `ready`: designed, and neither the flow nor a scenario gets
-there) and `states.errorEmpty` (note, from `ready`: a screen that declares states, none of them
+`reachedBy`: `scenario` (a stored scenario shows it), `flow` (navigate and overlay actions reach the
+top-level frame or overlay `shownBy` names) or `screen` (for a layer or a variant only its screen is
+reached: the graph doesn't follow variables or bindings, so `reachable` stays false and
+`screenReachable` is true until a scenario shows it), and `coveredBy` (the scenarios whose headless
+run shows it, at the start or after a step that passed). A declaration whose frame has gone, or is
+no longer a top-level frame, is not designed and says where the frame is now; it can still be
+changed and removed, but nothing new is declared on it. A person's change to an agent's declaration
+is recorded as `editedBy`, and from then on the agent doesn't change it. The rules: `states.none`
+(note, from `ready`: nothing declared, said once as that, not a finding about the design),
+`states.notDesigned` (minor without `shownBy`; major when what it names is gone, or the frame is no
+longer a screen: "`A` is no longer a screen: it is inside `B`"), `states.unreachable` (from
+`ready`: minor when the frame or overlay that shows it is reached neither by the flow nor by a
+scenario; a note when only its screen is reached and no scenario shows it: add a scenario step that
+shows it) and `states.errorEmpty` (note, from `ready`: a screen that declares states, none of them
 `error` or `empty`, asked as a question against the brief's context).
 
 **Required elements.** What the design must show is part of the brief: `design.required.add
@@ -1751,12 +1760,20 @@ there) and `states.errorEmpty` (note, from `ready`: a screen that declares state
 `design.required.remove {id}`, `design.required.accept {id}`; ids `R1`, `R2`… Adding or removing one,
 or changing its words or screens, raises `briefRevision`; linking layers (`nodes`) doesn't.
 `context.requiredMissing` (from `converging`) looks for each through its layers: minor when none is
-linked; major when a linked layer is gone, hidden (itself or a layer around it), at 0% opacity, not
-on one of its screens, or entirely outside a frame around it that clips and doesn't scroll that way;
-major when a screen it must be on holds none of its layers; major when a linked text is below the
-contrast it needs (WCAG 2.2 SC 1.4.3, measured as `contrast.text` does). The file is looked at as
-it is: an element that only shows in some state of the prototype (a layer a variable makes visible)
-reads as hidden. No text-size threshold is applied.
+linked; major when a linked layer is gone, hidden (itself or a layer around it), below 5% effective
+opacity (its own times those of the layers around it: this product's choice, not a standard's), not
+on one of its screens (the screen's frame or inside it), or entirely outside a frame around it that
+clips and doesn't scroll that way; major when a screen it must be on holds none of its layers, or
+is gone or no longer a top-level frame; major when a linked text is below the contrast it needs
+(WCAG 2.2 SC 1.4.3, measured as `contrast.text` does). The file is looked at as it is, so a layer
+that only shows in some state of the prototype is hidden in it; when what hides it is, or is inside,
+what shows a declared state, it counts as shown in that state: no finding, and `design.get` lists it
+under `requiredFacts` (`{id, node, shownIn: "the error state of `Form`"}`). No text-size threshold
+is applied. At most 20 findings per element and 200 in all are listed, then one note counts the
+rest. `context.missingLink` leaves the gone layers of states and required elements to these two
+rules. An agent adds links to anybody's element but removes or replaces links, and changes the
+words and screens, only of its own pending proposals; a person's change to an agent's entry is
+recorded as `editedBy`.
 
 **Steps to the goal.** Every run (`proto.simulate`, each result of `proto.scenario.run`) reports
 `stepsTaken`, `screens` (the screens it went through, each once, in the order first shown; overlays

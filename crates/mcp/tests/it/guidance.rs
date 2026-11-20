@@ -469,3 +469,11 @@ fn nothing_offers_delight_and_the_making_prompts_ask_for_states_and_required_ele
     assert!(brief.contains("stepsTaken") && brief.contains("screenCount") && brief.contains("error and empty"), "guidance 18");
     assert!(INSTRUCTIONS.contains("proto.state.set") && INSTRUCTIONS.contains("design.required.add"));
 }
+
+/// `docs/mcp.md` says how many check rules this build has; the number is the engine's.
+#[test]
+fn the_documented_number_of_check_rules_is_the_engines() {
+    let doc = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/mcp.md")).unwrap();
+    let said = doc.split("which has ").nth(1).and_then(|rest| rest.split(' ').next()).and_then(|n| n.parse::<usize>().ok());
+    assert_eq!(said, Some(figcraft_engine::design::rules().len()), "docs/mcp.md: \"which has N check rules\"");
+}
