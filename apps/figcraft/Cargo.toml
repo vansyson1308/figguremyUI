@@ -4,8 +4,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "FigCraft desktop app"
-default-run = "figcraft"
+description = "Figgure My UI desktop app (a fork of FigCraft)"
+default-run = "figguremyui"
+
+# The package keeps its name (crates stay `figcraft-*`); the program is Figgure My UI's.
+[[bin]]
+name = "figguremyui"
+path = "src/main.rs"
 
 [lints]
 workspace = true
@@ -20,7 +25,7 @@ figcraft-text = { workspace = true }
 # bespoke Wayland xdg-decoration probe. See `[workspace.dependencies]`: pinned to the unmerged
 # craft-libs#217 branch and must be repointed to a merged `rev` before this PR is mergeable.
 craft-window = { workspace = true }
-# The suite's settings folder: `FIGCRAFT_CONFIG_DIR`, a portable marker, then the platform folder.
+# The suite's settings folder: `FIGGUREMYUI_CONFIG_DIR`, a portable marker, then the platform folder.
 craft-settings = { workspace = true }
 egui = { workspace = true }
 # `links`: without it eframe drops every `ctx.open_url` and hyperlink click (the update prompt's
@@ -49,7 +54,7 @@ winsafe = { version = "0.0.29", default-features = false, features = ["user"] }
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
 
-# Finder double-clicks, Open With, Dock drops and `open -a FigCraft file.figcraft` arrive as a
+# Finder double-clicks, Open With, Dock drops and `open -a "Figgure My UI" file.figcraft` arrive as a
 # kAEOpenDocuments Apple event, which winit 0.30 doesn't handle. This crate (also used by GridCraft,
 # EffectCraft and PhotoCraft) registers the handler behind a safe API (Objective-C interop needs
 # unsafe, which the workspace forbids). Pinned exactly: review the diff before bumping.

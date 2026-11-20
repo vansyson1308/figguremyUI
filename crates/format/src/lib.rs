@@ -94,8 +94,8 @@ impl std::fmt::Display for FormatError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FormatError::Io(e) => write!(f, "{e}"),
-            FormatError::Corrupt(e) => write!(f, "not a valid FigCraft file: {e}"),
-            FormatError::Newer(v) => write!(f, "this file was saved by a newer FigCraft (format version {v})"),
+            FormatError::Corrupt(e) => write!(f, "not a valid Figgure My UI file: {e}"),
+            FormatError::Newer(v) => write!(f, "this file was saved by a newer Figgure My UI (format version {v})"),
         }
     }
 }
@@ -483,7 +483,7 @@ impl<'de> Deserialize<'de> for Header {
         impl<'de> Visitor<'de> for HeaderVisitor {
             type Value = Header;
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("a FigCraft document object")
+                f.write_str("a Figgure My UI document object")
             }
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Header, A::Error> {
                 let mut h = Header::default();
@@ -519,11 +519,14 @@ fn parse_json(text: &str) -> Result<(Document, Vec<String>, ImageIndex), FormatE
     {
         return Err(FormatError::Newer(u32::try_from(ver).unwrap_or(u32::MAX)));
     }
-    let mut doc: Document = serde_json::from_str(text).map_err(corrupt)?;
-    let issues = doc.validate();
+    let mut doc = figcraft_doc::design::document_from_json(text).map_err(corrupt)?;
+    let mut issues = doc.validate();
     if !issues.is_empty() {
         doc.repair();
     }
+    // A design context that couldn't be read whole, or passed its limits, doesn't fail the file:
+    // what was left out or cut is reported with the repairs (and isn't written back on save).
+    issues.extend(figcraft_doc::design::take_load_issues(&mut doc.design));
     Ok((doc, issues, header.images))
 }
 
@@ -1068,6 +1071,8 @@ pub fn load_file(path: &std::path::Path) -> Result<(Document, Vec<String>), Form
 
 #[cfg(test)]
 mod branch_tests;
+#[cfg(test)]
+mod design_load_tests;
 #[cfg(test)]
 mod guides_tests;
 #[cfg(test)]

@@ -1,25 +1,39 @@
-# Releasing FigCraft
+# Releasing Figgure My UI
+
+> **Not usable by this fork yet.** `.github/workflows/release.yml` and `windows-arm64.yml` still
+> pass upstream's names (`app-name: figcraft` and the rest; the exact values to change are in
+> [`migration.md`](migration.md#release-workflow-follow-up)). They change in a separate CI pull
+> request, not with the rename (CI stays shared, `AGENTS.md`). The workflow also needs signing
+> secrets in a `release` environment that this fork doesn't have. Figgure My UI has published no
+> release; until it does, build from source ([README](../README.md#get-started)). The rest of this
+> page describes the pipeline as it works once those two things are in place.
 
 Every push to the `release` branch runs `.github/workflows/release.yml`. The workflow builds
 installers for macOS, Windows, Linux and the web, plus a FreeBSD tarball and the collaboration
-server for Linux, then creates or updates a **draft** GitHub Release named `FigCraft v<version>`.
-Nobody sees a draft until a maintainer publishes it.
+server for Linux, then creates or updates a **draft** GitHub Release named after the app title
+(`Figgure My UI v<version>` once the workflow passes that title). Nobody sees a draft until a
+maintainer publishes it.
 
-This is FigCraft's copy of the shared [release playbook](release-playbook.md) (PhotoCraft is the
-reference implementation). User-facing names say **FigCraft**. Files, binaries and ids stay
-lowercase (`figcraft-<version>-<platform>-<arch>.<ext>`, `ai.storyteller.figcraft`).
+This repository follows upstream's copy of the shared [release playbook](release-playbook.md)
+(PhotoCraft is the reference implementation). User-facing names say **Figgure My UI**. Files,
+binaries and ids stay lowercase.
 
-## FigCraft's names
+## Figgure My UI's names
 
 | Thing | Value |
 |---|---|
-| Display name | FigCraft |
-| Packages / binaries | `figcraft` (app), `figcraft-cli` (headless CLI), `figcraft-web` (browser) |
-| Bundle / app id | `ai.storyteller.figcraft` (CLI signing identifier `ai.storyteller.figcraft-cli`) |
-| Native document | `.figcraft`, MIME `application/x-figcraft`, UTI `ai.storyteller.figcraft.document` |
+| Display name | Figgure My UI |
+| Binaries | `figguremyui` (app), `figguremyui-cli` (headless CLI), `figguremyui-server` (collaboration server); the browser build is `figcraft-web` |
+| Cargo packages | `figcraft`, `figcraft-cli`, `figcraft-server`, `figcraft-web` (unchanged; [`migration.md`](migration.md)) |
+| App id | `io.github.vansyson1308.figguremyui` (desktop entry, AppStream metainfo, macOS bundle id, Flatpak id) |
+| Native document | `.figcraft`, MIME type `application/x-figcraft` (both unchanged, so files stay interchangeable with upstream) |
 | Also opens | `.svg`, `.png`, `.jpg`/`.jpeg` ("Open with", never the default app) |
-| WiX UpgradeCode | `7F8B9827-D065-41B7-A514-2A454B21F484` (fixed forever; never reuse it in another app) |
+| WiX UpgradeCode | Figgure My UI's own, in the WiX source under `packaging/windows/` (never upstream's, so its installer never upgrades or removes an installed upstream app; fixed forever once released) |
 | Linux categories | `Graphics;2DGraphics;VectorGraphics;X-Design;` (`Design` isn't a registered freedesktop category, so `desktop-file-validate` rejects it) |
+
+Release file names start with the workflow's `app-name`. Until the CI follow-up changes it, that is
+still `figcraft`, which is what the table below shows; afterwards each name starts with
+`figguremyui` instead.
 
 ## Cutting a release
 
@@ -35,7 +49,7 @@ lowercase (`figcraft-<version>-<platform>-<arch>.<ext>`, `ai.storyteller.figcraf
    alias.) Commit `Cargo.toml` + `Cargo.lock`.
 2. **Fast-forward `release` to `main`** and push (release managers only; the ruleset enforces it).
    The workflow starts by itself.
-3. **Wait for the draft** (`FigCraft v0.2.0`, tagged `v0.2.0` on the pushed commit) with every
+3. **Wait for the draft** (`Figgure My UI v0.2.0`, tagged `v0.2.0` on the pushed commit) with every
    artifact and `SHA256SUMS.txt`. Notes are generated from the merged PRs.
 4. **Check it.** Any `::warning::` in the job summaries means a signing secret was missing and
    that artifact is unsigned: fix the secret and re-run, don't publish.
@@ -52,29 +66,30 @@ environment refuses them (0 steps) and no release is created. The `version` inpu
 
 ## The default server
 
-Share ▸ Online uses the server in Preferences, which starts as the public one built into the app
-(`figcraft_engine::live::DEFAULT_SERVER`). Distributions that would rather not ship that default
-set `FIGCRAFT_DEFAULT_SERVER` when building: to their own server's address (`wss://host/`), or to
-nothing for a build with no default, where online sharing stays off until the user enters a
-server (sharing on the local network works either way):
+Share ▸ Online uses the server in Preferences, which starts as the one built into the app
+(`figcraft_engine::live::DEFAULT_SERVER`). In this fork that is **none**: online sharing stays
+off until the user enters a server (sharing on the local network works either way). A build that
+should ship a default sets `FIGGUREMYUI_DEFAULT_SERVER` when building, to its own server's address
+(`wss://host/`):
 
 ```sh
-FIGCRAFT_DEFAULT_SERVER= cargo build --release -p figcraft          # no default server
-FIGCRAFT_DEFAULT_SERVER=wss://design.example.org/ cargo build --release -p figcraft
+cargo build --release -p figcraft                                       # no default server
+FIGGUREMYUI_DEFAULT_SERVER=wss://design.example.org/ cargo build --release -p figcraft
 ```
 
-The release workflow leaves it unset. The public server's terms are in
-[`online-sharing-terms.md`](online-sharing-terms.md).
+The release workflow leaves it unset. The old name `FIGCRAFT_DEFAULT_SERVER` is still read when the
+new one is absent ([`migration.md`](migration.md#environment-variables)). Upstream's public server
+terms, kept for reference, are in [`online-sharing-terms.md`](online-sharing-terms.md).
 
 ## The default font
 
 New text starts in Inter (`figcraft_doc::DEFAULT_FONT`). A distribution whose users mostly write a
-script Inter lacks (Thai, say) can name another family with `FIGCRAFT_DEFAULT_FONT` when building;
+script Inter lacks (Thai, say) can name another family with `FIGGUREMYUI_DEFAULT_FONT` when building;
 unset or empty means Inter. Pick a family the build embeds from craft-fonts (the web build has no
 other fonts) or one its users have installed:
 
 ```sh
-FIGCRAFT_DEFAULT_FONT="Noto Sans Thai" cargo build --release -p figcraft
+FIGGUREMYUI_DEFAULT_FONT="Noto Sans Thai" cargo build --release -p figcraft
 ```
 
 Files record each text's family, so the variable only changes what new text starts in: a file
@@ -94,14 +109,14 @@ faces that are. The release workflow leaves it unset.
 | Web | `figcraft-web-<v>.zip` (static site; [`packaging/web/README.md`](../packaging/web/README.md)) | `ubuntu-latest` |
 | Server, Linux x86_64 / aarch64 | `figcraft-server-<v>-linux-<arch>.tar.gz` (the collaboration server; [`server.md`](server.md)) | `ubuntu-22.04` / `ubuntu-22.04-arm` |
 
-`figcraft-cli` ships in every desktop package (and its own macOS zip) when `apps/figcraft-cli`
+`figguremyui-cli` ships in every desktop package (and its own macOS zip) when `apps/figcraft-cli`
 is in the workspace: `packaging/env.sh` sets `BINS`/`HAS_CLI` from that, and `package.ps1`,
-`figcraft.wxs` (`HasCli`), `nfpm.yaml` (`#cli` lines) and the Flatpak bundle follow it.
+the WiX source (`HasCli`), `nfpm.yaml` (`#cli` lines) and the Flatpak bundle follow it.
 
-`figcraft --version` prints the version and, in CI builds, the commit (`FIGCRAFT_BUILD_SHA`,
+`figguremyui --version` prints the version and, in CI builds, the commit (`FIGGUREMYUI_BUILD_SHA`,
 read by `apps/figcraft/build.rs`).
 
-**The collaboration server** (`apps/figcraft-server`, binary `figcraft-server`, see
+**The collaboration server** (`apps/figcraft-server`, binary `figguremyui-server`, see
 [`server.md`](server.md)) is built by the `server` job with `packaging/server/package.sh`: a
 headless binary, so not part of `BINS` (which every desktop package installs) and no installer,
 desktop file or fonts. Its archive holds the binary, the licences, `server.md` and the deployment
@@ -120,10 +135,10 @@ validate the emitted Inter Regular/SemiBold and Noto Sans Georgian Regular faces
 a missing required face, style or asset fails the required web build. Excluded Adobe rows
 are skipped before resolving their asset paths.
 Native builds retain the permitted Latin presentation faces. Source Sans 3 and Source Serif 4
-are filtered on every target under FigCraft's asset policy. The web build keeps its smaller
+are filtered on every target under the asset policy. The web build keeps its smaller
 allowlist: Inter, Noto Sans Georgian and Archivo SemiBold when supplied. A distribution whose
 users write another script adds the manifest families it needs, comma-separated, with
-`FIGCRAFT_WEB_FONTS` (`FIGCRAFT_WEB_FONTS="Noto Sans Thai" trunk build --release`); a named family
+`FIGGUREMYUI_WEB_FONTS` (`FIGGUREMYUI_WEB_FONTS="Noto Sans Thai" trunk build --release`); a named family
 the build doesn't embed gets a warning, and each one adds its size to the wasm, which must stay
 under the size gate in `packaging/web/package.sh`. Packages carry each embedded font's licence as `OFL-<family>.txt`
 (`copy_font_licences` in `packaging/env.sh`; `Contents/Resources/Licenses` in the macOS app).
@@ -131,10 +146,10 @@ under the size gate in `packaging/web/package.sh`. Packages carry each embedded 
 ### macOS
 
 `packaging/macos/package.sh [--arch universal|aarch64|x86_64]` builds both Apple targets with
-`MACOSX_DEPLOYMENT_TARGET=11.0`, joins them with `lipo` and assembles `FigCraft.app`
-(`Contents/MacOS/FigCraft`, `Contents/Resources/FigCraft.icns`, `Info.plist` from
-`Info.plist.in`). The `.icns` is generated at packaging time with `iconutil` from the committed
-`assets/app-icon/figcraft-<size>.png` (made by `cargo xtask icon`); it is never committed.
+`MACOSX_DEPLOYMENT_TARGET=11.0`, joins them with `lipo` and assembles the `.app` bundle (the
+`figguremyui` binary, the `.icns` icon, `Info.plist` from `Info.plist.in`). The `.icns` is generated
+at packaging time with `iconutil` from the committed PNGs in `assets/app-icon/` (made by
+`cargo xtask icon`); it is never committed.
 Signing goes inside-out with the hardened runtime and a timestamp (empty entitlements), then the
 app is notarized and stapled, put on a DMG with an `Applications` link (`hdiutil makehybrid` +
 `convert`), and the DMG is signed, notarized and stapled. The CLI is signed with the same
@@ -153,7 +168,7 @@ hdiutil attach -nobrowse -readonly dist/release/figcraft-*-macos-aarch64.dmg   #
 
 `packaging/windows/package.ps1 -Arch x64|x86|arm64` builds with `+crt-static` (no VC++
 redistributable), checks each exe's PE machine and subsystem (app GUI, CLI console), signs the
-exes, builds the MSI with WiX v5 (`figcraft.wxs`: per-machine, Start Menu shortcut, owner of
+exes, builds the MSI with WiX v5 (per-machine, Start Menu shortcut, owner of
 `.figcraft`, "Open with" for SVG/PNG/JPEG, App Paths, setup wizard with art drawn from the app
 icon), validates ICE50, signs the MSI and zips a portable build. `sign.ps1` uses a `.pfx`
 (`WINDOWS_CERTIFICATE*`) or Azure Trusted Signing (`AZURE_*`), else warns and leaves files
@@ -167,16 +182,16 @@ Locally on Windows: `dotnet tool install -g wix --version 5.0.2`,
 ### Linux
 
 `packaging/linux/package.sh [--formats "appimage deb rpm tar"]` stages one FHS tree (binaries,
-`ai.storyteller.figcraft.desktop`, hicolor icons 16–512 px, AppStream metainfo, a
+the desktop entry named by the app id, hicolor icons 16–512 px, AppStream metainfo, a
 shared-mime-info file for `.figcraft`) and builds every format from it: `.tar.gz`; `.deb` and
 `.rpm` with [nfpm](https://nfpm.goreleaser.com/) (`nfpm.yaml` lists the dlopen'd runtime
 libraries as dependencies); and an `.AppImage` with update information and a `.zsync`, whose
 `AppRun` registers the desktop entry and icons on launch so Wayland docks show the right icon
-(`FIGCRAFT_NO_DESKTOP_INTEGRATION=1` opts out; covered by `apprun-test.sh`) and runs the bundled
-`figcraft-cli` for `FigCraft.AppImage cli <args>`.
+(`FIGGUREMYUI_NO_DESKTOP_INTEGRATION=1` opts out; covered by `apprun-test.sh`) and runs the bundled
+`figguremyui-cli` for `<the AppImage> cli <args>`.
 `flatpak-bundle.sh` repackages the tarball into a `.flatpak` with
-`flatpak/ai.storyteller.figcraft.bundle.yml` (freedesktop 26.08). `flatpak/ai.storyteller.figcraft.yml`
-is the from-source manifest for a Flathub submission (not built in CI; vendor crates with
+the bundle manifest in `packaging/linux/flatpak/` (freedesktop 26.08), named by the app id; the other
+manifest there is the from-source one for a Flathub submission (not built in CI; vendor crates with
 `flatpak-cargo-generator.py` first). Both manifests keep the same runtime and `finish-args`
 (packaging-lint checks). Binaries are built on Ubuntu 22.04 and need glibc ≥ 2.35.
 The `linux-riscv64` job cross-compiles with `CROSS_ARCH`/`CROSS_TARGET`/`CROSS_COMPILE` and

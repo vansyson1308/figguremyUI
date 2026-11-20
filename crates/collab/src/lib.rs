@@ -31,6 +31,7 @@ mod history;
 pub mod merge;
 pub mod message;
 pub mod replica;
+pub mod scheme;
 pub mod server;
 pub mod sim;
 
@@ -137,6 +138,8 @@ mod codec_tests;
 mod comment_access_tests;
 #[cfg(test)]
 mod deleted_cap_tests;
+#[cfg(test)]
+mod design_tests;
 #[cfg(test)]
 mod diff_tests;
 #[cfg(test)]

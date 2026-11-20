@@ -398,7 +398,7 @@ pub const NETWORK_REFUSED: &str =
 pub fn allow(path: impl AsRef<Path>, access: Access) -> Result<PathBuf> {
     let path = path.as_ref();
     match current() {
-        Some(roots) => roots.check(path, access).map_err(EngineError::Other),
+        Some(roots) => roots.check(path, access).map_err(EngineError::PathRejected),
         None => Ok(path.to_path_buf()),
     }
 }
@@ -495,9 +495,29 @@ pub fn read_dir(path: impl AsRef<Path>) -> Result<Vec<PathBuf>> {
 
 /// Write `bytes` to `path` through a uniquely named staging file and one atomic rename (see
 /// [`figcraft_format::write_file_atomic`]).
+///
+/// Folders are not created: a path whose folder doesn't exist, or is a file, is refused with
+/// [`EngineError::NoFolder`] naming that folder, rather than the system's bare "No such file or
+/// directory" (F-15).
 pub fn write(path: impl AsRef<Path>, bytes: &[u8]) -> Result<()> {
     let path = path.as_ref();
-    write_atomic(&allow(path, Access::Write)?, bytes).map_err(io(path))
+    write_atomic(&allow(path, Access::Write)?, bytes).map_err(|e| no_folder(path, &e).unwrap_or_else(|| io(path)(e)))
+}
+
+/// Why writing `path` failed with `e`, when it was its folder: it doesn't exist, or a file is
+/// there. Looked at only after the write failed, so a folder that appears in between is fine.
+fn no_folder(path: &Path, e: &std::io::Error) -> Option<EngineError> {
+    use std::io::ErrorKind::{NotADirectory, NotFound};
+    if !matches!(e.kind(), NotFound | NotADirectory) {
+        return None;
+    }
+    let folder = path.parent().filter(|f| !f.as_os_str().is_empty())?;
+    let file = match std::fs::metadata(folder) {
+        Ok(m) if m.is_dir() => return None,
+        Ok(_) => true,
+        Err(_) => false,
+    };
+    Some(EngineError::NoFolder { path: path.display().to_string(), folder: folder.display().to_string(), file })
 }
 
 #[cfg(not(target_arch = "wasm32"))]

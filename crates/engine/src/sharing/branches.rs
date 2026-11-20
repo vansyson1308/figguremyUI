@@ -61,21 +61,21 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "branch.updateFromMain",
             "Update from main",
-            "{id?, resolutions? ({<conflict key>: \"branch\" | \"main\"})}  bring the main file's changes since the branch was made into the branch (a version in its history); refused while a conflict has no resolution. Not undoable (the branch tab's undo history starts over) → {updated, changes, conflicts}",
+            "{id?, resolutions? ({<conflict key>: \"branch\" | \"main\"})}  bring the main file's changes since the branch was made into the branch (a version in its history); refused while a conflict has no resolution, and to an AI agent when the branch tab's undo history holds somebody else's steps (code otherAuthor). Not undoable (the branch tab's undo history starts over) → {updated, changes, conflicts}",
             false,
             |s, p| combine(s, p, Side::Main)
         ),
         spec!(
             "branch.merge",
             "Merge branch",
-            "{id?, resolutions? ({<conflict key>: \"branch\" | \"main\"})}  merge the branch into the main file as one undo step (in a live session one edit everyone gets; refused on a view link), then archive it and show the main file; refused while a conflict has no resolution → {merged, changes, conflicts, index}",
+            "{id?, resolutions? ({<conflict key>: \"branch\" | \"main\"})}  merge the branch into the main file as one undo step (in a live session one edit everyone gets; refused on a view link), then archive it and show the main file; refused while a conflict has no resolution, and to an AI agent when the branch tab's undo history holds somebody else's steps (code otherAuthor) → {merged, changes, conflicts, index}",
             false,
             |s, p| combine(s, p, Side::Branch)
         ),
         spec!(
             "branch.archive",
             "Archive branch",
-            "{id?}  set the branch aside without merging (it stays in the file and can still be opened) and close its tab",
+            "{id?}  set the branch aside without merging (it stays in the file and can still be opened) and close its tab; refused to an AI agent when that tab's undo history holds somebody else's steps (code otherAuthor)",
             false,
             archive
         ),
@@ -399,6 +399,11 @@ fn archive(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(disabled(CMD, "the branch was already merged or archived"));
     }
     let (uid, id) = (m.uid, m.branches.get(bi).map(|b| b.id.clone()).unwrap_or_default());
+    // Its tab closes: its undo history goes with it.
+    if let Some(tab) = tab_of(s, uid, &id).and_then(|t| s.docs.get(t)) {
+        s.refuse_discarding(CMD, tab.uid)?;
+    }
+    let m = s.docs.get_mut(mi).ok_or(EngineError::NoDocument)?;
     if let Some(b) = m.branches_mut().get_mut(bi) {
         b.state = BranchState::Archived;
     }
@@ -429,6 +434,12 @@ fn combine(s: &mut Session, p: &Value, from: Side) -> Result<Value> {
     if state != BranchState::Active {
         return Err(disabled(cmd, "the branch was merged or archived"));
     }
+    // Merging closes the branch's tab and updating starts its undo history over: either way the
+    // tab's history goes.
+    if let Some(tab) = tab_of(s, main_uid, &id).and_then(|t| s.docs.get(t)) {
+        s.refuse_discarding(cmd, tab.uid)?;
+    }
+    let m = s.docs.get_mut(mi).ok_or(EngineError::NoDocument)?;
     // The main file itself, not a version shown in its place.
     m.end_preview();
     // Merging edits the session document, which a view link (or a file on its way) can't.

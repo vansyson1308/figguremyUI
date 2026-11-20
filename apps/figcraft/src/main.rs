@@ -1,9 +1,9 @@
-//! FigCraft desktop app.
+//! Figgure My UI desktop app (a fork of FigCraft).
 //!
-//! Usage: `figcraft [--control <port>] [files…] [figcraft://join?…]` (an invite link joins that
+//! Usage: `figguremyui [--control <port>] [files…] [figguremyui://join?…]` (an invite link joins that
 //! live session; the app registers itself as the opener of such links: `collab.registerLinks`).
 //!
-//! `--control <port>` (or `FIGCRAFT_CONTROL_PORT`) starts a localhost JSON-lines control server:
+//! `--control <port>` (or `FIGGUREMYUI_CONTROL_PORT`) starts a localhost JSON-lines control server:
 //! `{"id":1,"method":"engine.execute","params":{"command":"shape.rectangle","params":{"x":0,"y":0,"width":100,"height":100}}}`
 //! → `{"id":1,"ok":true,"result":{…}}`. Methods: `figcraft_ui_egui::control`.
 //!
@@ -145,7 +145,7 @@ impl eframe::App for App {
     }
 }
 
-fn main() -> eframe::Result {
+fn main() -> std::process::ExitCode {
     // Windows: the update helper is a copy of this program started with `--finish-update`.
     #[cfg(windows)]
     if let Some(result) = craft_update::self_update::finish(&figcraft_ui_egui::UPDATE_APP, &std::env::args_os().skip(1).collect::<Vec<_>>()) {
@@ -155,18 +155,20 @@ fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--version" || a == "-V") {
         println!(
-            "FigCraft {}{}",
+            "Figgure My UI {}{}",
             env!("CARGO_PKG_VERSION"),
-            option_env!("FIGCRAFT_BUILD_SHA").filter(|s| !s.is_empty()).map(|s| format!(" ({s})")).unwrap_or_default()
+            option_env!("FIGGUREMYUI_BUILD_SHA").filter(|s| !s.is_empty()).map(|s| format!(" ({s})")).unwrap_or_default()
         );
-        return Ok(());
+        return std::process::ExitCode::SUCCESS;
     }
     let args = args::parse(&args);
     if let Some(flag) = args.unknown.first() {
-        eprintln!(
-            "FigCraft: unknown option {flag}\nUsage: figcraft [--control PORT] [--automation-read-root DIR]... [--automation-write-root DIR]... [FILE | figcraft://join?...]..."
-        );
+        eprintln!("Figgure My UI: unknown option {flag}\n{}", args::USAGE);
         std::process::exit(2);
+    }
+    if args.help {
+        println!("Figgure My UI {}\n{}", env!("CARGO_PKG_VERSION"), args::USAGE);
+        return std::process::ExitCode::SUCCESS;
     }
     let roots = match (
         args.read_roots.is_empty() && args.write_roots.is_empty(),
@@ -175,11 +177,11 @@ fn main() -> eframe::Result {
         (true, _) => None,
         (false, Ok(r)) => Some(Arc::new(r)),
         (false, Err(e)) => {
-            eprintln!("FigCraft: {e}");
+            eprintln!("Figgure My UI: {e}");
             std::process::exit(2);
         }
     };
-    let port = args.control.or_else(|| std::env::var("FIGCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok()));
+    let port = args.control.or_else(|| figcraft_engine::doc::env::var("CONTROL_PORT").and_then(|p| p.parse().ok()));
     // System fonts: index them in the background, then wake the UI (an idle window draws no frames)
     // to lay text out again with them.
     let ctx_slot: Arc<Mutex<Option<egui::Context>>> = Arc::new(Mutex::new(None));
@@ -260,8 +262,8 @@ fn main() -> eframe::Result {
     // The app id is the Wayland app_id and the X11 window class on Linux: the desktop entry's name
     // and StartupWMClass (FreeBSD's package matches the binary's name instead).
     let mut viewport = egui::ViewportBuilder::default()
-        .with_title("FigCraft")
-        .with_app_id("ai.storyteller.figcraft")
+        .with_title("Figgure My UI")
+        .with_app_id(figcraft_ui_egui::APP_ID)
         .with_inner_size([1440.0, 900.0])
         .with_min_inner_size([800.0, 500.0])
         .with_drag_and_drop(true);
@@ -289,40 +291,57 @@ fn main() -> eframe::Result {
     let apple_events = apple_events::AppleEvents::install();
     #[cfg(target_os = "macos")]
     let apple_events = &apple_events;
-    let result = eframe::run_native(
-        "FigCraft",
-        options,
-        Box::new(|cc| {
-            if let Some(state) = &cc.wgpu_render_state {
-                graphics.opened(&state.adapter.get_info());
-            }
-            with_app(|fig| fig.services.set_egui_context(&cc.egui_ctx));
-            // winit's own Quit (⌘Q) ends the process through `terminate:` without ever asking the
-            // app, so unsaved changes are lost with no warning (issue #857). This menu's Quit
-            // sends the root window a close request instead, and the unsaved-changes question
-            // asks just as it does for the close button. Failure keeps winit's menu: the app
-            // runs, but ⌘Q ends it without asking.
-            #[cfg(target_os = "macos")]
-            if let Err(e) = craft_menu::mac::install_app_menu(&cc.egui_ctx, "FigCraft") {
-                log::warn!("app menu: kept winit's Quit, which ends the app without asking: {e}");
-            }
-            Ok(Box::new(App {
-                queue,
-                ctx_slot,
-                title: String::new(),
-                recovery,
-                // The custom title bar's undecorated window must stay borderless, or its caption
-                // and border offset the content and the pointer on some Windows systems (#1343).
-                window_frame: window_frame::WindowFrame::new(custom_titlebar),
+    // A system library the window loads that isn't installed makes winit panic before the first
+    // frame: that ends in a plain message instead (`startup::run_window`, F-16).
+    let starting = ctx_slot.clone();
+    let quiet = port.is_some();
+    let run = || {
+        eframe::run_native(
+            "Figgure My UI",
+            options,
+            Box::new(|cc| {
+                if let Some(state) = &cc.wgpu_render_state {
+                    graphics.opened(&state.adapter.get_info());
+                }
+                with_app(|fig| fig.services.set_egui_context(&cc.egui_ctx));
+                // winit's own Quit (⌘Q) ends the process through `terminate:` without ever asking the
+                // app, so unsaved changes are lost with no warning (issue #857). This menu's Quit
+                // sends the root window a close request instead, and the unsaved-changes question
+                // asks just as it does for the close button. Failure keeps winit's menu: the app
+                // runs, but ⌘Q ends it without asking.
                 #[cfg(target_os = "macos")]
-                apple_events: apple_events.connect(&cc.egui_ctx),
-            }))
-        }),
-    );
+                if let Err(e) = craft_menu::mac::install_app_menu(&cc.egui_ctx, "Figgure My UI") {
+                    log::warn!("app menu: kept winit's Quit, which ends the app without asking: {e}");
+                }
+                Ok(Box::new(App {
+                    queue,
+                    ctx_slot,
+                    title: String::new(),
+                    recovery,
+                    // The custom title bar's undecorated window must stay borderless, or its caption
+                    // and border offset the content and the pointer on some Windows systems (#1343).
+                    window_frame: window_frame::WindowFrame::new(custom_titlebar),
+                    #[cfg(target_os = "macos")]
+                    apple_events: apple_events.connect(&cc.egui_ctx),
+                }))
+            }),
+        )
+    };
+    let result = match startup::run_window(move || starting.try_lock().is_ok_and(|s| s.is_none()), run) {
+        Ok(result) => result,
+        Err(text) => {
+            startup::say(&text, quiet);
+            return std::process::ExitCode::FAILURE;
+        }
+    };
     let frames = window.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map_or(0, egui::Context::cumulative_frame_nr);
     // Start again on other graphics, or say why instead of quitting silently: release builds on
     // Windows have no console.
-    graphics.finish(result, frames, port.is_some())
+    // The message was given already (`startup::failed`): no `Error: …` after it.
+    match graphics.finish(result, frames, quiet) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(_) => std::process::ExitCode::FAILURE,
+    }
 }
 
 /// With nothing to open, whether the window starts in a new file rather than on the home screen.
@@ -333,14 +352,20 @@ fn opens_new_file(first_run: bool, start_on_home: bool, control: bool) -> bool {
     !first_run && (!start_on_home || control)
 }
 
-/// The title bar FigCraft starts with, decided by the shared craft-window crate so every Craft app
-/// agrees on who draws the frame per desktop. The override variable is `FIGCRAFT_TITLEBAR`
-/// (`app` / `system`). macOS keeps its inset traffic lights unchanged (craft-window returns the
-/// desktop frame there); Windows keeps the system frame; on Linux the compositor/window manager
+/// The title bar the app starts with, decided by the shared craft-window crate so every Craft app
+/// agrees on who draws the frame per desktop. The override variable is `FIGGUREMYUI_TITLEBAR`
+/// (`app` / `system`; FigCraft's `FIGCRAFT_TITLEBAR` when only that one is set). macOS keeps its
+/// inset traffic lights unchanged (craft-window returns the desktop frame there); Windows keeps the system frame; on Linux the compositor/window manager
 /// decides (KDE/Sway/Hyprland/COSMIC and X11 keep the native frame, GNOME gets the custom one).
 fn desktop_title_bar() -> figcraft_ui_egui::TitleBar {
-    let choice = craft_window::Choice::probe(craft_window::Prefix::new("FIGCRAFT"));
+    let choice = craft_window::Choice::probe(craft_window::Prefix::new(title_bar_prefix(|n| std::env::var_os(n).is_some())));
     title_bar_for(choice.into_frame())
+}
+
+/// The prefix of the title bar override variable craft-window reads: `FIGGUREMYUI`, or FigCraft's
+/// `FIGCRAFT` when only `FIGCRAFT_TITLEBAR` is set (`is_set` says whether a variable is set).
+fn title_bar_prefix(is_set: impl Fn(&str) -> bool) -> &'static str {
+    if !is_set("FIGGUREMYUI_TITLEBAR") && is_set("FIGCRAFT_TITLEBAR") { "FIGCRAFT" } else { "FIGGUREMYUI" }
 }
 
 /// Map craft-window's [`craft_window::Frame`] onto FigCraft's own [`figcraft_ui_egui::TitleBar`].
@@ -359,7 +384,7 @@ fn title_bar_for(frame: craft_window::Frame) -> figcraft_ui_egui::TitleBar {
         // Windows kept FigCraft's own title bar before this change; keep it.
         craft_window::Frame::Desktop if cfg!(target_os = "windows") => TitleBar::Custom,
         craft_window::Frame::Desktop => TitleBar::Native,
-        // The app draws the frame (GNOME's Wayland session, or a `FIGCRAFT_TITLEBAR=app` override).
+        // The app draws the frame (GNOME's Wayland session, or a `FIGGUREMYUI_TITLEBAR=app` override).
         craft_window::Frame::App(_) => TitleBar::Custom,
     }
 }
@@ -377,7 +402,7 @@ fn window_chrome(viewport: egui::ViewportBuilder, title_bar: figcraft_ui_egui::T
 mod title_bar_tests {
     use figcraft_ui_egui::TitleBar;
 
-    /// craft-window's app frame (GNOME's Wayland session, or a `FIGCRAFT_TITLEBAR=app` override)
+    /// craft-window's app frame (GNOME's Wayland session, or a `FIGGUREMYUI_TITLEBAR=app` override)
     /// becomes FigCraft's custom title bar on every platform, and `window_chrome` then drops the
     /// decorations so FigCraft draws its own.
     #[test]
@@ -408,6 +433,15 @@ mod title_bar_tests {
             let viewport = super::window_chrome(egui::ViewportBuilder::default(), bar);
             assert_eq!(viewport.decorations, Some(true));
         }
+    }
+
+    /// `FIGGUREMYUI_TITLEBAR` is read; FigCraft's `FIGCRAFT_TITLEBAR` only when the new one is unset.
+    #[test]
+    fn the_new_title_bar_variable_wins_over_the_old_one() {
+        let set = |names: &'static [&'static str]| move |n: &str| names.contains(&n);
+        assert_eq!(super::title_bar_prefix(set(&[])), "FIGGUREMYUI");
+        assert_eq!(super::title_bar_prefix(set(&["FIGCRAFT_TITLEBAR"])), "FIGCRAFT");
+        assert_eq!(super::title_bar_prefix(set(&["FIGCRAFT_TITLEBAR", "FIGGUREMYUI_TITLEBAR"])), "FIGGUREMYUI");
     }
 
     /// macOS is untouched by this change: its inset title bar with the system traffic lights stays,

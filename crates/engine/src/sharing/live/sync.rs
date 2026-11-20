@@ -4,6 +4,7 @@ use super::{
     Access, Arc, Client, EditingText, EngineError, EngineRecompute, FollowedView, Live, Result, ServerMsg, Session, Value, ViewState, bad, busy,
     close, code, editing_of, json,
 };
+use crate::doc_state::LiveStep;
 
 impl Session {
     /// Your client id in document `uid`'s live session (`None`: it isn't in one). Refused for
@@ -52,12 +53,21 @@ impl Session {
             }
             return;
         }
+        let author = self.agent.clone();
         let Some(live) = self.live.sessions.get_mut(&id) else { return };
         let Some(client) = live.client.as_mut() else { return };
+        let (undo_was, redo_was) = client.history_len();
         match client.edit_with(&doc, label) {
             Ok(msg) => {
                 live.synced = Some(doc);
+                // The edit became an undo step when the history grew, lost its redo steps, or is
+                // full (where a new step pushes the oldest out and the length stays).
+                let (undo, redo) = client.history_len();
+                let stepped = label.is_some() && (undo > undo_was || (redo_was > 0 && redo == 0) || undo >= figcraft_collab::HISTORY_LIMIT);
                 self.live.send(id, msg);
+                if let Some(ds) = self.docs.iter_mut().find(|d| d.uid == uid) {
+                    ds.live_authors_sync(if stepped { LiveStep::Edit(author.as_deref()) } else { LiveStep::Other }, undo, redo);
+                }
             }
             Err(e) => self.live_fail(id, format!("Couldn't sync an edit: {e}")),
         }
@@ -90,14 +100,26 @@ impl Session {
         };
         let (u, r) = client.history_len();
         let did = if back { r > redo } else { u > undo };
+        // The step taken is on top of the other list now.
+        let label = if back { client.redo_labels().next_back() } else { client.undo_labels().next_back() }.unwrap_or_default().to_string();
         let doc = Arc::new(client.document().clone());
         if did {
             live.synced = Some(doc.clone());
         }
         let id = live.id;
         self.live.send(id, msgs);
+        let step = match (did, back) {
+            (false, _) => LiveStep::Other,
+            (true, true) => LiveStep::Undo,
+            (true, false) => LiveStep::Redo,
+        };
+        if let Some(ds) = self.docs.iter_mut().find(|d| d.uid == uid) {
+            ds.live_authors_sync(step, u, r);
+        }
         if did {
-            self.apply_remote(uid, doc);
+            let what = format!("{} {label}", if back { "Undo" } else { "Redo" });
+            let actor = self.agent.clone();
+            self.install_synced(uid, doc, &what, actor.as_deref());
         }
         did
     }

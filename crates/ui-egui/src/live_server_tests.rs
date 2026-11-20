@@ -27,7 +27,7 @@ fn focused(h: &Harness, id: &str) -> bool {
 
 /// Joined through a server's link with `access`: the welcome and the document (a new tab).
 pub(crate) fn joined(h: &mut Harness, access: Access) {
-    h.app.session.execute("collab.join", &json!({"link": "figcraft://join?host=127.0.0.1:47900&file=f&token=AbCdEfGhIjKlMnOpQrStUv"})).unwrap();
+    h.app.session.execute("collab.join", &json!({"link": "figguremyui://join?host=127.0.0.1:47900&file=f&token=AbCdEfGhIjKlMnOpQrStUv"})).unwrap();
     let mut server = Server::new(h.app.session.doc().unwrap().clone(), "", Limits::default());
     let ClientMsg::Hello(me) = Client::hello("f", "", "Ada", "") else { panic!("no hello") };
     let (id, outs) = server.join_as(me, access).unwrap();
@@ -54,6 +54,9 @@ pub(crate) fn joined(h: &mut Harness, access: Access) {
 #[test]
 fn the_publish_dialog() {
     let (mut h, _) = Harness::new();
+    // A server is set in Preferences, so the popover offers Online and Local network (this fork
+    // ships none: see `the_server_preference_resets_and_turns_online_sharing_off`).
+    h.app.session.prefs.publish_server = "wss://share.example/".into();
     crate::menus::invoke(&mut h.app, "collab.publish");
     h.frames(2);
     assert_eq!(h.app.ui.live.publish.as_ref().map(|f| f.name.as_str()), Some("Untitled"), "the file's name to start with");
@@ -71,7 +74,7 @@ fn the_publish_dialog() {
     let shapes = h.frames(2);
     assert!(has_text(
         &shapes,
-        "Give the address of a server open to the public, or a server's address with its key (`figcraft-server key` prints it)."
+        "Give the address of a server open to the public, or a server's address with its key (`figguremyui-server key` prints it)."
     ));
     h.frame(vec![Event::Text("ws://127.0.0.1:47900/?key=KeyKeyKeyKeyKeyKeyKey0".into())]);
     let shapes = h.frames(1);
@@ -128,8 +131,8 @@ fn a_server_open_to_the_public_takes_a_file_without_a_key() {
             server: "wss://figcraft.example.com/".into(),
             file: "f".into(),
             name: "Poster".into(),
-            edit: "figcraft://join?server=wss://figcraft.example.com/&file=f&token=EditEditEditEditEdit00".into(),
-            view: "figcraft://join?server=wss://figcraft.example.com/&file=f&token=ViewViewViewViewView00".into(),
+            edit: "figguremyui://join?server=wss://figcraft.example.com/&file=f&token=EditEditEditEditEdit00".into(),
+            view: "figguremyui://join?server=wss://figcraft.example.com/&file=f&token=ViewViewViewViewView00".into(),
             owner: Some(owner.into()),
             expires: Some(1_800_000_000),
         }),
@@ -155,8 +158,8 @@ fn a_published_file_shows_its_links() {
         server: "127.0.0.1:47900".into(),
         file: "f".into(),
         name: "Team".into(),
-        edit: "figcraft://join?host=127.0.0.1:47900&file=f&token=EditEditEditEditEdit00".into(),
-        view: "figcraft://join?host=127.0.0.1:47900&file=f&token=ViewViewViewViewView00".into(),
+        edit: "figguremyui://join?host=127.0.0.1:47900&file=f&token=EditEditEditEditEdit00".into(),
+        view: "figguremyui://join?host=127.0.0.1:47900&file=f&token=ViewViewViewViewView00".into(),
         owner: None,
         expires: None,
     });

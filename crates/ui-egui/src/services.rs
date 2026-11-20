@@ -146,7 +146,7 @@ pub fn browser_stopped(unsaved: usize, kept: usize) -> String {
     } else {
         i18n::tr("Reload the page to get back the unsaved files the browser had room for.")
     };
-    format!("{} {next}", i18n::tr("FigCraft stopped because of an internal error."))
+    format!("{} {next}", i18n::tr("Figgure My UI stopped because of an internal error."))
 }
 
 /// The largest file read in the browser: wasm has at most 4 GiB of memory, and a file's contents
@@ -173,6 +173,12 @@ impl Wake for RepaintWaker {
     fn wake_by_ref(self: &Arc<Self>) {
         self.0.request_repaint_of(egui::ViewportId::ROOT);
     }
+}
+
+/// The Save as dialog's file-type label for the native format, in the UI language (the product
+/// name and the extension stay as they are). The native dialogs the app crate opens show it.
+pub fn native_file_type() -> &'static str {
+    i18n::tr("Figgure My UI file (.figcraft)")
 }
 
 /// No-op services (tests, headless screenshots).

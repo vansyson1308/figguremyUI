@@ -136,8 +136,9 @@ pub(super) fn choose_device(app: &mut FigApp, p: &mut Presenter, device: &str) {
 /// command (and undo/save) rather than changing only the player's copy.
 fn navigation_bar(p: &mut Presenter, ctx: &egui::Context, now: f64) -> Option<String> {
     let t = Tokens::get(ctx);
+    // The screens: not components or frames only shown as overlays (QC-11).
+    let frames = p.screens();
     let doc = p.doc.as_ref()?;
-    let frames = doc.top_frames(doc.page_of(p.current).unwrap_or(p.current));
     let index = frames.iter().position(|id| *id == p.current);
     let settings = page_settings(doc, p.current);
     let mut navigate = None;

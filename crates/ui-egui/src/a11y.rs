@@ -122,7 +122,15 @@ pub struct Nav {
     refocus: u8,
     /// The control that opened the popup the keyboard went into, and the popup's layer.
     opener: Option<(Id, LayerId)>,
-    /// A control the keyboard moved to: the properties panel scrolls it into view.
+    /// The name of the control with the keyboard when the last frame ended (`ui.inspect`).
+    pub focused_name: String,
+    /// Where that control is (window points), when it has a place.
+    pub focused_rect: Option<Rect>,
+    /// Where the icon rail was drawn this frame, when it was: it is part of the layers' region
+    /// for the keyboard, but `ui.inspect` names it as itself.
+    pub rail_rect: Option<Rect>,
+    /// A control the keyboard moved to: the panel that scrolls (the properties, the design
+    /// context in the left panel's place) scrolls it into view.
     scroll_to: Option<Id>,
 }
 
@@ -221,15 +229,29 @@ pub fn layer_row(nav: &mut Nav, resp: &Response) {
     }
 }
 
-/// The properties panel's scroll area: scroll the control the keyboard just moved to into view.
-/// Call at the end of the scroll area's contents.
-pub fn scroll_focus(nav: &mut Nav, ui: &Ui) {
-    if let Some(id) = nav.scroll_to.take()
+/// A panel's scroll area in `region` (the properties panel; the design context, which takes the
+/// layers' place): scroll the control the keyboard just moved to into view. Call at the end of
+/// the scroll area's contents.
+pub fn scroll_focus(nav: &mut Nav, ui: &Ui, region: Region) {
+    if let Some(id) = nav.scroll_to
         && let Some(r) = ui.ctx().read_response(id)
-        && nav.region_at(r.rect.center()) == Some(Region::Properties)
-        && !ui.clip_rect().contains_rect(r.rect)
+        && nav.region_at(r.rect.center()) == Some(region)
     {
-        r.scroll_to_me(None);
+        nav.scroll_to = None;
+        // The whole focus ring comes into view, not just the control: scrolled only as far as
+        // the control's own edge, the ring's outer part stayed cut off by the panel's (QC2-06).
+        let custom = shared(ui.ctx(), |s| s.ring_rect.filter(|c| c.0 == id).map(|c| c.1));
+        scroll_ring_into_view(ui, custom.unwrap_or(r.rect));
+    }
+}
+
+/// Scroll `ui`'s scroll area so the focus ring around `rect` (a control, or the box its ring goes
+/// round: [`ring_around`]) shows whole, as little as that takes. A form that gives its first
+/// field the keyboard calls it for that field.
+pub fn scroll_ring_into_view(ui: &Ui, rect: Rect) {
+    let ring = rect.expand(RING_MARGIN);
+    if !ui.clip_rect().contains_rect(ring) {
+        ui.scroll_to_rect(ring, None);
     }
 }
 
@@ -249,8 +271,11 @@ struct Shared {
     /// The focused widget's ring goes round this rectangle (clipped to the second) instead of the
     /// widget: a control made of several widgets, a row whose visible part is inset.
     ring_rect: Option<(Id, Rect, Rect)>,
-    /// The focused control's name (`ui.inspect` › `focus.control`).
+    /// The focused control's name (`ui.inspect` › `focus.control`), with the control it names:
+    /// it stands while that control has the keyboard, so a request answered between frames (the
+    /// desktop app's control channel) reads it as the last frame drew it.
     name: String,
+    name_of: Option<Id>,
 }
 
 /// Run `f` on the per-context temporary `Shared` accessibility state keyed by
@@ -268,10 +293,8 @@ pub fn field_focused(ctx: &Context) -> bool {
 
 /// The name of the control with the keyboard (empty when unnamed or nothing has it).
 pub fn focused_name(ctx: &Context) -> String {
-    if ctx.memory(|m| m.focused()).is_none() {
-        return String::new();
-    }
-    shared(ctx, |s| s.name.clone())
+    let Some(focused) = ctx.memory(|m| m.focused()) else { return String::new() };
+    shared(ctx, |s| if s.name_of == Some(focused) { s.name.clone() } else { String::new() })
 }
 
 /// Whether a screen reader reads the tree this frame: spelled-out values (colours, zoom) are only
@@ -292,6 +315,9 @@ pub fn keyboard(ctx: &Context) -> bool {
 /// keys (F6, Tab, arrows, Escape), which are taken out of the input when they move the keyboard.
 pub fn begin(app: &mut FigApp, ctx: &Context, root_scope: Id) {
     app.ui.nav.last = std::mem::take(&mut app.ui.nav.next);
+    // A scroll into view is for the frame the keyboard moved in: the panel that draws the
+    // control does it then, or nobody does.
+    app.ui.nav.scroll_to = None;
     // Before the keys: a panel edge derived from the root scope must already be excluded.
     shared(ctx, |s| s.root_scope = Some(root_scope));
     keys(app, ctx);
@@ -300,8 +326,6 @@ pub fn begin(app: &mut FigApp, ctx: &Context, root_scope: Id) {
         s.keyboard = keyboard;
         s.ring = None;
         s.ring_rect = None;
-        // Written again by the focused control as it draws.
-        s.name.clear();
     });
 }
 
@@ -532,6 +556,9 @@ pub fn end(app: &mut FigApp, ctx: &Context) {
     if nav.keyboard {
         ring(ctx);
     }
+    // What the frame ends with, for `ui.inspect` answered before the next one draws.
+    nav.focused_name = focused_name(ctx);
+    nav.focused_rect = ctx.memory(|m| m.focused()).and_then(|f| ctx.read_response(f)).map(|r| r.rect);
 }
 
 /// Dialogs, the palette, the presenter and the home screen have no regions.
@@ -613,7 +640,7 @@ fn drop_focus(ctx: &Context) {
 
 fn focus(app: &mut FigApp, ctx: &Context, id: Id) {
     ctx.memory_mut(|m| m.request_focus(id));
-    if app.ui.nav.region == Region::Properties {
+    if matches!(app.ui.nav.region, Region::Properties | Region::Layers) {
         app.ui.nav.scroll_to = Some(id);
     }
     ctx.request_repaint();
@@ -731,6 +758,15 @@ fn popups(app: &mut FigApp, ctx: &Context, focused: Option<Id>, widget: Option<e
     }
 }
 
+/// How far the focus ring is drawn outside the control it goes round.
+const RING_GAP: f32 = 1.0;
+
+/// The focus ring's stroke width (drawn outside its rectangle).
+const RING_WIDTH: f32 = 2.0;
+
+/// How far the focus ring reaches past the control's edges: what must be in view with it.
+pub(crate) const RING_MARGIN: f32 = RING_GAP + RING_WIDTH;
+
 /// The focus ring around the focused control (unless it showed its focus itself).
 fn ring(ctx: &Context) {
     let Some(id) = ctx.memory(|m| m.focused()) else { return };
@@ -741,9 +777,9 @@ fn ring(ctx: &Context) {
     let Some(w) = ctx.viewport(|v| v.this_pass.widgets.get(id).copied()) else { return };
     let painter = ctx.layer_painter(w.layer_id);
     let (rect, painter) = match custom {
-        Some((_, rect, clip)) => (rect.expand(1.0), painter.with_clip_rect(clip)),
+        Some((_, rect, clip)) => (rect.expand(RING_GAP), painter.with_clip_rect(clip)),
         None if canvas => (w.rect.shrink(3.0), painter),
-        None => (w.interact_rect.expand(1.0), painter),
+        None => (w.interact_rect.expand(RING_GAP), painter),
     };
     if rect.is_positive() {
         paint_ring(&painter, rect);
@@ -752,13 +788,15 @@ fn ring(ctx: &Context) {
 
 fn paint_ring(painter: &egui::Painter, rect: Rect) {
     let t = Tokens::get(painter.ctx());
-    painter.rect_stroke(rect, CornerRadius::same(6), Stroke::new(2.0, t.focus), StrokeKind::Outside);
+    painter.rect_stroke(rect, CornerRadius::same(6), Stroke::new(RING_WIDTH, t.focus), StrokeKind::Outside);
 }
 
 /// The focus ring goes round `rect` (inside `ui`'s clip) while `resp` has the keyboard: a control
 /// made of several widgets (a number field's label and value), a row whose visible part is inset.
 pub fn ring_around(ui: &Ui, rect: Rect, resp: &Response) {
-    if resp.has_focus() {
+    // As egui keeps the keyboard's owner (`ring` paints for it also when the window isn't the
+    // system's focused one).
+    if resp.ctx.memory(|m| m.has_focus(resp.id)) {
         let clip = ui.clip_rect().expand(4.0);
         shared(&resp.ctx, |s| s.ring_rect = Some((resp.id, rect, clip)));
     }
@@ -766,7 +804,7 @@ pub fn ring_around(ui: &Ui, rect: Rect, resp: &Response) {
 
 /// `resp` shows its focus itself (a highlighted menu row): no ring around it.
 pub fn own_focus(resp: &Response) {
-    if resp.has_focus() {
+    if resp.ctx.memory(|m| m.has_focus(resp.id)) {
         shared(&resp.ctx, |s| s.ring = Some(resp.id));
     }
 }
@@ -797,8 +835,12 @@ fn node(resp: &Response, label: &str, fill: impl FnOnce(&mut accesskit::Node)) {
 
 /// Keep the focused control's name for `ui.inspect`.
 fn remember(resp: &Response, name: &str) {
-    if resp.has_focus() && !name.is_empty() {
+    // The keyboard's owner as egui keeps it, also while the window itself isn't the system's
+    // focused window (`Response::has_focus` is false then): an agent drives a window in the
+    // background, and `ui.inspect` names the control all the same.
+    if resp.ctx.memory(|m| m.has_focus(resp.id)) && !name.is_empty() {
         shared(&resp.ctx, |s| {
+            s.name_of = Some(resp.id);
             if s.name != name {
                 s.name.clear();
                 s.name.push_str(name);
@@ -1058,5 +1100,54 @@ impl Tip for Response {
         self.on_hover_ui(move |ui| {
             ui.label(tip.as_ref());
         })
+    }
+}
+
+#[cfg(test)]
+mod scroll_focus_tests {
+    use super::{Nav, Region, ring_around, scroll_focus};
+    use egui::{Id, Pos2, RawInput, Rect, vec2};
+
+    /// QC2-06: the field the keyboard moved to below a panel's visible part is scrolled up far
+    /// enough for its whole focus ring to show: the ring goes round the field's box (a text field
+    /// of several lines: its text area is inset in it) and 3 pt outside that, so scrolling only as
+    /// far as the text area's own edge left the ring's lower part cut off. Rows without spacing
+    /// between them, as the design context's are.
+    #[test]
+    fn the_field_comes_into_view_with_its_whole_ring() {
+        let ctx = egui::Context::default();
+        let mut nav = Nav::default();
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0));
+        nav.last.rects[1] = Some(screen);
+        let target = Id::unique(("field", 12_usize));
+        let (mut visible, mut field) = (Rect::NOTHING, Rect::NOTHING);
+        for frame in 0..60 {
+            if frame == 2 {
+                ctx.memory_mut(|m| m.request_focus(target));
+                nav.scroll_to = Some(target);
+            }
+            let input = RawInput { screen_rect: Some(screen), time: Some(f64::from(frame) / 60.0), ..Default::default() };
+            let mut done = ctx.run_ui(input, |ui| {
+                let out = egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                    for k in 0..20_usize {
+                        let (row, _) = ui.allocate_exact_size(vec2(400.0, 60.0), egui::Sense::hover());
+                        let field_box = Rect::from_min_max(row.min + vec2(16.0, 0.0), row.max - vec2(16.0, 0.0));
+                        let id = Id::unique(("field", k));
+                        let resp = ui.interact(field_box.shrink(8.0), id, egui::Sense::click());
+                        ring_around(ui, field_box, &resp);
+                        if id == target {
+                            field = field_box;
+                        }
+                    }
+                    scroll_focus(&mut nav, ui, Region::Layers);
+                });
+                visible = out.inner_rect;
+            });
+            done.textures_delta.clear();
+        }
+        assert!(nav.scroll_to.is_none(), "the panel took the scroll");
+        let ring = field.expand(super::RING_MARGIN);
+        assert!(visible.contains_rect(ring), "the ring {ring:?} isn't all in the visible part {visible:?}");
     }
 }

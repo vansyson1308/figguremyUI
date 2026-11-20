@@ -113,7 +113,7 @@ impl Harness {
 
     /// Joined as Ada, with Hana (the host) already here.
     pub(crate) fn joined(&mut self) {
-        self.app.session.execute("collab.join", &json!({"link": "figcraft://join?host=127.0.0.1:47900&file=f&token=t"})).unwrap();
+        self.app.session.execute("collab.join", &json!({"link": "figguremyui://join?host=127.0.0.1:47900&file=f&token=t"})).unwrap();
         self.welcome();
     }
 
@@ -126,7 +126,7 @@ impl Harness {
             color: "#14AE5C".into(),
             file_name: "Shared".into(),
             pages: vec![],
-            link: "figcraft://join?host=127.0.0.1:47900&file=f&token=t".into(),
+            link: "figguremyui://join?host=127.0.0.1:47900&file=f&token=t".into(),
             url: String::new(),
             address: "127.0.0.1:47900".into(),
             network: false,
@@ -337,6 +337,9 @@ fn clicking_an_avatar_follows_and_escape_stops() {
 #[test]
 fn share_popover_and_join_dialog() {
     let (mut h, _) = Harness::new();
+    // A server is set in Preferences, so the popover offers Online and Local network (this fork
+    // ships none: see `the_server_preference_resets_and_turns_online_sharing_off`).
+    h.app.session.prefs.publish_server = "wss://share.example/".into();
     let shapes = h.frames(3);
     let share = text_center(&shapes, "Share");
     h.click(share);

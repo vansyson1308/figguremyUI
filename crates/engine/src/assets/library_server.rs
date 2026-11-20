@@ -40,7 +40,7 @@ fn link_key(link: &str) -> String {
 /// Whether a library's path is a share link of a file on a server (else it is a library file).
 pub fn is_server_link(path: &str) -> bool {
     let p = path.trim_start().to_ascii_lowercase();
-    ["figcraft://", "ws://", "wss://"].iter().any(|s| p.starts_with(s))
+    figcraft_collab::scheme::strip(&p).is_some() || ["ws://", "wss://"].iter().any(|s| p.starts_with(s))
 }
 
 /// A library path to show: a server link without its token.

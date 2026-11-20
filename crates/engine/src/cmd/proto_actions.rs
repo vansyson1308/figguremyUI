@@ -195,7 +195,7 @@ fn canonical_inputs(cmd: &str, vars: &Variables, v: &mut Value, depth: usize) ->
 fn canonical_action_names(vars: &Variables, o: &mut serde_json::Map<String, Value>) {
     match o.get("type").and_then(Value::as_str) {
         Some("setVariable") => {
-            if let Some(v) = o.get("variable").and_then(Value::as_str).and_then(|n| vars.get(n)) {
+            if let Some(v) = o.get("variable").and_then(Value::as_str).and_then(|n| vars.find(n).ok()) {
                 o.insert("variable".into(), json!(v.id));
             }
         }
@@ -262,7 +262,7 @@ fn expr_json(cmd: &str, e: &Expr) -> Result<Value> {
 
 /// Expressions in a new action must work: set variable names a variable and its expression gives
 /// a value it can hold; conditions give true or false.
-fn check_action(cmd: &str, vars: &Variables, a: &Action) -> Result<()> {
+pub(super) fn check_action(cmd: &str, vars: &Variables, a: &Action) -> Result<()> {
     for x in walk(std::slice::from_ref(a)) {
         match x {
             Action::SetVariable { variable, expr, .. } => {

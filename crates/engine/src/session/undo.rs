@@ -46,24 +46,70 @@ impl Session {
         }
     }
 
+    /// The active document's last `n` undo steps, the next one first: each label with who made
+    /// the step (the agent's name as [`Session::agent`] gives it; `None` for the user).
+    pub fn undo_steps(&self, n: usize) -> Vec<(String, Option<String>)> {
+        match self.ds() {
+            Ok(ds) if self.live_doc(ds.uid) => {
+                let authors = ds.live_undo_authors().cloned().chain(std::iter::repeat(None));
+                self.undo_labels(n).into_iter().zip(authors).collect()
+            }
+            Ok(ds) => ds.history.undo.iter().rev().take(n).map(|h| (h.label.clone(), h.author.clone())).collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// The step an undo (`back`) or redo of the active document would take next: its label and
+    /// who made it. `None` when there is none.
+    pub fn next_history_step(&self, back: bool) -> Option<(String, Option<String>)> {
+        let ds = self.ds().ok()?;
+        if self.live_doc(ds.uid) {
+            let client = self.live().client()?;
+            let label = if back { client.undo_labels().next_back() } else { client.redo_labels().next_back() }?;
+            return Some((label.to_string(), ds.live_author(back).cloned().flatten()));
+        }
+        let step = if back { ds.history.undo.last() } else { ds.history.redo.last() }?;
+        Some((step.label.clone(), step.author.clone()))
+    }
+
     /// Start a gesture: later [`preview`](Self::preview) calls re-apply edits to this snapshot.
     pub fn begin_interaction(&mut self, label: &str) -> Result<()> {
         textpreview::end(self);
         if let Some(why) = self.active_read_only() {
             return Err(EngineError::Disabled(label.to_string(), why.into()));
         }
+        let by = self.agent.clone();
         let ds = self.ds_mut()?;
         if ds.preview.is_some() {
             return Err(EngineError::Disabled(label.to_string(), PREVIEW_READ_ONLY.into()));
         }
-        if ds.interaction.is_none() {
-            ds.interaction = Some(Interaction { label: label.to_string(), doc: ds.doc.clone(), selection: ds.selection.clone(), moved_by: None });
+        match &ds.interaction {
+            None => {
+                ds.interaction =
+                    Some(Interaction { label: label.to_string(), doc: ds.doc.clone(), selection: ds.selection.clone(), moved_by: None, by });
+            }
+            // An agent doesn't take over somebody else's gesture or text edit.
+            Some(it) if by.is_some() && it.by != by => return Err(EngineError::Busy { cmd: label.to_string(), by: it.by.clone() }),
+            Some(_) => {}
         }
         Ok(())
     }
 
+    /// Refuse what an AI agent would do to the active document while somebody else's gesture or
+    /// text edit is in progress on it (`cmd` names what was refused): the person's work in hand is
+    /// theirs to finish, and a change made under it would be lost when it ends or be committed as
+    /// part of their step.
+    pub fn refuse_foreign_gesture(&self, cmd: &str) -> Result<()> {
+        let Some(me) = &self.agent else { return Ok(()) };
+        match self.ds().ok().and_then(|d| d.interaction.as_ref()) {
+            Some(it) if it.by.as_ref() != Some(me) => Err(EngineError::Busy { cmd: cmd.to_string(), by: it.by.clone() }),
+            _ => Ok(()),
+        }
+    }
+
     /// Replace the document with `f(snapshot)` for a live preview during a gesture.
     pub fn preview(&mut self, f: impl FnOnce(&mut Document, &mut Vec<NodeId>) -> Result<()>) -> Result<()> {
+        self.refuse_foreign_gesture("gesture")?;
         let ds = self.ds_mut()?;
         let Some(it) = ds.interaction.clone() else { return Err(EngineError::Other("no gesture in progress".into())) };
         let mut doc = (*it.doc).clone();
@@ -89,6 +135,7 @@ impl Session {
 
     /// Finish a gesture as one undo step (no step if nothing changed).
     pub fn commit_interaction(&mut self) -> Result<()> {
+        self.refuse_foreign_gesture("gesture")?;
         let ds = self.ds_mut()?;
         let Some(it) = ds.interaction.take() else { return Ok(()) };
         let (uid, page) = (ds.uid, ds.page);
@@ -103,6 +150,7 @@ impl Session {
 
     /// Abandon a gesture, restoring the document.
     pub fn cancel_interaction(&mut self) -> Result<()> {
+        self.refuse_foreign_gesture("gesture")?;
         let ds = self.ds_mut()?;
         if let Some(it) = ds.interaction.take() {
             ds.doc = it.doc;
@@ -119,6 +167,8 @@ impl Session {
             return Ok(true);
         }
         let live = self.ds().is_ok_and(|d| self.live_doc(d.uid));
+        // Who undoes, and whether that is one change of its own (inside a group, the group is).
+        let (actor, counted) = (self.agent.clone(), self.counts_alone());
         let ds = self.ds_mut()?;
         if ds.preview.is_some() {
             return Err(EngineError::Disabled("edit.undo".into(), PREVIEW_READ_ONLY.into()));
@@ -133,8 +183,18 @@ impl Session {
         if live {
             return Ok(self.live_travel(true));
         }
+        if counted {
+            ds.settle_revision();
+        }
         let Some(e) = ds.history.undo.pop() else { return Ok(false) };
-        let redo = HistoryEntry { label: e.label.clone(), doc: ds.doc.clone(), selection: ds.selection.clone(), page: ds.page };
+        let redo = HistoryEntry {
+            label: e.label.clone(),
+            doc: ds.doc.clone(),
+            selection: ds.selection.clone(),
+            page: ds.page,
+            author: e.author.clone(),
+            revision: e.revision,
+        };
         ds.doc = e.doc;
         cmd::facilitate::keep(&redo.doc, &mut ds.doc);
         ds.history.redo.push(redo);
@@ -144,6 +204,14 @@ impl Session {
         }
         ds.clean_selection();
         ds.revision += 1;
+        if counted {
+            ds.committed_step(&format!("Undo {}", e.label), actor.as_deref());
+        }
+        // A redo brings back the document as of this undo.
+        let now = ds.recorded_revision();
+        if let Some(r) = ds.history.redo.last_mut() {
+            r.revision = now;
+        }
         let (uid, doc) = (ds.uid, ds.doc.clone());
         if self.clipboard.source_doc == uid {
             self.clipboard.copied_components.retain(|id| {
@@ -161,6 +229,7 @@ impl Session {
             return Ok(true);
         }
         let live = self.ds().is_ok_and(|d| self.live_doc(d.uid));
+        let (actor, counted) = (self.agent.clone(), self.counts_alone());
         let ds = self.ds_mut()?;
         if ds.preview.is_some() {
             return Err(EngineError::Disabled("edit.redo".into(), PREVIEW_READ_ONLY.into()));
@@ -174,8 +243,18 @@ impl Session {
         if live {
             return Ok(self.live_travel(false));
         }
+        if counted {
+            ds.settle_revision();
+        }
         let Some(e) = ds.history.redo.pop() else { return Ok(false) };
-        let undo = HistoryEntry { label: e.label.clone(), doc: ds.doc.clone(), selection: ds.selection.clone(), page: ds.page };
+        let undo = HistoryEntry {
+            label: e.label.clone(),
+            doc: ds.doc.clone(),
+            selection: ds.selection.clone(),
+            page: ds.page,
+            author: e.author.clone(),
+            revision: e.revision,
+        };
         ds.doc = e.doc;
         cmd::facilitate::keep(&undo.doc, &mut ds.doc);
         ds.history.undo.push(undo);
@@ -185,6 +264,14 @@ impl Session {
         }
         ds.clean_selection();
         ds.revision += 1;
+        if counted {
+            ds.committed_step(&format!("Redo {}", e.label), actor.as_deref());
+        }
+        // An undo brings back the document as of this redo.
+        let now = ds.recorded_revision();
+        if let Some(u) = ds.history.undo.last_mut() {
+            u.revision = now;
+        }
         Ok(true)
     }
 
@@ -243,9 +330,11 @@ impl Session {
     }
 
     fn execute_batch_step(&mut self, scope: &BatchScope, cmd: &str, params: &Value) -> Result<Value> {
-        let p = if cmd == "command.batch" { params.clone() } else { scope.resolve(params)? };
-        // Say which step failed; a nested batch names its own steps.
-        self.execute(cmd, &p).map_err(|e| if cmd == "command.batch" { e } else { e.at_step(scope.next_step()) })
+        let step = scope.next_step();
+        // A reference that doesn't resolve names its step in the message already.
+        let p = if cmd == "command.batch" { params.clone() } else { scope.resolve(params).map_err(|e| e.located(step, cmd))? };
+        // Say which step failed, whatever the failure; a nested batch names its own steps.
+        self.execute(cmd, &p).map_err(|e| if cmd == "command.batch" { e } else { e.at_step(step, cmd) })
     }
 
     /// Take the tabs `pred` matches out of `docs`; inside a group they are kept so that a failed

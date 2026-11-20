@@ -69,12 +69,12 @@ fn request_timeout(v: &Value, default: Duration) -> Duration {
 fn timeout_message(failure: &WaitFailure, needs_frame: bool, waited: Duration) -> String {
     let secs = waited.as_secs_f64().ceil();
     match failure {
-        WaitFailure::Disconnected => "the FigCraft window closed before answering".into(),
+        WaitFailure::Disconnected => "the Figgure My UI window closed before answering".into(),
         WaitFailure::StillRunning => format!(
             "the app is still running this request after {secs} s: it will take effect when it finishes, but its reply is lost. Check the document before retrying"
         ),
         WaitFailure::Timeout if needs_frame => {
-            "timed out waiting for the UI: screenshots and input need the FigCraft window on screen (is it minimised or covered?)".into()
+            "timed out waiting for the UI: screenshots and input need the Figgure My UI window on screen (is it minimised or covered?)".into()
         }
         WaitFailure::Timeout => {
             format!("timed out after {secs} s before the app started this request (it was busy, or its window isn't drawing): it was not applied")
@@ -108,11 +108,11 @@ pub fn start(port: u16, busy: Duration, queue: Queue, ctx: CtxSlot, events: Arc<
         Ok(l) => l,
         Err(e) => {
             log::error!("control server: can't bind 127.0.0.1:{port}: {e} (another app may own it; pick another port)");
-            eprintln!("FigCraft control server failed to bind port {port}: {e}");
+            eprintln!("Figgure My UI control server failed to bind port {port}: {e}");
             return;
         }
     };
-    eprintln!("FigCraft control server listening on 127.0.0.1:{port}");
+    eprintln!("Figgure My UI control server listening on 127.0.0.1:{port}");
     let spawned = std::thread::Builder::new().name("figcraft-control".into()).spawn(move || {
         let mut workers = Vec::new();
         for stream in accepted(listener.incoming(), || std::thread::sleep(ACCEPT_RETRY)) {
@@ -172,7 +172,11 @@ fn serve_with_events(mut out: TcpStream, queue: Queue, ctx: CtxSlot, events: Arc
             line.pop();
         }
         if line.len() > MAX_LINE {
-            writeln!(out, "{}", json!({"id": null, "ok": false, "error": "message too large"}))?;
+            writeln!(
+                out,
+                "{}",
+                json!({"id": null, "ok": false, "error": "message too large", "errorDetail": {"code": "badParams", "message": "message too large"}})
+            )?;
             break;
         }
         let Ok(line) = std::str::from_utf8(&line) else { break };
@@ -189,7 +193,7 @@ fn serve_with_events(mut out: TcpStream, queue: Queue, ctx: CtxSlot, events: Arc
                 if method == "events.poll" {
                     let reply = match event_poll(&events, &params) {
                         Ok(result) => json!({"id": id, "ok": true, "result": result}),
-                        Err(error) => json!({"id": id, "ok": false, "error": error}),
+                        Err(error) => json!({"id": id, "ok": false, "errorDetail": {"code": "badParams", "message": error}, "error": error}),
                     };
                     writeln!(out, "{reply}")?;
                     continue;
@@ -201,7 +205,11 @@ fn serve_with_events(mut out: TcpStream, queue: Queue, ctx: CtxSlot, events: Arc
                 pending.retain(|request| !request.is_cancelled());
                 if pending.len() >= MAX_QUEUED_REQUESTS {
                     drop(pending);
-                    writeln!(out, "{}", json!({"id": id, "ok": false, "error": "control request queue is full"}))?;
+                    writeln!(
+                        out,
+                        "{}",
+                        json!({"id": id, "ok": false, "error": "control request queue is full", "errorDetail": {"code": "failed", "message": "control request queue is full"}})
+                    )?;
                     continue;
                 }
                 let needs_frame = matches!(method.as_str(), "ui.screenshot" | "ui.input");
@@ -211,24 +219,43 @@ fn serve_with_events(mut out: TcpStream, queue: Queue, ctx: CtxSlot, events: Arc
                     c.request_repaint();
                 }
                 match wait_for_reply(&rx, &gate, waits) {
-                    Ok(r) => match r.result {
-                        Ok(res) => json!({"id": r.id, "ok": true, "result": res}),
-                        Err(e) => json!({"id": r.id, "ok": false, "error": e}),
-                    },
-                    Err(failure) => json!({"id": id, "ok": false, "error": timeout_message(&failure, needs_frame, waits)}),
+                    Ok(r) => reply_line(&r),
+                    Err(failure) => {
+                        let error = timeout_message(&failure, needs_frame, waits);
+                        json!({"id": id, "ok": false, "errorDetail": {"code": "failed", "message": error}, "error": error})
+                    }
                 }
             }
             Err(e) => {
                 // A line that isn't JSON ends the connection: a web page can make the browser send
                 // an HTTP request here, and its header lines must not let the JSON lines of its body
                 // through as commands.
-                writeln!(out, "{}", json!({"id": null, "ok": false, "error": format!("bad JSON: {e}")}))?;
+                let error = format!("bad JSON: {e}");
+                writeln!(out, "{}", json!({"id": null, "ok": false, "errorDetail": {"code": "badParams", "message": error}, "error": error}))?;
                 break;
             }
         };
         writeln!(out, "{reply}")?;
     }
     Ok(())
+}
+
+/// The reply line for what the UI answered: `result`, or `error` with `errorDetail` (what kind of
+/// failure it is, `{code, message, …}`; its `message` is `error`).
+fn reply_line(r: &ControlReply) -> Value {
+    let mut line = match &r.result {
+        Ok(res) => json!({"id": r.id, "ok": true, "result": res}),
+        Err(e) => json!({"id": r.id, "ok": false, "error": e, "errorDetail": r.error_detail()}),
+    };
+    // `engine.execute` (and the canvas methods): the revision of the document the request acted
+    // on, read in the same request right after it ran, and which document that is.
+    if let Some(revision) = r.revision {
+        line["revision"] = json!(revision);
+    }
+    if let Some(document) = r.revision_document {
+        line["revisionDocument"] = json!(document);
+    }
+    line
 }
 
 /// `events.poll {after?, timeoutMs?, topics?, limit?}`: read the shared log, waiting up to 25 s.

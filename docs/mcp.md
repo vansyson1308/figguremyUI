@@ -1,6 +1,6 @@
-# FigCraft MCP server
+# Figgure My UI MCP server
 
-FigCraft ships a [Model Context Protocol](https://modelcontextprotocol.io) server so AI agents can
+Figgure My UI ships a [Model Context Protocol](https://modelcontextprotocol.io) server so AI agents can
 design with it: create and edit layers, run any menu command, inspect the result as JSON and look at
 it as a PNG. It speaks newline-delimited JSON-RPC 2.0 over stdio (MCP protocol `2025-06-18`;
 `2025-03-26` and `2024-11-05` clients are accepted too).
@@ -10,16 +10,23 @@ enforced while reading: an oversized or unterminated frame stops at the first ex
 JSON-RPC error `-32600` (`message too large`, null id), and closes the stdio session without reading
 the rest or dispatching later requests. Lines within the limit keep the same JSON-RPC behavior.
 
-The server lives in `crates/mcp` (`figcraft-mcp`) and is started by the CLI:
+The server lives in `crates/mcp` (`figcraft-mcp`) and is started by the CLI. It introduces itself
+in `initialize` as `serverInfo` `{name: "figguremyui", title: "Figgure My UI"}`; a client config made
+for upstream's `figcraft-cli` needs the new binary's path ([`migration.md`](migration.md#mcp)).
 
 | Command | Backend |
 |---|---|
-| `figcraft-cli mcp` | **Headless**: an in-process engine session with one untitled document. No window; renders with the CPU renderer. |
-| `figcraft-cli mcp --attach <port>` | **Attached**: drives a running FigCraft app through its control channel (`figcraft --control <port>`). The user sees every change live. |
+| `figguremyui-cli mcp` | **Headless**: an in-process engine session with one untitled document. No window; renders with the CPU renderer. |
+| `figguremyui-cli mcp --attach <port>` | **Attached**: drives a running Figgure My UI app through its control channel (`figguremyui --control <port>`). The user sees every change live. |
+
+An agent's first call should be `get_capabilities`: it says which of the two backends this is,
+whether there is a window and a prototype player, which features and checks the build really has,
+and which document calls will act on (see Capabilities and Working document, revisions and
+conflicts below).
 
 `--attach` also takes `host:port`. The control channel only listens on 127.0.0.1. The app takes up
 to 60 s over each request; `--timeout SECONDS` (1–600) raises that for a client that sends big
-batches: `figcraft-cli mcp --attach 7979 --timeout 300`. Headless has no such limit.
+batches: `figguremyui-cli mcp --attach 7979 --timeout 300`. Headless has no such limit.
 
 While an attached agent works, the app shows where, as it shows a person in a live session: its
 avatar, in a colour of its own and named as its comments are signed ("Claude (agent)", see
@@ -49,16 +56,16 @@ of the window itself (`screenshot` with `window`) needs it on screen: it is then
 
 ### Confining file access
 
-The roots below belong to the **headless** side: the session `figcraft-cli mcp` runs itself, with
+The roots below belong to the **headless** side: the session `figguremyui-cli mcp` runs itself, with
 no window. A server attached with `--attach` runs the commands inside the app instead, so the app
 confines them — from the flags it was started with, not from anything passed to the CLI.
 
 ```sh
-figcraft-cli mcp --automation-read-root /work/project --automation-write-root /work/project/out
+figguremyui-cli mcp --automation-read-root /work/project --automation-write-root /work/project/out
 ```
 
 ```json
-{"mcpServers": {"figcraft": {"command": "/path/to/figcraft-cli",
+{"mcpServers": {"figguremyui": {"command": "/path/to/figguremyui-cli",
   "args": ["mcp", "--automation-read-root", "/work/project", "--automation-write-root", "/work/project/out"]}}}
 ```
 
@@ -96,7 +103,7 @@ Each may be given more than once, as `--flag DIR` or `--flag=DIR`:
   compared by whole names: `/work2/x` is not inside `/work`. On Windows the case comes from the disk (`C:\WORK\x` is
   inside `C:\work`), `\\?\` and UNC (`\\server\share\…`) paths are resolved like drive-letter ones,
   and new names that are devices (`CON`, `NUL`, `COM1`…) or streams (`a.png:x`) are refused.
-- **The network:** a confined call reaches no FigCraft or plugin server, so it can't send a
+- **The network:** a confined call reaches no Figgure My UI or plugin server, so it can't send a
   document anywhere through one. Hosting, joining, publishing and sharing a file (`collab.host`,
   `collab.join`, `collab.publish`, `collab.share` …), team libraries on a server (`library.check`
   refuses, and `library.updates` / `library.list` report the refusal for each instead of the last
@@ -109,7 +116,7 @@ Each may be given more than once, as `--flag DIR` or `--flag=DIR`:
 - Not confined: the app's own folders, which no tool names (preferences, Data Recovery copies,
   plugins installed from a plugin directory, the system fonts).
 - `--attach` with either flag is a usage error: the app runs the commands, so only the app can
-  confine them. Start it with the same flags, `figcraft --control 7979 --automation-read-root DIR
+  confine them. Start it with the same flags, `figguremyui --control 7979 --automation-read-root DIR
   --automation-write-root DIR` (see [Control protocol](control-protocol.md#confining-file-access)),
   then attach as usual. The attached `screenshot` gets its PNGs from the app as data, so no
   temporary file is written anywhere.
@@ -119,28 +126,37 @@ Each may be given more than once, as `--flag DIR` or `--flag=DIR`:
 
 ### Fonts
 
-The headless server lays text out with the same fonts as the app: the fonts built into FigCraft
+The headless server lays text out with the same fonts as the app: the fonts built into Figgure My UI
 plus the installed system fonts, indexed once, the first time text is laid out (a session that
 never touches text never pays for it). So text sizes, auto layout and exports match what users see
 in the app. For renders that come out the same on every machine (CI), start it with
-`figcraft-cli mcp --no-system-fonts` or set `FIGCRAFT_NO_SYSTEM_FONTS=1`: text then uses only the
-built-in fonts. Attached, the app's own fonts apply. The browser build has no system fonts.
+`figguremyui-cli mcp --no-system-fonts` or set `FIGGUREMYUI_NO_SYSTEM_FONTS=1`: text then uses only the
+fonts built into this build, which are the craft-fonts ones it was built with (none when it was
+built without that input). With no font at all, text is laid out 1 px wide and draws nothing:
+`check_design` then reports such text as not measured (`text.noFont`, and `contrast.unmeasured`
+with "no font to lay it out with") instead of passing it, and its result carries one `warnings`
+entry saying the session has no fonts. Attached, the app's own fonts apply. The browser build has
+no system fonts.
 
 ## Configure a client
 
 Build the CLI first (`cargo build --release -p figcraft-cli`) and use the absolute path to
-`target/release/figcraft-cli`.
+`target/release/figguremyui-cli`. `figguremyui-cli doctor` checks the build through this server
+(handshake, tools, capabilities, a small prototype verified, with `--example FILE` a file's
+scenarios) and prints the lines below with that path filled in ([cli.md](cli.md#doctor---json---example-file---port-port));
+[install-for-agents.md](install-for-agents.md) is the whole install, written for an agent to follow.
 
-The Linux AppImage bundles the CLI: `FigCraft.AppImage cli <args>` runs `figcraft-cli <args>`, so
-`/path/to/FigCraft.AppImage cli mcp` works wherever `/path/to/figcraft-cli mcp` appears below.
+The Linux AppImage bundles the CLI: `<the AppImage> cli <args>` runs `figguremyui-cli <args>`, so
+`/path/to/<the AppImage> cli mcp` works wherever `/path/to/figguremyui-cli mcp` appears below
+(there are no release builds of Figgure My UI yet; build the CLI from source).
 
 ### Claude Code
 
 ```sh
 # headless
-claude mcp add figcraft -- /path/to/figcraft-cli mcp
-# drive the running app (start it with: figcraft --control 7979)
-claude mcp add figcraft-app -- /path/to/figcraft-cli mcp --attach 7979
+claude mcp add figguremyui -- /path/to/figguremyui-cli mcp
+# drive the running app (start it with: figguremyui --control 7979)
+claude mcp add figguremyui-app -- /path/to/figguremyui-cli mcp --attach 7979
 ```
 
 Or in a project's `.mcp.json`:
@@ -148,7 +164,7 @@ Or in a project's `.mcp.json`:
 ```json
 {
   "mcpServers": {
-    "figcraft": { "command": "/path/to/figcraft-cli", "args": ["mcp"] }
+    "figguremyui": { "command": "/path/to/figguremyui-cli", "args": ["mcp"] }
   }
 }
 ```
@@ -160,8 +176,8 @@ Or in a project's `.mcp.json`:
 ```json
 {
   "mcpServers": {
-    "figcraft": { "command": "/path/to/figcraft-cli", "args": ["mcp"] },
-    "figcraft-app": { "command": "/path/to/figcraft-cli", "args": ["mcp", "--attach", "7979"] }
+    "figguremyui": { "command": "/path/to/figguremyui-cli", "args": ["mcp"] },
+    "figguremyui-app": { "command": "/path/to/figguremyui-cli", "args": ["mcp", "--attach", "7979"] }
   }
 }
 ```
@@ -174,6 +190,10 @@ Or in a project's `.mcp.json`:
   space of their own: a layer in a group is placed in the frame (or on the page) the group is in.
   `rotation` is the layer's angle to its parent (Figma's plugin API `rotation` is the same); `absoluteRotation` sets its rotation on the page, what the Design panel's field shows; a call takes one of the two.
   `inspect_document` reports `x`/`y` the same way, plus `absoluteBounds` in page coordinates.
+  `x`, `y`, `width` and `height` must be finite and within ±1e9 (`figcraft_geom::MAX_COORD`); a
+  value outside is refused as an invalid parameter, not clamped.
+  A `fontFamily` that no installed or built-in font provides is kept (the text draws in a fallback
+  font) and named in `warnings`; `create_node` returns node.create's `warnings` too.
   In `props`, `fill` and `stroke` also accept `"none"` (either case) or `null` as no paint, the
   same as an empty `fills`/`strokes` list, so an outline-only shape can be made in one call.
 - Frames, groups, sections and masks: drawing a frame or section with the `pointer` tool around
@@ -234,7 +254,7 @@ Or in a project's `.mcp.json`:
   else on the selection. New layers become the selection.
 - Colours are `"#RRGGBB"` or `"#RRGGBBAA"`. Inside fills and strokes, `color` may also be a hex
   string and gradients can be written `{"type": "linearGradient", "stops": ["#7048E8", "#1098AD"]}`;
-  the engine reads them as its paint JSON, so `run_command`, `figcraft-cli run` and the control
+  the engine reads them as its paint JSON, so `run_command`, `figguremyui-cli run` and the control
   channel take them too. Effects passed through the MCP tools may use hex `color` strings as well.
 - **Blend modes**: `blend` on a layer (`node.set`) or a paint (`fill.set` / `stroke.set`) is a
   menu label or CSS keyword (`"Normal"`, `"pass through"`, `"multiply"`, `"plusDarker"`, ...;
@@ -379,20 +399,27 @@ a later step can use `{"$step": 0, "field": "ids/0"}` to target the first match.
 
 | Tool | What it does |
 |---|---|
+| `get_capabilities {}` | What this server and the app behind it can do: `backend` (`headless` \| `attached`), `window`, `player` (whether a live prototype player can exist), the automation `roots`, the `workingDocument` and the open `documents`, the number of `commands`, `features`, `limits` and file `formats`. Call it first (see Capabilities below). |
+| `use_document {document}` | Choose the working document: a file's `id`, its path, or `"front"`. Returns `{workingDocument, documents}` (see Working document, revisions and conflicts below). |
 | `list_commands {filter?}` | Every command: id, label, menu, shortcut, undoable, params doc. |
 | `run_command {command, params}` | Run any command (e.g. `align.left`, `layout.add`, `component.create`, `instance.place` (drop an instance at a page point into the frame or auto layout slot under it), `component.exposeInstance` / `instance.exposed` (nested instance properties on instances), `component.makeSlot` / `instance.slotInsert` / `instance.resetSlot` (slots, below), `inspect.code` (CSS, HTML + CSS for a whole frame, React, Leptos, Vue, SwiftUI, Jetpack Compose, ArkUI or Flutter for a layer; components take their properties as parameters and instances are calls, see Developer Mode below), `inspect.properties` (layout, auto layout, typography, fills, strokes and effects with their style and variable names; `colorFormat`: hex, rgb, css, hsl or hsb), `inspect.assets` (layers under the selection with export settings, icons and images, each with its `kind`), `inspect.code` takes `unit: rem` and `rootFontSize` for CSS, HTML, React, Leptos and Vue, `style.create`, `variable.bind`, `variable.update` (rename, describe, scope), `variable.set` with `{alias}` or a colour calculation (`{alpha}`, `{mix}`), `variable.renameMode` / `variable.removeMode`, `variable.deleteCollection`, `proto.interaction.add`, `codeConnect.set` (components linked to real code, see Developer Mode below)). |
-| `batch {commands: [{command, params}], label?}` | Several commands as one undo step (`command.batch`), which keeps one copy of the document however many steps there are (an `edit.undo` step undoes the batch's edits so far together); all-or-nothing for open documents and their document state. Failed inner commands are removed from the journal; preferences, clipboard, tool state and UI requests are not rolled back. A step can use what an earlier step returned: name it with `"as": "card"` and `{"$ref": "card"}` anywhere in a later step's params becomes the `id` in its result (`{"$step": n}` does the same by zero-based position); `"field"` takes another key or a slash path such as `ids/0` (see Step references below). |
+| `batch {commands: [{command, params}], label?}` | Several commands as one undo step (`command.batch`), which keeps one copy of the document however many steps there are (an `edit.undo` step undoes the batch's edits so far together); all-or-nothing for open documents and their document state. An abort names the failing step and the command it runs, in the message and as `step` and `command` in the error (see Errors below). Failed inner commands are removed from the journal; preferences, clipboard, tool state and UI requests are not rolled back. A step can use what an earlier step returned: name it with `"as": "card"` and `{"$ref": "card"}` anywhere in a later step's params becomes the `id` in its result (`{"$step": n}` does the same by zero-based position); `"field"` takes another key or a slash path such as `ids/0` (see Step references below). |
 | `create_node {type, x, y, width, height, parent, index, name, text, path, props}` | Create a frame, rectangle, ellipse, polygon, star, line, arrow, text, vector, section, component or slice; returns `{id, node}`. |
 | `set_properties {ids, props}` | `node.set` on layers (geometry, fills, strokes, effects, corner radius, auto layout, sizing, constraints, masks (`isMask`, `maskType: alpha\|vector\|luminance`), handoff status (`devStatus: none\|readyForDev\|completed`; marking again clears "Changed"), a section's `sectionContentsHidden`, text…); returns the updated layers. |
-| `inspect_document {depth, allPages, fields?, outline?}` | The document as JSON (its `id`, layer tree, styles, selection, history); `fields` selects layer properties, `outline: true` gives a compact tree (below). The tools that act on a document also take `document` (see Naming the document below). |
+| `inspect_document {depth, allPages, fields?, outline?}` | The document as JSON (its `id` and `revision`, layer tree, styles, selection, history with who made each step: `history.steps`); `fields` selects layer properties, `outline: true` gives a compact tree (below). The tools that act on a document also take `document` (see Naming the document below). |
 | `get_node {id, depth, fields?, outline?}` | One layer as JSON; takes the same `fields` and `outline` options; `pluginData` (`{key: value}`, values as strings) when the layer or page has layer data written with `set_properties {props: {pluginData}}`. |
 | `select {ids}` | Replace the selection (`[]` deselects). |
 | `export {ids, format, scale \| size, path?, bleed?, cropMarks?, bleedMarks?, cmyk?, contentsOnly?, includeBoundingBox?, svgOutlineText?, svgIdAttribute?, svgSimplifyStroke?, vdCompat?, colorProfile?, quality?}` | png, jpg, svg, webp, pdf, xml (an Android Vector Drawable: `svgIdAttribute` writes `android:name`, `vdCompat` is `bestEffort` (default: approximated with a warning), `exact` (left out with a warning) or `ignore` (no warnings: overlapping layer opacity dropped, even-odd fills kept as `fillType="evenOdd"`, diamond gradients left out), and the result lists `warnings` for what was changed or left out), or `fig`: the whole file as `.fig`, experimental (see Exporting `.fig` files below); `size` is `2x`, `512w` or `512h`; `quality` is the JPG quality, 1 to 100 (default 90). The image covers what the layers paint (shadows towards their offset, strokes, unclipped children, a mask group's mask; hidden layers take no room; a slice is its area with everything under it, or only the frame or group it sits in while `contentsOnly` is on); `contentsOnly: false` also draws every other layer showing in that area, `includeBoundingBox` exports the layers' own boxes; SVG: `svgOutlineText: false` keeps `<text>`, `svgIdAttribute` writes unique ids from layer names, `svgSimplifyStroke: false` writes every stroke as an outline; png, jpg and webp: `colorProfile` is `sameAsFile` (default: the document's profile), `srgb` or `displayP3`, the pixels converted (out-of-gamut colors clip) and the file tagged for it (PNG: `sRGB` chunk, or ICC and `cICP` for Display P3; JPG: ICC profile; WebP: ICC profile for Display P3, none for sRGB) (SVG, XML and RGB PDF output are always sRGB; PDF with `cmyk` is DeviceCMYK). The same options go in export settings (`export.add` / `export.update`). PDF: frames one page each (sized in points), anything else together on one page; print options: `bleed` (points or a length like `"3mm"`, `"0.125in"`), crop and bleed marks, CMYK colour (see Exports below), also taken by `file.export`, `file.exportLayers`, `file.exportFramesPdf` and stored per export setting by `export.add` / `export.update`; `run_command` `file.exportFramesPdf {page?, path?}` writes every top-level frame of a page. Without `path`, images come back as MCP image content, SVG as text, XML as text followed by `{format, bytes, warnings}`. Layers' own export settings: `run_command` with `export.add` / `export.update {index, size?, suffix?, format?}` / `export.remove` and `file.exportLayers {ids?, dir?, assets?}` (every layer once per setting, named `<layer><suffix>.<format>`, a slash in a layer name making a folder; `assets: true` exports the Inspect tab's assets instead: icons as SVG, images as PNG). |
 | `screenshot {ids?, scale?, maxSize?, window?}` | PNG of the page (with background) or of layers, scaled to fit `maxSize` (default 1600). `window: true` captures the app window in front when attached, a window id (see Windows below) that window. |
-| `open_file {path, variables?, reload?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.fig` or FigJam `.jam` (best effort, see below), `.sketch` (Sketch 48 and newer, best effort), `.svg` (see Importing SVG below) or an image; save as `.figcraft`. `open_file` returns `opened` (for a file opened anew, a `summary` of `name`, `pages`, `layers` and `images`, and `warnings` or `repairs`; a file that was already open gives its `index`, with `stale: true` when the file changed on disk since that tab read or saved it; `reload: true` reads it again into the tab, refused while the tab has unsaved changes) and the document's `document` outline. |
-| `undo` / `redo` | Step through history. |
-| `pointer {kind, x, y, to?, steps?, tool?, shift, alt, cmd, pressure?, pressureTo?}` | Mouse gestures in page coordinates with the current tool: `click`, `double`, `drag`, `down`, `move`, `up`, `hover`. A dragged layer drops into the frame or auto layout slot under the pointer, except one inside a group, a boolean group or an instance (outside its slots), which only moves. `pressure` (0–1) is pen pressure; a drag goes from `pressure` to `pressureTo` (see Brushes and pen pressure). |
-| `key {key, shift, alt, cmd}` | A shortcut or key as if typed on the canvas (every default shortcut, tool keys, Escape, Delete, arrows, number keys for opacity, arrows that pan the view when nothing is selected; while editing text, the text shortcuts and then text editing keys). Keys are names like `A`, `0`, `Enter`, `ArrowLeft`, `=`, `/`, or egui's (`Plus`, `Questionmark`); `cmd` is Cmd on macOS and Ctrl elsewhere. |
+| `design_context {}` | Why the file is the way it is (`design.get`): the brief, the stage, assumptions, decisions, scenarios, end states, findings, alternatives and links to layers that are gone. Read it before designing and before reporting (see Design context and verification below). |
+| `check_design {scope?, rules?, record?}` | The design measured by deterministic rules (`design.check`): `findings`, `summary`, the `rules` that ran with the standard each cites, the rules `skipped` at the file's stage, the `stage`, and `warnings` (what the whole run can't see, e.g. a session without fonts). `record: true` also stores the findings (`design.check.record`) and adds `recorded` and `stored` (the stored findings with their ids). Not a quality score. |
+| `check_prototype {page?}` | The page's prototype as facts (`proto.check`): `prototyped`, `starts`, `screens` (reachable, end state, dead end, outgoing interactions), `problems` and `ok`. Nothing is played or changed. |
+| `simulate_prototype {start?, steps, expect?, stopOnFailure?, image?, scale?}` | Steps played without a window on a copy of the file (`proto.simulate`): the state they lead to and what each step set off. `image: true` adds a PNG of the final state as image content (`proto.snapshot`) and `image: {format, width, height, scale}` to the JSON. Each result says `simulated: true`, lists what the simulator leaves out (`notModelled`) and where it still differs from the app's player (`knownDifferences`): a pass says the state rules produced that state, not that a person used it. |
+| `run_scenarios {id?}` | The stored scenarios run on the simulator (`proto.scenario.run`): `passed`, `total`, `failed` and each result with its failed step. `total: 0` is nothing run, not a pass. |
+| `open_file {path, variables?, reload?}` / `save_file {path?}` | Open `.figcraft`, `.json` (Figgure My UI JSON or REST API file JSON with its variables, see below), `.fig` or FigJam `.jam` (best effort, see below), `.sketch` (Sketch 48 and newer, best effort), `.svg` (see Importing SVG below) or an image; save as `.figcraft`. `open_file` returns `opened` (for a file opened anew, a `summary` of `name`, `pages`, `layers` and `images`, and `warnings` or `repairs`; a file that was already open gives its `index`, with `stale: true` when the file changed on disk since that tab read or saved it; `reload: true` reads it again into the tab, refused while the tab has unsaved changes) and the document's `document` outline. |
+| `undo {others?, ifRevision?}` / `redo {others?, ifRevision?}` | Step through history: the agent's own steps. A step the user or another agent made, or a change of theirs with no undo step made after the agent's step, is refused (code `otherAuthor`, naming it and its author): leave it, or ask them; pass `others: true` only if the person asked you to take back their step. |
+| `pointer {kind, x, y, to?, steps?, tool?, shift, alt, cmd, pressure?, pressureTo?}` | Mouse gestures in page coordinates with the current tool: `click`, `double`, `drag`, `down`, `move`, `up`, `hover`. A dragged layer drops into the frame or auto layout slot under the pointer, except one inside a group, a boolean group or an instance (outside its slots), which only moves. `pressure` (0–1) is pen pressure; a drag goes from `pressure` to `pressureTo` (see Brushes and pen pressure). The gestures act on the editor canvas, never on a prototype that is playing (see Design context and verification below). |
+| `key {key, shift, alt, cmd}` | A shortcut or key as if typed on the canvas (every default shortcut, tool keys, Escape, Delete, arrows, number keys for opacity, arrows that pan the view when nothing is selected; while editing text, the text shortcuts and then text editing keys). Keys are names like `A`, `0`, `Enter`, `ArrowLeft`, `=`, `/`, or egui's (`Plus`, `Questionmark`); `cmd` is Cmd on macOS and Ctrl elsewhere. Keys go to the editor canvas, never to a prototype that is playing: its key interactions are checked with `simulate_prototype` (a step `{"key": "Enter"}`). |
 | `type_text {text, id?}` | Type into the text being edited, or replace the contents of text layer `id`. |
 | `inspect_ui {}` | Tool, view and status (and panels, timings and the app's `windows` when attached). |
 | `wait_for_changes {after?, timeoutMs?, topics?, limit?}` | Wait for new comment events in the attached app; returns pending events at once, else waits up to `timeoutMs` (default 20 s, max 25 s). Pass the returned `cursor` back to keep watching. Headless returns immediately. |
@@ -916,14 +943,39 @@ keeps it until the page reloads). The player's state is
 in `inspect_ui` (`presenter`, `preview`: screen, scroll, `scale`, `zoom`, `pan`, the screen's
 `hotspots` and whether they are flashing, the `inspected` layer) when attached, and
 `ui.set {presentScroll: [x, y]}` scrolls its screen (see [control-protocol.md](control-protocol.md)).
+While the presenter plays in the attached app, `pointer`, `key` and `type_text` into the text
+being edited are refused with an error that says a prototype is playing: they act on the editor's
+canvas, which the presenter covers (they used to select and edit its layers unseen). The player
+takes raw window input (the control channel's `ui.input`), and `proto.simulate` plays the same
+rules without a window. In the player, one press and release on a layer with While pressing and
+On click shows the pressed state and then runs the click, and Mouse up and On click on one layer
+both run, the mouse up first. A click, key or delay that fires while a hover or pressed state
+shows acts on the state under it: what it did (an overlay opened, a variable set) stays when the
+pointer leaves, and the hover doesn't follow a click to another screen.
 The presenter's Options menu offers Responsive next to the size options (without a device) or
 Responsive / Fixed size (on one), the same `proto.settings {responsive}`; its flow picker lists each
 flow with its description.
 
+**Headless and attached.** The player is a window of the app, so it exists only attached
+(`get_capabilities`: `player`). Headless, `proto.present`, `proto.preview`, `proto.closePreview`
+and `proto.presentOptions` fail with code `unsupportedHere` instead of answering as if a player had
+opened; the message points to the commands that run a prototype without a window
+(`proto.simulate`, `proto.scenario.run`; `features.prototypeSimulator` and `features.scenarios`
+say whether this build has them), which the tools `simulate_prototype` and `run_scenarios` run in
+both backends (see Design context and verification below). Any other command whose result depends on UI nobody will see
+(a panel, the home screen) still succeeds headless and says so: its result gains
+`"ui": "dropped (<request>): no window in this backend"`. `proto.present {}` and `proto.preview
+{}` start from the selected frame, else the first flow whose starting frame still exists, else the
+page's first frame; with no frame to show they fail, naming the flows whose starting frame was
+deleted. `proto.interaction.add` and `proto.interaction.set` check the actions they are given
+exactly as `proto.action.add` does: a `setVariable` must name a variable that exists, and an
+`expression` must give a value it can hold; a condition must give true or false; a destination
+must exist.
+
 ### Local libraries
 
 A `.figcraft` file can be published as a library and used from other files (library files here;
-libraries kept on a `figcraft-server` for a team: [Team libraries](#team-libraries); the browser
+libraries kept on a `figguremyui-server` for a team: [Team libraries](#team-libraries); the browser
 build has no file system, so there the commands that read library files return an error).
 
 - **Publish** (in the library file): `library.publish {description?, include?, exclude?}` publishes
@@ -986,7 +1038,7 @@ name and sets them this way);
 
 ### Team libraries
 
-A file kept on a `figcraft-server` ([`server.md`](server.md#team-libraries)) can hold a library that
+A file kept on a `figguremyui-server` ([`server.md`](server.md#team-libraries)) can hold a library that
 other files use through one of its share links. Each call waits for the server (a few seconds at
 most when it can't be reached).
 
@@ -1205,7 +1257,7 @@ import uses: the layer tree, geometry, paints with image bytes, strokes, effects
 runs, vector networks, auto layout, constraints, components, sets, instances with their overrides
 and property values, variable collections with their modes, variables and bindings, shared styles
 with their layer links, and prototype interactions. `warnings` lists what was left out (comments,
-Developer Mode data, some bindings and settings and the like). Round trips through FigCraft's own
+Developer Mode data, some bindings and settings and the like). Round trips through Figgure My UI's own
 importer are tested, and the example documents and small test files were opened in other software
 (`docs/file-format-parity.md` says what was checked); other apps may not open every file. Without
 `path` the file comes back as base64 `data`. Check one by opening it again:
@@ -1246,7 +1298,7 @@ per-side stroke weights, visibility, text, font properties, single solid fills a
 link to them, so switching a mode with `variable.setMode` restyles the layers (`mode: null` sets a
 frame back to Auto, inheriting its parent's mode).
 
-The same JSON carries variables between FigCraft files: `variable.export {collections?, format?,
+The same JSON carries variables between Figgure My UI files: `variable.export {collections?, format?,
 path?}` writes this file's collections (default: all but library copies) as a local variables
 response (`format: "json"`, the default; colour calculations as the colour they show in each mode,
 other collections in their default modes) or as CSS custom properties (`format: "css"`: the default
@@ -1319,14 +1371,14 @@ those `mentions` report it, combined with the other filters: `{"mentions": "Clau
 "unread"}` is the unread threads that tag Claude. `@Ada Lovelace` mentions "Ada Lovelace", not
 "Ada", when the file knows Ada Lovelace; a name nobody in the file has can still be several words
 (`"Zoe Smith"` finds `@Zoe Smith`). Links are
-`figcraft://comment/<id>`: `comment.link {id}` returns one, `comment.open {id | link, view?}` goes
+`figguremyui://comment/<id>`: `comment.link {id}` returns one, `comment.open {id | link, view?}` goes
 to its page, zooms to its frame (`fit`, the default; `center` keeps the zoom; `keep` doesn't move)
 and opens it in the app, and `comment.next {id?, dir?, …list params}` (`mentions` too) steps to the
 next or previous thread of a list the same way. Both return the thread as `comment.list` lists it,
 with each message's `mentions`. `comment.zoom {ids}` zooms in on a group of pins. Comment ids made in
 a live session are large numbers (their creator's id space): pass them back as given.
 
-An agent can read every open thread as one resource (`figcraft://comments`) or call
+An agent can read every open thread as one resource (`figguremyui://comments`) or call
 `comment.list`; `comment.prompt {ids?, page? (default "all"), filter? (default open), sort?,
 query?, includeResolved?}` returns `{count, truncated, text, comments}`, where `text` is a Markdown
 task brief with the document, each thread's page, frame, anchor, point, messages, replies and link,
@@ -1363,7 +1415,8 @@ design it replaces is first kept as an autosave unless a version of it was just 
 `version.preview {id | index}` shows a version in place of the document, read-only: edits, undo and
 gestures are refused until `version.restore` keeps it or `version.exitPreview` goes back. Saving,
 closing or saving a version ends the preview first, and `version.list` marks the shown version
-`previewing`. Indexes are validated
+`previewing`. While a version is shown, `inspect_document` and `get_node` read its layers and say
+so with `previewing: {version, name, note}` (the `revision` stays the document's). Indexes are validated
 (a negative or out-of-range index is an error). A file keeps at most 100 versions.
 `version.autosave` saves an automatic checkpoint (`auto: true`, named "Autosave") when the document
 has unsaved changes since its last version; the app runs it every 30 minutes for each open document,
@@ -1446,19 +1499,437 @@ opens one (a new file, the file at `path`, or open file `index` moved out of its
 focus a window before working on its files, and pass its id to `screenshot {window}` to see it.
 Headless (one session, no windows) and in the browser the two commands do nothing.
 
+### Capabilities
+
+`get_capabilities {}` answers what an agent otherwise finds out by failing:
+
+```json
+{"product": "Figgure My UI", "version": "0.18.1", "protocol": "2025-06-18",
+ "backend": "headless", "window": false, "player": false, "app": null,
+ "roots": null,
+ "workingDocument": {"id": 1, "name": "Untitled", "revision": 1, "front": true},
+ "documents": [{"id": 1, "name": "Untitled", "revision": 1, "front": true}],
+ "commands": 696,
+ "features": {"prototypeSimulator": true, "prototypeSnapshot": true, "scenarios": true, "flowCheck": true,
+              "designContext": true, "declaredStates": true, "requiredElements": true,
+              "checks": ["contrast.text", "contrast.unmeasured", "text.clipped", "…", "context.requiredMissing", "flow.brokenTarget", "…", "scenario.fails", "…", "states.none", "…"],
+              "workingDocument": true, "conflictDetection": true, "historyAuthors": true,
+              "structuredErrors": true, "engineErrorCodes": true, "appIdentity": true},
+ "limits": {"maxLineBytes": 33554432, "maxResponseBytes": 8388608, "maxScreenshotSide": 8192, "historySteps": 20},
+ "formats": {"open": ["figcraft", "json", "fig", "jam", "sketch", "penpot", "svg", "png", "jpg", "gif", "webp", "bmp", "tiff"],
+             "save": ["figcraft", "fig"], "export": ["png", "jpg", "svg", "webp", "pdf", "xml", "fig"]}}
+```
+
+(The numbers are this build's, which has 23 check rules: the design rules, the flow and scenario
+rules and the declared-state rules; `crates/mcp/tests/it/guidance.rs` holds this count to the
+engine's. An app from before the simulator answers `prototypeSimulator: false`.)
+
+- `backend` is `headless` (an engine in the server's process: no window, so no prototype player)
+  or `attached` (the running app). `window` and `player` say the same as booleans; `app` is what an
+  attached app says about itself (`{instance, version, …}`, `null` from an app that doesn't say).
+- `roots` are the folders files may be read from and written to (`{read, write}`), `null` when
+  file access is not confined.
+- `features` is read from what is there, never assumed: `prototypeSimulator`, `scenarios`,
+  `flowCheck`, `designContext`, `declaredStates` and `requiredElements` are true exactly when the
+  commands `proto.simulate`, `proto.scenario.run`, `proto.check`, `design.get`, `proto.state.list`
+  and `design.required.add` are in the backend's command list,
+  `prototypeSnapshot` when `proto.snapshot` is (the picture `simulate_prototype {image: true}`
+  returns), and `checks` are the rule ids `design.check.rules` returns. Attached to an app built before
+  revisions, `conflictDetection` and `historyAuthors` are false, and `engineErrorCodes` is false
+  when the app sends only the text of an error (its code is then `error`).
+- Call it again after an error with code `transport`: an attached app may have been restarted.
+
+### Working document, revisions and conflicts
+
+**The working document.** A server acts on one open file, the working document, and it does not
+change because another tab comes to the front. It is chosen by `open_file` (the file it opens), by
+`use_document {document}` (an `id`, a path, or `"front"`), and by any call that names `document`;
+before any of those it is the tab in front at the first call that needs a document (or at
+`get_capabilities`). Every later call without `document` goes to it. `run_command file.new` and
+`doc.switch` change the tab in front, not the working document: say `use_document {document:
+"front"}` (or the new file's `id`, which `file.new` returns) to work there. A reverted file
+(`file.revert`, `open_file {reload}`) stays the working document under the new `id` it gets.
+
+When the working document is closed, the next call fails (code `noDocument`), names it, lists the
+open documents and applies nothing anywhere; choose another with `use_document`.
+
+**Every result says which document.** A tool that reads or changes a document ends its result with
+one more text block, `{"document": {"id", "name", "revision", "front"}}`, and carries the same
+object in `structuredContent.document`. The blocks before it are as they always were (the result's
+JSON first), so check this one whenever you act by id: the same layer id means different layers in
+different files. `front` says whether it is the tab the user sees in front; a document the call
+itself closed reads `{"id", "name", "closed": true}`. The name is cut to 48 characters.
+
+**Revisions.** `revision` starts at 1 when a document is opened and goes up by one with every
+committed change: an edit (a batch is one), a finished pointer gesture, an undo or redo, a reload
+from disk, a change that arrives from a live session. Reading, selecting and moving the view don't
+change it; nor does saving, except the first save of a new file, which gives the document the
+file's name (one change). It counts changes in this run of the app and is not saved in the file.
+`inspect_document`, `run_command doc.list` (per file) and what `file.open`, `file.new` and
+`file.revert` return carry it too.
+
+The revision a result names is the one the result belongs to, never one read afterwards: for a
+change, the revision the engine's reply gives right after it, in the same request (an attached app
+writes it next to the result as `revision`, and which document it is of as `revisionDocument`;
+gestures, keys and typed text too); for a read, the revision before the tool's first
+request. When a person changes the file while a call runs, the result names the earlier revision,
+so an `ifRevision` copied from it is refused instead of going through over their change. An app from
+before this gives no revision with its replies: then every result names the revision from before
+its first request.
+
+**Conditional changes.** Every tool that changes the document takes `ifRevision`, the revision you
+last saw: `run_command`, `batch`, `create_node`, `set_properties`, `check_design` (with `record:
+true`), `save_file`, `undo`, `redo`, `pointer`, `key` and `type_text` (a gesture, key or typed
+text is checked in the request that acts, headless and with an attached app whose `app.info`
+says `canvasIfRevision`; an app from before that ignores `ifRevision` on its canvas methods, so for
+it the engine checks first, in a request of its own just before, which a change in between can
+slip past). When the document is at another revision the call
+changes nothing and fails with code `conflict`: `expected`, `actual`, and `since`, the changes made
+in between with who made each (the last 200 are remembered):
+
+```json
+{"error": {"code": "conflict", "command": "node.set", "expected": 7, "actual": 9,
+           "since": [{"revision": 8, "label": "Move", "author": "user"},
+                     {"revision": 9, "label": "Undo Rename", "author": "Cursor (agent)"}],
+           "document": {"id": 3, "name": "Checkout", "revision": 9, "front": true},
+           "message": "conflict: `node.set` expected revision 7 of \"Checkout\", but it is at revision 9: nothing was changed. Changed since: Move (user), Undo Rename (Cursor (agent)). Inspect the document again, then retry with ifRevision 9."}}
+```
+
+Look at the document again, then repeat the call with `ifRevision: actual`. `ifRevision` is a
+parameter of every engine command (`run_command {command, params: {…, ifRevision}}` works as well,
+also over the control channel and in `figguremyui-cli run`); the steps of a batch are checked against
+the revision the batch started from, so the same number goes on all of them.
+
+**Whose step.** Each undo step remembers who made it: the agent (as its comments are signed,
+"Claude (agent)") or `user`. `inspect_document` lists them in `history.steps` (`[{label, author}]`,
+the next to undo first; `history.undo` keeps the labels alone). An agent's `undo` and `redo` take
+only its own steps: when the next step is the user's or another agent's, the call is refused with
+code `otherAuthor`, naming the step and its author: leave it, or ask them; pass `others: true` only
+if the person asked you to take back their step. An undo brings back a whole snapshot, so it is
+also refused when somebody else made a change after the agent's step that has no undo step of its
+own (a direct edit, the first save's rename). The user's own undo in the app takes any step, as
+before. What an agent does with `pointer`, `key` and `type_text` is its step too, and so are the
+commands a `key` stands for (Cmd+Z is the agent's undo, Delete the agent's step), headless and
+attached (the app reads `agent` on those control methods). Attached, the app refuses its
+person-only methods (`ui.input`, `ui.menu.invoke`, `ui.set`) for an agent.
+
+**A person's work is not the agent's to throw away.** An agent's `file.revert`, `file.close`
+(with or without `force`), `open_file {reload: true}`, `branch.merge`, `branch.updateFromMain`,
+`branch.archive` and the live-session starts that begin a tab's undo history again
+(`collab.host`, `collab.share`, `collab.publish`, `collab.reconnect` when it joins again) are
+refused (code `otherAuthor`, naming the newest step or unsaved change somebody else made) when the
+tab, or a branch tab of its file, holds unsaved work or undo steps that aren't the agent's.
+`version.delete` is a person's only. A revert by anyone keeps the unsaved work in the version
+history first ("Before revert"; written with the file's next save).
+
+**A person's gesture comes first.** While a person drags, resizes or edits text in a file, an
+agent's command that would change that file, its gesture, key or typed text there, is refused
+with code `busy` and changes nothing; reading goes on. Try again shortly.
+
+### Errors
+
+A failed tool call has `isError: true` and three views of the same failure: the first text block is
+the message for people; the last text block is `{"error": {…}}` as JSON for the model; and
+`structuredContent.error` is that object for a program.
+
+```json
+{"code": "noSuchNode", "message": "step 2 (node.set): no such node 41",
+ "command": "node.set", "node": 41, "step": 2,
+ "document": {"id": 3, "name": "Checkout", "revision": 9, "front": true}}
+```
+
+`code` is stable; the other fields are there when the error knows them: `command`, `param` (the
+parameter the message is about), `node`, `step` (the failing step of a batch, with `command` then
+the command that step runs), `expected` / `actual` / `since` (a conflict), `label` / `author` (an
+undo or a discard refused), `by` (whose gesture made a call `busy`: `user` or an agent), `document`, `documents` (the open ones, when the document asked for is not open),
+`tool`, `path` / `folder` (a write into a missing folder).
+
+| Code | Meaning |
+|---|---|
+| `unknownTool` | No such tool. A JSON-RPC error (`-32602`) with this object as its `data`. |
+| `unknownCommand` | No such command id. |
+| `badParams` | A parameter or argument is missing, of the wrong type or not one the command takes. |
+| `noSuchNode` | A layer id that doesn't exist in this document. |
+| `noDocument` | No document is open, or the one named (or the working document) is not open. |
+| `conflict` | `ifRevision` didn't match: somebody changed the document since. |
+| `otherAuthor` | An undo or redo would take somebody else's step, or a revert, close, reload, branch or live-session command would throw away their unsaved work or undo history. |
+| `busy` | A person (or another agent) is in the middle of a gesture or text edit on this file: nothing was changed; try again shortly. |
+| `notAvailable` | The command can't run now (nothing selected, a read-only file, a version shown…). |
+| `pathRejected` | A path outside the automation roots. |
+| `noSuchFolder` | A file was to be written in a folder that doesn't exist, or that is a file: nothing was written and no folder created. `folder` names it, `path` the file. |
+| `unsupportedHere` | Not possible in this backend (the prototype player without a window). |
+| `transport` | The attached app didn't answer, or was restarted (`restarted: true`). |
+| `internal` | A bug; the document was left as it was. |
+| `failed` | Any other failure the engine reports with only a message. |
+| `error` | An attached app from before error codes gave only the message. |
+
+Every abort of a `batch` names the failing step and the command it runs, in the message and as
+`step` and `command`, whatever the failure ("no such node" and "unknown command" included).
+
+Attached to an app that was restarted, the first call after the reconnect fails once with
+`transport` and says so: document ids, node ids and revisions from before belong to the other run.
+The working document is forgotten then; the next call takes the tab in front again.
+
 ### Naming the document
 
-Tools act on the file in front, so with an attached app a tab the user clicks mid-task would
-change where the next edit lands. `run_command`, `batch`, `create_node`, `set_properties`,
-`inspect_document`, `get_node`, `select`, `export`, `screenshot`, `save_file`, `undo` and `redo`
-take an optional `document`: the file's `id` (in `run_command {command: "doc.list"}`, and the `id`
-of the `document` outline `open_file` and `inspect_document` return) or the path of an open file.
-The call acts on that file and the tab in front stays in front, unless the command itself opens or
-switches to another file (`file.open`, `file.new`, `doc.switch`), as it would without `document`. A
-file that isn't open is an error. `doc.list` gives an agent each open file's `id`, name and state, not`nwhere it is on disk (#1117). `screenshot {window}` captures what the window shows, so it
-needs the file in front. Over the control channel, `engine.execute`, `document.inspect`,
-`node.get` and `ui.render` take the same `document`; other methods refuse one naming a file behind
-the tab in front. Headless sessions take it too.
+`run_command`, `batch`, `create_node`, `set_properties`, `inspect_document`, `get_node`, `select`,
+`export`, `screenshot`, `save_file`, `undo` and `redo` take an optional `document`: the file's `id`
+(from `use_document`, `get_capabilities`, `run_command {command: "doc.list"}`, or the `document`
+every result names) or the path of an open file. The call acts on that file, which becomes the
+working document, and the tab in front stays in front, unless the command itself opens or switches
+to another file (`file.open`, `file.new`, `doc.switch`), as it would without `document`. A file
+that isn't open is an error. `doc.list` gives an agent each open file's `id`, name, revision and
+state, not where it is on disk (#1117), and marks the tab the user sees in front `active` whichever
+file it is asked for. `screenshot {window}` captures what the window shows, so it needs the file in
+front; `pointer`, `key` and `type_text` drive the canvas of the working document, which an attached
+app has only for the tab in front (it refuses them for a file behind it instead of acting on the
+wrong one). Over the control channel, `engine.execute`, `document.inspect`, `node.get` and
+`ui.render` take the same `document`; other methods refuse one naming a file behind the tab in
+front. Headless sessions take it on every method.
+
+### Design context and verification
+
+A file carries why it is the way it is (the design context: a brief, assumptions, decisions,
+findings, alternatives) and the means to tell whether it works (the flow check, stored scenarios,
+the simulator, the design checks). Five tools read and run these; everything that changes them is
+a command, run with `run_command` or `batch`.
+
+**The loop.** The `instructions` sent on `initialize` teach it, the tool descriptions say what
+each step proves, and the prompts spell it out for particular jobs:
+
+1. `get_capabilities`: which backend, what this build can check, which document.
+2. `design_context`: read the brief. If it does not say who the design is for and what they need
+   to do, ask, or record the reading as an assumption (`design.assumption.add`, stored as
+   untested). A brief is never invented silently.
+3. Look at what exists (`inspect_document {outline: true}`, `screenshot`) and build on it.
+4. Small undoable changes, one `batch` per intent; auto layout and constraints rather than
+   coordinates.
+5. Step back: `screenshot`, and look.
+6. Verify by running: `check_prototype`, `run_scenarios`, `simulate_prototype`.
+7. `check_design`.
+8. Fix one finding, claim it (`design.finding.address`), re-run its rule
+   (`design.finding.recheck`). Only the re-check makes it `verified`.
+9. `save_file`, then report what is open: untested assumptions, proposals waiting for a person,
+   failed or skipped checks, what was simulated rather than seen.
+
+**What each tool establishes, and what it does not.**
+
+| Tool | Engine command | Establishes | Does not establish |
+|---|---|---|---|
+| `design_context` | `design.get` | What is on record: the brief with its required elements, the stage, assumptions with their status, decisions with who stands behind them, scenarios, end states, the states screens are declared to have, findings, alternatives, links to layers that are gone | That any of it is true. An assumption is `untested` until a person records evidence; a `proposed` decision is an agent's until a person accepts it |
+| `check_prototype` | `proto.check` | Facts of the flow graph: starts, which screens an interaction leads to, dead ends against declared end states, actions whose target is gone, overlays without a way out | That a person finds the way. Every interaction counts as a possible step; `ok` means only that these rules found no blocker or major problem |
+| `run_scenarios` | `proto.scenario.run` | Each stored walk reaches the states it expects, under the simulator's rules | That the scenarios cover what matters. `total: 0` is nothing run |
+| `simulate_prototype` | `proto.simulate`, and `proto.snapshot` for the image | These steps produce this state; with `image: true`, what that state looks like | Anything the simulator does not model (below), or that a person used it |
+| `check_design` | `design.check`, with `record` also `design.check.record` | What the named rules measure, each with its threshold and the standard it comes from; the same file gives the same findings | Quality, or fitness for the purpose. Rules under `skipped` did not run; no findings is not "good" |
+
+`check_design {record: true}` returns the measurement and, beside it, `recorded` (what
+`design.check.record` answered: `added`, `existing`, `total`, `skipped`, and `truncated`, the number
+of results left out because the file already holds 500 findings) and `stored`: the findings as
+they are stored, each with the `id` that `design.finding.address {id, resolution}` and
+`design.finding.recheck {id}` take. A finding's `subject` says what it is about when that is not
+its layers (`scenario:S1`, `action:…`, `page:…`): the same rule on the same subject is the same
+problem, however the layers it names shift.
+
+`check_prototype` answers `prototyped` (whether the page is a prototype at all), `starts` (each
+with `source`: `flow`, `otherPage` for a frame that an interaction on another page navigates to,
+or `firstFrame`), `screens` (each with `reachable`, `endState`, `deadEnd`, `component`, `out`, and
+`endStateProposedBy` for a frame an agent declared as an end state), `states` (the states declared
+for the page's screens, as `proto.state.list` gives them), `problems` and `ok`.
+
+**States where time passes.** A screen's states are declared, never inferred: `proto.state.set
+{frame, kind, name?, shownBy?, reason?}` with `kind` one of `firstUse`, `empty`, `loading`,
+`error`, `returning`, `success`, `other` (`other` needs a `name`; one declaration per frame, kind
+and name) and `shownBy` either `{node}` (a top-level frame such as an overlay, or a layer in the
+screen) or `{instance, variant}` (an instance in the screen and the variant that shows the state);
+without `shownBy` the state is declared and not designed. `proto.state.remove {frame, kind,
+name?}`, `proto.state.accept {frame, kind, name?}` (a person's) and `proto.state.list {frame?}`
+complete it. The list says of each: `designed` (what `shownBy` names is there), `reachable` with
+`reachedBy`: `scenario` (a stored scenario shows it), `flow` (navigate and overlay actions reach the
+top-level frame or overlay `shownBy` names) or `screen` (for a layer or a variant only its screen is
+reached: the graph doesn't follow variables or bindings, so `reachable` stays false and
+`screenReachable` is true until a scenario shows it), and `coveredBy` (the scenarios whose headless
+run shows it, at the start or after a step that passed). A declaration whose frame has gone, or is
+no longer a top-level frame, is not designed and says where the frame is now; it can still be
+changed and removed, but nothing new is declared on it. A person's change to an agent's declaration
+is recorded as `editedBy`, and from then on the agent doesn't change it. The rules: `states.none`
+(note, from `ready`: nothing declared, said once as that, not a finding about the design),
+`states.notDesigned` (minor without `shownBy`; major when what it names is gone, or the frame is no
+longer a screen: "`A` is no longer a screen: it is inside `B`"), `states.unreachable` (from
+`ready`: minor when the frame or overlay that shows it is reached neither by the flow nor by a
+scenario; a note when only its screen is reached and no scenario shows it: add a scenario step that
+shows it) and `states.errorEmpty` (note, from `ready`: a screen that declares states, none of them
+`error` or `empty`, asked as a question against the brief's context; a frame that is no longer a
+top-level screen isn't asked about, `states.notDesigned` reports it).
+
+**Required elements.** What the design must show is part of the brief: `design.required.add
+{text, screens?, nodes?}`, `design.required.set {id, text?, screens?, nodes?}`,
+`design.required.remove {id}`, `design.required.accept {id}`; ids `R1`, `R2`… Adding or removing one,
+or changing its words or screens, raises `briefRevision`; linking layers (`nodes`) doesn't.
+`context.requiredMissing` (from `converging`) looks for each through its layers: minor when none is
+linked; major when a linked layer is gone, hidden (itself or a layer around it), below 5% effective
+opacity (its own times those of the layers around it: this product's choice, not a standard's), not
+on one of its screens (the screen's frame or inside it), or entirely outside a frame around it that
+clips and doesn't scroll that way; major when a screen it must be on holds none of its layers, or
+is gone or no longer a top-level frame; major when a linked text is below the contrast it needs
+(WCAG 2.2 SC 1.4.3, measured as `contrast.text` does). The file is looked at as it is, so a layer
+that only shows in some state of the prototype is hidden in it. When every layer that hides it (the
+layer itself, and each hidden layer around it) is the `shownBy` layer of an accepted declared state
+of its own screen, it counts as shown in those states: no finding, and `design.get` lists it under
+`requiredFacts` (`{id, node, shownIn: "the error state of `Form`"}`, at most 200; `counts.requiredFacts`
+gives them all). A state an agent only proposed excuses nothing until a person accepts it; a state of
+another screen excuses nothing, even when what shows it is the whole screen the layer is on; and an
+effective opacity below 5% is never excused. No text-size threshold is applied. The rule stops
+looking at an element after 20 findings and at the elements after 200 in all, then one note says
+how many linked layers, screens and elements it didn't look at; evidence names at most three
+screens and counts the rest ("`A`, `B`, `C` or 497 more"). `context.missingLink` (from
+`exploring`) leaves the gone layers of states and of required elements to `states.notDesigned` and
+`context.requiredMissing` at the stages those run (from `converging`); at `exploring` it reports
+them itself. It lists at most 20 findings for one entry and 200 in all, then one note counts the
+rest, and `design.get` lists at most 200 `missingLinks` (`counts.missingLinks` counts them all). An
+agent adds links to anybody's element but removes or replaces links, and changes the words and
+screens, only of its own pending proposals; links and screens an element already has are taken
+back as they are even when the layer has gone or the screen moved, so re-sending them is never
+refused (only those added must exist and be screens). A person's change to an agent's entry is
+recorded as `editedBy`.
+
+A stored file whose required elements or declared states the commands couldn't have written is
+repaired on load and says so: ids compare without case, the first element with an id keeps it, and
+one without an id, or with an id an earlier one has, gets a fresh id no element has; named
+declarations are kept first (a second of the same frame, kind and name is dropped), then an `other`
+without a name is named from its reason (else "unnamed"), with a number added when that name is
+taken, so it never pushes out a declaration a person named.
+
+**Steps to the goal.** Every run (`proto.simulate`, each result of `proto.scenario.run`) reports
+`stepsTaken`, `screens` (the screens it went through, each once, in the order first shown; overlays
+aren't screens) and `screenCount`. `design.alternative.compare` gives each member and the source a
+`stepsToGoal`: the stored scenarios that start on that frame (`via: start`) or show it on the way
+(`via: path`), each with its steps and screens, side by side as facts. Only a top-level frame that
+isn't a component is attributed; for anything else `attributed` is false and `why` says so.
+
+`simulate_prototype` with `image: true` plays the run again for the picture (`proto.snapshot`, with
+the start the run used and the steps it took, so a run that stopped at a failing step is drawn
+where it stopped) and returns three blocks: the run as JSON with `image: {format, width, height,
+scale}`, the PNG as image content, and the document. When the picture can't be made the run is
+still returned, with `image: {error}`.
+
+```json
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"simulate_prototype","arguments":{
+  "start": 4, "image": true,
+  "steps": [{"click": 31, "expect": {"overlays": [12]}, "note": "opens the menu"}],
+  "expect": {"screen": 4, "visible": [14]}}}}
+```
+
+**The commands behind them.** `run_command` runs these; `list_commands {filter: "design."}` and
+`{filter: "proto."}` give their parameters.
+
+- The brief and the stage: `design.brief.set` (only the fields given change), `design.stage.set
+  {stage: exploring | converging | ready}`.
+- Assumptions and decisions: `design.assumption.add` / `set` / `remove`, `design.decision.add` /
+  `set` / `remove` / `accept`.
+- Checks and findings: `design.check`, `design.check.rules`, `design.check.record`,
+  `design.finding.add` (a `judgement` or a person's `feedback`), `design.finding.list`,
+  `design.finding.address`, `design.finding.recheck`, `design.finding.verify`,
+  `design.finding.accept`, `design.finding.reopen`, `design.finding.remove`.
+- Alternatives: `design.alternative.create` (copies the source beside itself), `update`,
+  `question`, `compare` (facts, never a ranking), `choose`, `remove`.
+- Required elements of the brief: `design.required.add` / `set` / `remove` / `accept`.
+- The prototype: `proto.check`, `proto.simulate`, `proto.snapshot`, `proto.scenario.add` / `set` /
+  `remove` / `list` / `run`, `proto.endState.set` / `list` / `accept`, `proto.state.set` /
+  `remove` / `accept` / `list`.
+
+`proto.snapshot {start?, steps?, scale?, path?}` is the picture on its own: it plays the steps
+`proto.simulate` takes (a step's `expect` is not looked at, and every step runs) on a copy of the
+file and returns `{format: "png", width, height, scale, start, state, steps, stepsTaken, simulated:
+true}` with the PNG as base64 `data`, or written to `path` (within the automation roots). `scale`
+is 0.1 to 4 pixels per page unit and is lowered so that the larger side is at most 4096 pixels. It
+reads only: no undo step, the same revision.
+
+**Headless and attached.** Both backends run the same commands on the working document, so the
+five tools answer the same in both. Headless there is no window and no player: nobody sees the
+work until the file is opened, and the only eyes are `screenshot` and `simulate_prototype {image:
+true}`. Attached, a person sees each change as it is made and may be editing the same file: read
+before writing and pass `ifRevision` (see Working document, revisions and conflicts). The simulator
+runs on a copy inside the engine and shows nothing in the app's player. No MCP tool drives a
+playing prototype: `pointer` and `key` act on the editor canvas, and while the presenter plays in
+the attached app they are refused, because it covers the canvas. A prototype that is playing is
+driven by the person watching it (or, for a test harness, by the control channel's `ui.input`).
+An agent checks behaviour with `simulate_prototype` and `run_scenarios` in either backend.
+
+**Who settles what.** An agent proposes and records; a person settles. The engine holds every
+command run with an agent's name (every MCP call) to that, and each command's doc says what it
+refuses:
+
+| Record | An agent may | Only a person |
+|---|---|---|
+| Assumption | add one (it is `untested`), write down what it saw, edit or remove one that is still untested | mark it `supported` or `refuted`; change or remove one a person marked so |
+| Decision | add one (it is `proposed`), edit it, remove its own proposal | accept it |
+| Finding of kind `check` | record it, claim a fix (`address`), re-run the rule (`recheck`) | accept it as it is, or remove it; take up again one a person accepted |
+| Finding of kind `judgement` or `feedback` | add its own judgement (its `source` is always the agent), relay a person's feedback with their words (the person stays the `source`, the agent is `recordedBy`), claim a fix | confirm it is met (`verify`), accept it as it is, remove feedback; address or reopen one a person accepted or verified |
+| Scenario | add one, change or remove the ones it wrote (`author`) | change or remove a person's |
+| End state | declare one with its `reason` (`proto.endState.set`): a proposal, `status: proposed`, which leaves the frame a dead end for `flow.deadEnd`; change or take back its own proposal | declare one that counts at once; accept an agent's (`proto.endState.accept`) |
+| Declared state of a screen | declare one (`proto.state.set`): a proposal, `status: proposed`, which the `states.*` rules count all the same; change or take back its own proposal | declare one; accept an agent's (`proto.state.accept`); change or remove any |
+| Required element | list one (`design.required.add`): a proposal; link layers to any element; change the words and screens of, or remove, its own proposal | accept an agent's (`design.required.accept`); change or remove any |
+| Alternatives | create, describe, compare; its `choose` records a proposal (a `proposed` decision), and `chosen` stays as it was | choose, or accept that decision |
+| Undo history | undo and redo its own steps | take anybody's step (an agent passes `others: true` only when the person asked it to) |
+| Unsaved work and history | revert, close or reload a file whose unsaved work and undo steps are all its own | throw away anybody's (`file.revert`, `file.close {force}`…); delete versions |
+
+These rules are an agreement between parties working on the same file, not a security boundary: a
+command sent without an agent's name acts as the user. An agent's own review, and a simulation, are
+never research with people, and no tool here returns a single score for a design or ranks
+alternatives by one.
+
+**What the simulator does not model.** It follows the player's rules for which state comes next
+(navigation and history, overlays, change-to, variables and modes, conditionals, after-delay
+bookkeeping) and nothing else. Every result of `proto.simulate` and `proto.scenario.run` says so
+itself, with `simulated: true` and `notModelled`, and the description of `simulate_prototype`
+lists the same in the same words:
+
+- animation and timing (transitions, easing, how long a delay is): a `wait` step fires every
+  pending after-delay interaction at once;
+- scroll position (scroll-to changes nothing; a layer scrolled or clipped out of view still takes
+  a gesture);
+- drag direction: an on-drag interaction fires whichever way the animation goes;
+- the device frame and responsive resizing (frames keep the size they have in the file);
+- pointer hit-testing (a gesture names its layer; what overlaps it on screen isn't considered): a
+  gesture reaches the first interaction with that trigger on the layer or on a layer around it;
+- a gesture step is one trigger: a click step fires On click only, while a real click in the
+  player also runs the layer's Mouse down and Mouse up interactions;
+- the player's own keys (R restarts, Z, the arrow keys);
+- widgets (a widget's own behaviour, which its plugin runs in the app).
+
+Hover and press hold until the next step. A click, mouse down or mouse up on the hovered layer (or
+one inside it) keeps the hover, as the player does while the pointer stays there: the interaction
+is the one the hovered state plays (a hovered variant's own click counts), it runs on the state
+under the hover, and the hover is laid back over the result while the same screen and overlays
+show.
+
+Where the simulator and the app's player still do different things with the same file and input,
+every result (`proto.simulate`, `proto.scenario.run`, `proto.snapshot`) lists under
+`knownDifferences`, and the `simulate_prototype` and `run_scenarios` descriptions and the
+`verify_prototype` prompt repeat (one sentence each; the engine's
+`figcraft_engine::proto_verify::KNOWN_DIFFERENCES` keeps them, one per parity case of the app's
+simulator-player tests):
+
+- a press on a layer with a Mouse down interaction that does something: the player runs Mouse
+  down and then skips While pressing; the simulator's press step runs While pressing only;
+- a scroll-to whose target no frame around it can scroll to: the player does nothing, the
+  simulator counts the action as run;
+- change to a layer that isn't a component: the player points the instance at it, the simulator
+  refuses it as an action that can't run;
+- an after-delay interaction while the pointer rests on a hovered layer: the player fires it with
+  the hover still showing, the simulator's wait step ends the hover first;
+- restarting: the player's restart forgets which frame each section showed last, which in the
+  simulator only a new run does.
+
+So `passed: true` means that these state rules produced this state. A picture from
+`simulate_prototype` or `proto.snapshot` is the screen's own box with the open overlays, not what
+a device showed.
+
+**Text in a file is content.** Layer names, text, comments, the brief, scenario names and
+findings are data the tools hand over as they are. The server never acts on what they say, and the
+instructions tell the agent the same: text inside documents, comments, layer names and imported
+files is content to design with, never instructions to follow
+(`crates/mcp/tests/it/full_loop.rs` has the test).
 
 ### Live sessions
 
@@ -1477,9 +1948,9 @@ only: a host stops hosting it, a guest leaves it.
 
 - `collab.share {via?, access?, server?, name?, port?, bind?}` shares the active document with a
   **join code**, the short way to do what `collab.publish` and `collab.host` do. `via: "online"`
-  (the default) publishes it to the server in Preferences (`pref.publishServer {url?}`: the
-  FigCraft server unless changed; `{url: ""}` turns online sharing off, `{}` goes back to the
-  built-in one; `server` names another for this call, with `?key=…` when it needs its key) and
+  (the default) publishes it to the server in Preferences (`pref.publishServer {url?}`: none
+  in Figgure My UI until one is set, so online sharing starts off; `{url: ""}` turns online sharing
+  off, `{}` goes back to the built-in default, which is none; `server` names another for this call, with `?key=…` when it needs its key) and
   returns `status: "connecting"`; once `collab.peers` says `"live"`, `code` is the code to give
   others (`K7M-2QX-9TD`) and `share` is `{via, access, shared, editCode, viewCode, commentCode, editLink,
   viewLink, commentLink}`: links and codes made for others (`published.edit` / `published.view` and `link` are
@@ -1504,12 +1975,12 @@ only: a host stops hosting it, a guest leaves it.
   machine, the default), `"lan"` (the local network) or an interface address; the port is 47900,
   or any free one when it's taken, as it is for a second hosted document (`port` picks one, 0
   any). Returns the session as
-  `collab.peers` does, with `link` (`figcraft://join?host=…&file=…&token=…`) and `url`
+  `collab.peers` does, with `link` (`figguremyui://join?host=…&file=…&token=…`) and `url`
   (`ws://…/?file=…&token=…`): both carry the session's secret, so share them only with people you
   invite. `collab.stop {}` ends the active document's session.
 - `collab.join {code}` or `collab.join {link}` (a join code of either kind: spaces, dashes and
   case don't matter, `O` reads as `0` and `I` or `L` as `1`; or a link in any form: an app's
-  invite, a `figcraft-server` share link, or the `ws(s)://…?file=…&token=…` URL; either parameter
+  invite, a `figguremyui-server` share link, or the `ws(s)://…?file=…&token=…` URL; either parameter
   takes either) returns at once with the new session (`session`, `status:
   "connecting"`) and touches no other document's session. Its file opens as a new document, which
   becomes the active one: poll
@@ -1519,16 +1990,16 @@ only: a host stops hosting it, a guest leaves it.
   code has expired or its sharing was stopped", "Couldn't reach the server (…)", too many wrong
   codes from your address, a wrong token, a full
   session, a revoked link, an unreachable host, a `wss://` server whose certificate isn't trusted:
-  see `FIGCRAFT_CA_FILE` in [`server.md`](server.md#behind-a-reverse-proxy-tls)). `collab.leave {}`
+  see `FIGGUREMYUI_CA_FILE` in [`server.md`](server.md#behind-a-reverse-proxy-tls)). `collab.leave {}`
   leaves the active document's session (or ends a join started from it that is still on its way
   or failed), and `collab.leave {session}` the session with that id (from `sessions`), whichever
   document is active; the synced document stays open as your copy. `collab.reconnect {}` acts on
   the active document's lost session: a reconnect that is waiting tries now, and a session you
   joined that couldn't go on is joined again in its tab. A dropped connection keeps reconnecting
   until you leave (see *Reconnect* in [`collab-protocol.md`](collab-protocol.md)).
-- `collab.publish {server, name?, key?}` puts the active document on a `figcraft-server`
+- `collab.publish {server, name?, key?}` puts the active document on a `figguremyui-server`
   ([`server.md`](server.md)) and syncs it from there (as that document's session; others go on): `server` is the address
-  `figcraft-server key` prints (`ws://host:47900/?key=…`; or give `key` separately), `name` the
+  `figguremyui-server key` prints (`ws://host:47900/?key=…`; or give `key` separately), `name` the
   file's name (default: the document's). It returns at once with `status: "connecting"`; the
   document is read-only until the upload is done, then `collab.peers` has `published: {server,
   file, name, edit, view}` with the file's first edit link and view link (they carry their
@@ -1649,9 +2120,9 @@ only: a host stops hosting it, a guest leaves it.
   session's message. While the connection is reconnecting, editing goes on; the edits go out when
   it is back (the same client, catching up with what it missed).
 - `collab.registerLinks {on?}` → `{on, registered}` makes the desktop app the opener of
-  `figcraft://` invite links, or stops (no `on`: switch). Only where the app registers them itself
+  `figguremyui://` invite links, or stops (no `on`: switch). Only where the app registers them itself
   (Windows, per user); elsewhere it reports the command unavailable. It also sets the
-  Preferences checkbox. Starting the app with an invite link (`figcraft "figcraft://join?…"`)
+  Preferences checkbox. Starting the app with an invite link (`figguremyui "figguremyui://join?…"`)
   joins that session.
 
 ### Plugins
@@ -1702,7 +2173,7 @@ layer data, so it is saved, undone and synced with the file.
 {"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.menu","params":{"id":12,"item":"big"}}}}
 ```
 
-Plugins from a `figcraft-server`'s plugin directory ([`plugins.md`](plugins.md#plugin-directories)):
+Plugins from a `figguremyui-server`'s plugin directory ([`plugins.md`](plugins.md#plugin-directories)):
 `plugin.directory.list {server?, query?}` lists the latest version of each plugin with the
 permissions it asks for (`access`, `commands`), its size and SHA-256, and `installed` / `update`;
 `plugin.directory.install {id, version?, confirm: true, sha256?}` downloads it, checks the SHA-256 and
@@ -1931,7 +2402,7 @@ through the outlines of its layers.
   gradient stops, images and rasterised effects) from sRGB with `K = 1 − max(R, G, B)`,
   `C = (1 − R − K) / (1 − K)` (M and Y alike), deterministic and profile-free: the file is
   DeviceCMYK without an output intent, because embedding one needs a CMYK ICC profile and none
-  ships with FigCraft. Soft masks stay RGB (they aren't printed) and transparency groups blend in
+  ships with Figgure My UI. Soft masks stay RGB (they aren't printed) and transparency groups blend in
   RGB, as the PDF writer declares them.
 
 ### Brushes and pen pressure
@@ -2112,24 +2583,42 @@ A name a tool or command doesn't take (`run_command {args}` for `params`, a step
 
 | URI | Content |
 |---|---|
-| `figcraft://document` | The active document (like `inspect_document` at depth 8). |
-| `figcraft://commands` | The command catalog. |
-| `figcraft://comments` | Every open comment thread on every page, as JSON. |
-| `figcraft://node/{id}` (template) | One layer with children to depth 2. |
-| `figcraft://command/{id}` (template) | One command's docs, e.g. `figcraft://command/layout.add`. |
+| `figguremyui://document` | The working document (like `inspect_document` at depth 8). |
+| `figguremyui://commands` | The command catalog. |
+| `figguremyui://comments` | Every open comment thread on every page of the working document, as JSON. |
+| `figguremyui://design` | The working document's design context (what `design_context` returns), with the brief's `required` elements and the declared `states`. |
+| `figguremyui://design/findings` | The findings stored in the working document (`design.finding.list`): what was recorded, not a new measurement. |
+| `figguremyui://prototype/flow` | The current page's prototype as facts (what `check_prototype` returns), with the page's declared `states` and whether each is designed, reachable and shown by a scenario. |
+| `figguremyui://prototype/scenarios` | The stored scenarios (`proto.scenario.list`): stored, not run. |
+| `figguremyui://node/{id}` (template) | One layer of the working document with children to depth 2. |
+| `figguremyui://command/{id}` (template) | One command's docs, e.g. `figguremyui://command/layout.add`. |
+
+`resources/read` also accepts upstream's `figcraft://` form of each URI (`figcraft://document`,
+`figcraft://node/{id}`…), so a client set up for upstream keeps working; `resources/list` lists only
+the `figguremyui://` ones ([`migration.md`](migration.md#mcp)).
 
 ## Prompts
 
-| Prompt | Arguments |
-|---|---|
-| `mobile_screen` | `screen` (required), `device` (default "iPhone 16"), `brand_color` |
-| `design_system` | `name`, `primary` |
-| `landing_page` | `product` (required), `width` (default 1440), `accent` |
-| `prototype_flow` | `screens` (comma-separated), `transition` |
-| `fix_comments` | `page` (default "all"), `auto_resolve` (default "yes"), `author` (default "AI") |
-| `watch_comments` | `minutes` (default 5) |
+| Prompt | Arguments | What it teaches |
+|---|---|---|
+| `design_from_brief` | `brief` (default: the one stored in the document) | Brief (with its required elements, `design.required.add`) → screens → components and variables → interactions → scenarios, with the places where time passes (first use, empty, loading, error, success, return) declared per screen (`proto.state.set`) before any embellishment → verify, steps to the goal reported → hand over |
+| `explore_alternatives` | `source` (required), `question`, `count` (default 3) | The fixed constraints first; alternatives that differ in structure, order of information or form (a recolour is not one); `design.alternative.create` and `compare`; facts and trade-offs, the person chooses, nothing is ranked by a score |
+| `verify_prototype` | `start` (default: the first flow) | Flow facts, scenarios, simulated states with pictures; what failed, what did not run, and what a simulation cannot show |
+| `critique_and_fix` | `scope` (default: the current page), `max_findings` (default 10) | `check_design` with `record`; one finding at a time; `design.finding.address`, then `recheck`; measured findings kept apart from the agent's judgement and from people's feedback; a bounded report grouped by consequence |
+| `hand_over` | `path` (default: the document's own) | Save; check that the file reopens and still runs; list untested assumptions, proposals waiting for a person, failed or skipped checks, and what was simulated rather than seen |
+| `mobile_screen` | `screen` (required), `device` (default "iPhone 16"), `brand_color` | One screen from what a person must do on it, in auto layout, its other states declared (`proto.state.set`) and what it must show listed (`design.required.add`) |
+| `design_system` | `name`, `primary` | Variables, styles and a button with variants, named for their role and tried on a real screen in every mode |
+| `landing_page` | `product` (required), `width` (default 1440), `accent` | A page ordered by what the arriving person needs to know next, its primary action wired |
+| `prototype_flow` | `screens` (comma-separated), `transition` | One person's walk wired through the screens, its states where time passes declared, stored as scenarios and run, steps to the goal reported |
+| `fix_comments` | `page` (default "all"), `auto_resolve` (default "yes"), `author` (default "AI") | Each open thread: the smallest change, a reply, then resolved once verified |
+| `watch_comments` | `minutes` (default 5) | The same, for feedback as it arrives |
 
-Each returns a step-by-step plan naming the exact tools and commands to use and how to verify.
+The prompts that make something start from purpose (`design_context`; a brief that does not say
+who the design is for is asked about or recorded as an untested assumption, never invented) and
+end by running what was made (`check_prototype`, `run_scenarios`, `simulate_prototype`,
+`check_design`), not by reading stored data back. Every tool, command and parameter a prompt, a
+tool description or the instructions name is held against `tools/list` and the engine's command
+registry by `crates/mcp/tests/it/guidance.rs`.
 
 ## Examples
 

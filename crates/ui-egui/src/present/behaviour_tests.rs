@@ -154,7 +154,13 @@ fn triggers_fire_on_their_gesture() {
     ];
     for (trigger, transition, gesture, want, why) in cases {
         let (mut u, hot) = one_interaction(trigger.clone(), transition.clone(), 300);
-        let at = hotspot(&u, hot);
+        // Keys and delays fire wherever the pointer is: their layer is no hotspot (QC-12).
+        let at = if matches!(gesture, Gesture::Key(..) | Gesture::Wait(_)) {
+            assert!(presenter(&u)["hotspots"].as_array().is_some_and(|h| h.iter().all(|h| h["id"] != json!(hot))), "{trigger}: no hotspot");
+            Pos2::ZERO
+        } else {
+            hotspot(&u, hot)
+        };
         gesture.play(&mut u, at);
         assert_eq!(screen_name(&u), want, "{trigger} {transition} {gesture:?}: {why}");
     }

@@ -81,6 +81,18 @@ fn page_in_tab(s: &Session) -> String {
     ds.doc.node(ds.page).unwrap().name.clone()
 }
 
+/// What `file.open` says about the file (`index`, `stale`, `reloaded`), without which document it
+/// is (`id`, `revision`: checked to be the tab's).
+fn opened(app: &mut Session, params: serde_json::Value) -> serde_json::Value {
+    let mut r = app.execute("file.open", &params).unwrap();
+    let ds = app.ds().unwrap();
+    assert_eq!((r["id"].take(), r["revision"].take()), (json!(ds.uid), json!(ds.doc_revision())));
+    let o = r.as_object_mut().unwrap();
+    o.remove("id");
+    o.remove("revision");
+    r
+}
+
 /// Opening a file that is already open says when it changed on disk since the tab read or saved
 /// it, and `reload` reads it again into the tab, unless the tab has unsaved changes (#997).
 #[test]
@@ -92,16 +104,16 @@ fn opening_an_open_file_says_it_is_stale_and_reloads_on_request() {
     let mut app = Session::new();
     let index = app.execute("file.open", &json!({"path": path})).unwrap()["index"].clone();
     let before = page_in_tab(&app);
-    assert_eq!(app.execute("file.open", &json!({"path": path})).unwrap(), json!({"index": index}), "unchanged: not stale");
+    assert_eq!(opened(&mut app, json!({"path": path})), json!({"index": index}), "unchanged: not stale");
     let mut cli = Session::new();
     cli.execute("file.open", &json!({"path": path})).unwrap();
     cli.execute("page.rename", &json!({"name": "Renamed on disk by the CLI"})).unwrap();
     cli.execute("file.save", &json!({})).unwrap();
-    assert_eq!(app.execute("file.open", &json!({"path": path})).unwrap(), json!({"index": index, "stale": true}));
+    assert_eq!(opened(&mut app, json!({"path": path})), json!({"index": index, "stale": true}));
     assert_eq!(page_in_tab(&app), before, "without reload the tab keeps what it read");
-    assert_eq!(app.execute("file.open", &json!({"path": path, "reload": true})).unwrap(), json!({"index": index, "reloaded": true}));
+    assert_eq!(opened(&mut app, json!({"path": path, "reload": true})), json!({"index": index, "reloaded": true}));
     assert_eq!(page_in_tab(&app), "Renamed on disk by the CLI");
-    assert_eq!(app.execute("file.open", &json!({"path": path})).unwrap(), json!({"index": index}), "read again: no longer stale");
+    assert_eq!(opened(&mut app, json!({"path": path})), json!({"index": index}), "read again: no longer stale");
     app.execute("shape.rectangle", &json!({"x": 20, "y": 0, "width": 10, "height": 10})).unwrap();
     let e = app.execute("file.open", &json!({"path": path, "reload": true})).unwrap_err().to_string();
     assert!(e.contains("unsaved changes"), "{e}");

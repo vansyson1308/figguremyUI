@@ -3,15 +3,19 @@ Copyright (c) 2026 ArtCraft Team and the FigCraft contributors.
 Licensed under the MIT License or the Apache License, Version 2.0, at your option
 (LICENSE-MIT, LICENSE-APACHE).
 
-The ArtCraft name, wordmark and logos in docs/brand/ are trademarks of the ArtCraft Team. They are
-not open source and are not covered by the license above; their terms are in
-docs/brand/LICENSE-brand.txt.
+Figgure My UI is a fork of FigCraft (https://github.com/storytold/figcraft), made by the ArtCraft
+team and its contributors. Figgure My UI is not affiliated with or endorsed by them.
+
+The ArtCraft name, wordmark and logos are trademarks of the ArtCraft Team. They are not open source
+and are not covered by the license above. Figgure My UI does not use them: the files that were in
+docs/brand/ (with their terms, docs/brand/LICENSE-brand.txt) were removed from this fork and remain
+only in the repository's history.
 
 Third-party material
 
 This product bundles no third-party fonts, icons or images in the repository: every icon is
-drawn in code and original to FigCraft. The per-file list (author, source, license) of any bundled
-asset is in ATTRIBUTION.md.
+drawn in code or made for the project, and original to FigCraft or to Figgure My UI. The per-file
+list (author, source, license) of any bundled asset is in ATTRIBUTION.md.
 
 Release builds made with the optional craft-fonts build input (CRAFT_FONTS_DIR) embed the fonts
 listed in ATTRIBUTION.md (Inter and others, SIL Open Font License 1.1); each package carries their

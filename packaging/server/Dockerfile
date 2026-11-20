@@ -1,7 +1,7 @@
-# figcraft-server in a container; setup in docs/server.md ("Deploy on a Linux server"). Build from
+# figguremyui-server in a container; setup in docs/server.md ("Deploy on a Linux server"). Build from
 # the repository root:
 #
-#   docker build -f packaging/server/Dockerfile -t figcraft-server .
+#   docker build -f packaging/server/Dockerfile -t figguremyui-server .
 #
 # The image runs as an unprivileged user, keeps its files in the /data volume and reads
 # /etc/figcraft-server/server.toml (listen on 0.0.0.0:47900, data in /data; mount your own to set
@@ -16,11 +16,11 @@ RUN cargo build --release --locked -p figcraft-server \
 
 # glibc and libgcc only, no shell; "nonroot" is uid 65532.
 FROM gcr.io/distroless/cc-debian12:nonroot
-COPY --from=build /src/target/release/figcraft-server /usr/local/bin/figcraft-server
+COPY --from=build /src/target/release/figguremyui-server /usr/local/bin/figguremyui-server
 COPY --from=build /out/server.toml /etc/figcraft-server/server.toml
 COPY --from=build --chown=nonroot:nonroot /out/data /data
 USER nonroot
 VOLUME /data
 EXPOSE 47900
 STOPSIGNAL SIGTERM
-ENTRYPOINT ["/usr/local/bin/figcraft-server", "--config", "/etc/figcraft-server/server.toml"]
+ENTRYPOINT ["/usr/local/bin/figguremyui-server", "--config", "/etc/figcraft-server/server.toml"]

@@ -274,10 +274,10 @@ fn variables_resolve_stored_ids_never_by_name() {
     let red = Color::from_hex("#FF0000").unwrap();
     let blue = Color::from_hex("#0D99FF").unwrap();
     // Named like the next variable's id, and like an id that no longer exists.
-    v.variables.push(var("VariableID:1", "VariableID:2", VariableValue::Color(red)));
-    v.variables.push(var("VariableID:2", "surface", VariableValue::Color(blue)));
-    v.variables.push(var("VariableID:3", "VariableID:9", VariableValue::Color(red)));
-    v.variables.push(var("VariableID:4", "alias", VariableValue::Alias("VariableID:9".into())));
+    v.variables.push(var("VariableID:1", "VariableID:2", VariableValue::Color(red)).into());
+    v.variables.push(var("VariableID:2", "surface", VariableValue::Color(blue)).into());
+    v.variables.push(var("VariableID:3", "VariableID:9", VariableValue::Color(red)).into());
+    v.variables.push(var("VariableID:4", "alias", VariableValue::Alias("VariableID:9".into())).into());
     let modes = std::collections::BTreeMap::new();
     assert_eq!(v.resolve("VariableID:2", &modes), Some(VariableValue::Color(blue)));
     // A deleted id stays unresolved instead of picking up the variable named like it.
@@ -985,14 +985,14 @@ fn vars_with_colours(cols: &[(&str, VariableValue, VariableValue)]) -> Variables
         extends: None,
     });
     for (id, light, dark) in cols {
-        v.variables.push(colour_var(id, id, &[("light", light.clone()), ("dark", dark.clone())]));
+        v.variables.push(colour_var(id, id, &[("light", light.clone()), ("dark", dark.clone())]).into());
     }
     v
 }
 
 /// Adds `id` with a value in the Light mode only.
 fn add(v: &mut Variables, id: &str, light: VariableValue) {
-    v.variables.push(colour_var(id, id, &[("light", light)]));
+    v.variables.push(colour_var(id, id, &[("light", light)]).into());
 }
 
 fn fade(source: &str, opacity: f32) -> VariableValue {
@@ -1114,7 +1114,7 @@ fn the_colour_walker_visits_calculation_literals() {
     let mut v = vars_with_colours(&[("base", red(), red())]);
     add(&mut v, "mx", mix(lit("#804020"), src("base"), 0.5));
     let mut doc = Document::new("x");
-    doc.variables = v;
+    doc.variables = v.into();
     doc.map_colors(|c| c.with_alpha(0.5));
     let mx = doc.variables.variables.iter().find(|x| x.id == "mx").unwrap();
     let VariableValue::ColorMix { from, .. } = &mx.values["light"] else { panic!("still the mix") };

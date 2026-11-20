@@ -38,7 +38,7 @@ fn publish_then_edit_and_view_together() {
     let p = a.live().published.clone().unwrap();
     assert_eq!(a.docs.len(), 1, "the open tab syncs; no new tab");
     assert_eq!(a.live_summary()["readOnly"], false);
-    assert!(p.edit.starts_with("figcraft://join?host=127.0.0.1:") && p.view.starts_with("figcraft://join?host=127.0.0.1:"));
+    assert!(p.edit.starts_with("figguremyui://join?host=127.0.0.1:") && p.view.starts_with("figguremyui://join?host=127.0.0.1:"));
     assert_ne!(p.edit, p.view);
     // Bo joins with the edit link, Cy with the view link.
     let mut b = join(&p.edit, "Bo");

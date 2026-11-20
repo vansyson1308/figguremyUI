@@ -646,7 +646,10 @@ pub fn import(bytes: &[u8]) -> Result<(Document, Vec<String>), FormatError> {
     if !structural_issues.is_empty() {
         warn(
             &mut warnings,
-            format!("FigCraft document has {} remaining structural issue(s) after Penpot import; review before editing", structural_issues.len()),
+            format!(
+                "Figgure My UI document has {} remaining structural issue(s) after Penpot import; review before editing",
+                structural_issues.len()
+            ),
         );
     }
     report_unsupported_layout(&doc, &mut warnings);
@@ -1375,13 +1378,13 @@ fn bind_applied_tokens(doc: &mut Document, active_modes: &BTreeMap<String, Strin
                         token_number_field(node, property, value).ok_or(if NUMBER_TOKEN_PROPERTIES.contains(&property) {
                             "layer value differs from the token"
                         } else {
-                            "property has no FigCraft binding"
+                            "property has no Figgure My UI binding"
                         })?
                     }
                     ("fontFamily", VariableValue::String(family)) if matches!(&node.kind, NodeKind::Text(t) if t.style.font_family == family) => {
                         "fontFamily"
                     }
-                    _ => return Err("property has no FigCraft binding"),
+                    _ => return Err("property has no Figgure My UI binding"),
                 };
                 Ok((field, id.clone()))
             })();
@@ -1420,7 +1423,7 @@ fn bind_applied_tokens(doc: &mut Document, active_modes: &BTreeMap<String, Strin
         warn(
             warnings,
             format!(
-                "Linked {linked} Penpot token reference(s) to native FigCraft properties (colors, sizes, gaps, padding, radii, stroke widths, font sizes and families)"
+                "Linked {linked} Penpot token reference(s) to native Figgure My UI properties (colors, sizes, gaps, padding, radii, stroke widths, font sizes and families)"
             ),
         );
     }
@@ -2302,19 +2305,22 @@ fn import_themed_tokens(
             warn(warnings, "Penpot token lookup work budget exhausted; remaining descriptions were skipped".into());
             break;
         }
-        doc.variables.variables.push(Variable {
-            id: var_id(path),
-            name: format!("{group}/{path}"),
-            collection: collection.clone(),
-            kind,
-            values,
-            description: description.chars().take(1024).collect(),
-            scopes: None,
-            hidden_from_publishing: false,
-            extends: None,
-            overrides: BTreeSet::new(),
-            code_syntax: BTreeMap::new(),
-        });
+        doc.variables.variables.push(
+            Variable {
+                id: var_id(path),
+                name: format!("{group}/{path}"),
+                collection: collection.clone(),
+                kind,
+                values,
+                description: description.chars().take(1024).collect(),
+                scopes: None,
+                hidden_from_publishing: false,
+                extends: None,
+                overrides: BTreeSet::new(),
+                code_syntax: BTreeMap::new(),
+            }
+            .into(),
+        );
         used_collections.insert(index);
         converted += 1;
     }
@@ -2419,24 +2425,27 @@ fn import_token_variables(
             if let Some((kind, item)) = converted_token {
                 let mut values = BTreeMap::new();
                 values.insert(mode_id.clone(), item);
-                doc.variables.variables.push(Variable {
-                    id: format!("{collection_id}:{name}"),
-                    name: format!("{set_name}/{name}"),
-                    collection: collection_id.clone(),
-                    kind,
-                    values,
-                    description: string(token, "description")
-                        .or_else(|| string(token, "$description"))
-                        .unwrap_or_default()
-                        .chars()
-                        .take(1024)
-                        .collect(),
-                    scopes: None,
-                    hidden_from_publishing: false,
-                    extends: None,
-                    overrides: BTreeSet::new(),
-                    code_syntax: BTreeMap::new(),
-                });
+                doc.variables.variables.push(
+                    Variable {
+                        id: format!("{collection_id}:{name}"),
+                        name: format!("{set_name}/{name}"),
+                        collection: collection_id.clone(),
+                        kind,
+                        values,
+                        description: string(token, "description")
+                            .or_else(|| string(token, "$description"))
+                            .unwrap_or_default()
+                            .chars()
+                            .take(1024)
+                            .collect(),
+                        scopes: None,
+                        hidden_from_publishing: false,
+                        extends: None,
+                        overrides: BTreeSet::new(),
+                        code_syntax: BTreeMap::new(),
+                    }
+                    .into(),
+                );
                 count += 1;
                 converted += 1;
             } else {
@@ -2462,7 +2471,7 @@ fn import_token_variables(
         );
     }
     if value.get("themes").is_some_and(|v| !v.is_null()) {
-        warn(warnings, "Penpot themes and active set combinations are preserved as source metadata, not editable FigCraft modes".into());
+        warn(warnings, "Penpot themes and active set combinations are preserved as source metadata, not editable Figgure My UI modes".into());
     }
     if count > 0 {
         warn(

@@ -65,7 +65,7 @@ pub struct Prefs {
     pub auto_save: bool,
     /// The desktop app starts on the Home screen instead of in a new file.
     pub start_on_home: bool,
-    /// `figcraft://` invite links open this app (`collab.registerLinks`); `None`: on for installed
+    /// `figguremyui://` invite links open this app (`collab.registerLinks`); `None`: on for installed
     /// builds, off for development builds.
     pub invite_links: Option<bool>,
     /// Installed plugins (Plugins menu), in menu order.

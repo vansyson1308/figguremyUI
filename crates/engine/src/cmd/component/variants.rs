@@ -180,6 +180,20 @@ pub(super) fn fit_set(doc: &mut Document, set: NodeId) {
     }
 }
 
+/// A lone main component `base` whose name had no `property=value` pairs (`named` false) just
+/// became a set of itself, as "Property 1=Default": asked for a variant with `property`, that is
+/// the set's property instead of "Property 1" (F-14), the component its "Default" value and the
+/// new variant the value asked for. A component named with pairs already keeps its properties
+/// (`property` must be one of them, as for a set); nothing changes without a `property`.
+fn lone_variant_property(cmd: &str, doc: &mut Document, base: NodeId, named: bool, p: &Value) -> Result<()> {
+    let Some(prop) = string(p, "property").map(|s| s.trim().to_string()).filter(|_| !named) else { return Ok(()) };
+    if prop.is_empty() || prop.contains([',', '=']) {
+        return Err(bad(cmd, "`property` must be non-empty without ',' or '='"));
+    }
+    doc.get_mut(base)?.name = format!("{prop}=Default");
+    Ok(())
+}
+
 pub(super) fn add_variant(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "component.addVariant";
     let t = targets(s, p).first().copied().ok_or_else(|| bad(cmd, "select a component set or component"))?;
@@ -192,7 +206,12 @@ pub(super) fn add_variant(s: &mut Session, p: &Value) -> Result<Value> {
         NodeKind::Component { .. } => match variant_set(doc, t) {
             Some(set) => (set, t),
             // A main component on its own becomes a set of itself, then gains the new variant.
-            None => (make_variant_set(cmd, doc, &[t])?, t),
+            None => {
+                let named = doc.get(t)?.name.contains('=');
+                let set = make_variant_set(cmd, doc, &[t])?;
+                lone_variant_property(cmd, doc, t, named, p)?;
+                (set, t)
+            }
         },
         _ => return Err(bad(cmd, "select a component set or component")),
     };
@@ -205,7 +224,14 @@ pub(super) fn add_variant(s: &mut Session, p: &Value) -> Result<Value> {
         (Some(prop), Some(value)) => {
             let (prop, value) = (prop.trim().to_string(), value.trim().to_string());
             if !options.iter().any(|(k, _)| *k == prop) {
-                return Err(bad(cmd, format!("unknown variant property `{prop}`")));
+                let have: Vec<&str> = options.iter().map(|(k, _)| k.as_str()).collect();
+                return Err(bad(
+                    cmd,
+                    format!(
+                        "unknown variant property `{prop}` (the set has: {}); add it first with `component.addProperty {{type: \"variant\", name, default}}`",
+                        have.join(", ")
+                    ),
+                ));
             }
             if value.is_empty() || value.contains([',', '=']) {
                 return Err(bad(cmd, "`value` must be non-empty without ',' or '='"));

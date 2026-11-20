@@ -329,7 +329,7 @@ fn background_requests_ask_about_hosting_and_sharing() {
     let create = Admin::CreateLink { file: FILE.into(), access: Access::View, label: String::new() };
     let (reply, _) = background(req(Some(create)), &[hosting(), admin(AdminReply::Link(new_link("v2", Access::View, TOKEN)))]);
     assert!(
-        matches!(reply, NetReply::Hosting(Ok((_, Some(AdminReply::Link(l))))) if l.token.starts_with("figcraft://join?") && l.token.contains(TOKEN))
+        matches!(reply, NetReply::Hosting(Ok((_, Some(AdminReply::Link(l))))) if l.token.starts_with("figguremyui://join?") && l.token.contains(TOKEN))
     );
     // Stopping a share revokes its links, with the key when the address carries it.
     let stop =

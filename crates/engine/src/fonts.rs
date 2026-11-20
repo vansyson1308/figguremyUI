@@ -12,6 +12,39 @@ use crate::cmd::CommandSpec;
 use crate::params::{get, req_targets};
 use crate::{Result, Session, spec};
 
+/// Whether text `t` has a font to be laid out with: every family it uses gives a face, its own or
+/// the fallback one. A build without fonts (no craft-fonts, run without system fonts) has none:
+/// such text is laid out 1 px wide and draws nothing, so a check that measures it is blind
+/// (review X-01). A missing family alone isn't that: it draws in the fallback font.
+pub fn lays_out(t: &figcraft_doc::TextData) -> bool {
+    if tests_without_fonts() {
+        return false;
+    }
+    let mut faces = t.spans().into_iter().map(|(_, _, st)| (st.font_family.clone(), st.font_style.clone())).collect::<Vec<_>>();
+    faces.push((t.style.font_family.clone(), t.style.font_style.clone()));
+    faces.sort();
+    faces.dedup();
+    faces.iter().all(|(family, style)| figcraft_text::find_face(family, style).is_some())
+}
+
+/// The session has no font at all to lay text out with ([`lays_out`] fails for every text).
+pub fn none_at_all() -> bool {
+    tests_without_fonts() || figcraft_text::find_face("", "Regular").is_none()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// A test on this thread runs as if the session had no fonts at all.
+    pub(crate) static WITHOUT_FONTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn tests_without_fonts() -> bool {
+    #[cfg(test)]
+    return WITHOUT_FONTS.with(std::cell::Cell::get);
+    #[cfg(not(test))]
+    false
+}
+
 /// A family the document names that no installed or built-in font provides.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Missing {
@@ -67,6 +100,27 @@ pub fn missing(doc: &Document) -> Vec<Missing> {
         .filter(|(family, _)| !figcraft_text::has_family(family))
         .map(|(family, layers)| Missing { source: source(&family), family, layers })
         .collect()
+}
+
+/// What a command that sets text in `family` (`fontFamily`) warns when no installed or built-in
+/// font provides it (F-13): the edit goes through, the text keeps the family it was given, and it
+/// draws in the fallback font until the family is there. Nothing for an empty name, or while the
+/// installed fonts are still being indexed (one of them may be it).
+pub fn family_warning(family: &str) -> Option<String> {
+    let family = family.trim();
+    if family.is_empty() || !figcraft_text::installed_fonts_known() || figcraft_text::has_family(family) {
+        return None;
+    }
+    let get = source(family).map(|s| format!("; `font.download` can get it from {s}")).unwrap_or_default();
+    Some(format!(
+        "no installed or built-in font is `{}`: the text keeps that family but draws in a fallback font until it is installed{get} (`file.fontReport` lists the fonts the file uses)",
+        crate::error::prose(family)
+    ))
+}
+
+/// [`family_warning`] for the `fontFamily` in `props` (a `node.set` or `node.create` props map).
+pub(crate) fn props_family_warning(props: &serde_json::Map<String, Value>) -> Option<String> {
+    props.get("fontFamily").and_then(Value::as_str).and_then(family_warning)
 }
 
 /// A family's download ([`downloads`]).
@@ -128,10 +182,20 @@ fn string_values(vars: &Variables, id: &str) -> Vec<String> {
 /// `under` (every layer: `None`) that use one of `families` (any family: `None`). Returns the
 /// layers whose size changed.
 pub fn refit(doc: &mut Document, under: Option<&[NodeId]>, families: Option<&[String]>) -> Vec<NodeId> {
+    let ids = to_refit(doc, under, families);
+    if !ids.is_empty() {
+        let before = doc.clone();
+        doc.mark_dirty(ids.iter().copied());
+        crate::normalize(doc, &before);
+    }
+    ids
+}
+
+/// The layers [`refit`] would measure again, without touching the document.
+fn to_refit(doc: &Document, under: Option<&[NodeId]>, families: Option<&[String]>) -> Vec<NodeId> {
     let want: Option<BTreeSet<String>> = families.map(|f| f.iter().map(|x| x.trim().to_lowercase()).collect());
     let scope: Option<BTreeSet<NodeId>> = under.map(|ids| ids.iter().flat_map(|i| doc.subtree(*i)).collect());
-    let ids: Vec<NodeId> = doc
-        .nodes()
+    doc.nodes()
         .filter(|n| scope.as_ref().is_none_or(|s| s.contains(&n.id)))
         .filter(|n| {
             let NodeKind::Text(t) = &n.kind else { return false };
@@ -143,17 +207,16 @@ pub fn refit(doc: &mut Document, under: Option<&[NodeId]>, families: Option<&[St
                 && figcraft_text::auto_size(n).is_some_and(|(w, h)| (w - n.width).abs() > 1e-6 || (h - n.height).abs() > 1e-6)
         })
         .map(|n| n.id)
-        .collect();
-    if !ids.is_empty() {
-        let before = doc.clone();
-        doc.mark_dirty(ids.iter().copied());
-        crate::normalize(doc, &before);
-    }
-    ids
+        .collect()
 }
 
-/// [`refit`] in the open document, if there is one.
+/// [`refit`] in the open document, if there is one. The document is only written to when a box
+/// changes: taking it for writing copies it, and the copy would count as an edit (an empty undo
+/// step and a new revision) though nothing changed.
 pub(crate) fn refit_open(s: &mut Session, under: Option<&[NodeId]>, families: Option<&[String]>) -> Vec<NodeId> {
+    if s.doc().is_ok_and(|doc| to_refit(doc, under, families).is_empty()) {
+        return Vec::new();
+    }
     match s.doc_mut() {
         Ok(doc) => refit(doc, under, families),
         Err(_) => Vec::new(),
@@ -184,7 +247,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "text.missingFonts",
             "Missing fonts",
-            "{}  fonts the open document names that aren't installed (text layers, styled ranges, text styles, font family variables); the app shows them → {families: [{family, layers, source (the font store source font.download gets it from, or null)}]}",
+            "{}  fonts the open document names that aren't installed (text layers, styled ranges, text styles, font family variables); the app shows them → {families: [{family, layers (how many text layers use it: a count; 0 when only a text style or a variable names it), source (the font store source font.download gets it from, or null)}]}",
             false,
             missing_fonts
         ),

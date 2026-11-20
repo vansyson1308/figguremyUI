@@ -130,6 +130,44 @@ fn index_bytes_skips_a_truncated_directory_and_reads_the_next_face() {
 }
 
 #[test]
+fn a_walk_reads_each_file_as_a_fresh_zeroed_buffer_would() {
+    // The walk reads every file through one buffer: what the last file put in it is zeroed again,
+    // so a file read after another sees exactly what reading it alone gives.
+    struct TempFile(std::path::PathBuf);
+    impl Drop for TempFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+    let write = |case: &str, bytes: &[u8]| {
+        let file = TempFile(std::env::temp_dir().join(format!("figcraft-font-reuse-{case}-{}.ttf", std::process::id())));
+        std::fs::write(&file.0, bytes).unwrap();
+        file
+    };
+    // A collection whose directory and name table the read fills in, padded with bytes it skips.
+    let mut big = synthetic_font_collection(32);
+    big.resize(400, 0x5a);
+    // A lone font with no tables: only its 12-byte header is read.
+    let mut small = vec![0u8; 120];
+    small[..4].copy_from_slice(&0x0001_0000u32.to_be_bytes());
+    small[12..].fill(0x77);
+    let (a, b) = (write("big", &big), write("small", &small));
+    let alone = |f: &TempFile, len: usize| index_bytes(&f.0, len).unwrap();
+    let mut buf = IndexBuf::default();
+    for (f, len) in [(&a, big.len()), (&b, small.len()), (&a, big.len()), (&a, big.len()), (&b, small.len())] {
+        assert_eq!(buf.read(&f.0, len).unwrap(), alone(f, len).as_slice());
+    }
+    assert_eq!(&alone(&b, small.len())[12..], &[0; 108], "nothing past the header is read");
+    // From the small file to the larger one the buffer grows, zeroed.
+    let mut buf = IndexBuf::default();
+    for (f, len) in [(&b, small.len()), (&a, big.len()), (&b, small.len())] {
+        assert_eq!(buf.read(&f.0, len).unwrap(), alone(f, len).as_slice());
+    }
+    // A file shorter than it says (or gone) reads as before.
+    assert_eq!(buf.read(&b.0, small.len() + 10).map(<[u8]>::to_vec), index_bytes(&b.0, small.len() + 10));
+}
+
+#[test]
 fn macos_font_assets_are_found_in_the_asset_store() {
     // A store laid out like macOS's: fonts downloaded on demand sit in `<id>.asset/AssetData`
     // folders under `com_apple_MobileAsset_Font*`; other assets are never walked. Untested on a Mac.
@@ -581,7 +619,7 @@ fn every_platform_has_a_thai_font_in_the_fallbacks() {
 }
 
 /// #1902: a web build has no system fonts, so a document's missing characters can only come from
-/// the embedded faces. Every script face craft-fonts can embed (`FIGCRAFT_EMBED_SCRIPTS`) is a
+/// the embedded faces. Every script face craft-fonts can embed (`FIGGUREMYUI_EMBED_SCRIPTS`) is a
 /// document fallback after the Latin faces; else Hebrew or Devanagari typed into an Inter layer
 /// would stay missing glyphs with its face embedded.
 #[test]

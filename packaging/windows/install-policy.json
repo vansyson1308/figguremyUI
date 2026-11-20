@@ -1,13 +1,13 @@
 {
-  "id": "figcraft",
-  "name": "FigCraft",
-  "upgradeCode": "7F8B9827-D065-41B7-A514-2A454B21F484",
+  "id": "figguremyui",
+  "name": "Figgure My UI",
+  "upgradeCode": "F23971AA-06D4-4B7C-8A67-8A3C42871436",
   "sources": [
-    "figcraft.wxs"
+    "figguremyui.wxs"
   ],
-  "icon": "assets/app-icon/figcraft.ico",
+  "icon": "assets/app-icon/figguremyui.ico",
   "localization": [
-    "figcraft.en-us.wxl"
+    "figguremyui.en-us.wxl"
   ],
   "extensions": [
     "UI",
@@ -15,109 +15,109 @@
   ],
   "payloads": [
     "NOTICE",
-    "figcraft-cli.exe",
-    "figcraft.exe"
+    "figguremyui-cli.exe",
+    "figguremyui.exe"
   ],
   "registry": [
     [
       "-1",
-      "Software\\Classes\\Figcraft.Image\\shell\\open\\command",
+      "Software\\Classes\\FiggureMyUI.Image\\shell\\open\\command",
       "",
-      "\"[#FigcraftExe]\" \"%1\""
+      "\"[#AppExe]\" \"%1\""
     ],
     [
       "-1",
       "Software\\Classes\\.svg\\OpenWithProgids",
-      "Figcraft.Image",
+      "FiggureMyUI.Image",
       ""
     ],
     [
       "-1",
       "Software\\Classes\\.png\\OpenWithProgids",
-      "Figcraft.Image",
+      "FiggureMyUI.Image",
       ""
     ],
     [
       "-1",
       "Software\\Classes\\.jpg\\OpenWithProgids",
-      "Figcraft.Image",
+      "FiggureMyUI.Image",
       ""
     ],
     [
       "-1",
       "Software\\Classes\\.jpeg\\OpenWithProgids",
-      "Figcraft.Image",
+      "FiggureMyUI.Image",
       ""
     ],
     [
       "-1",
-      "Software\\Classes\\Figcraft.Sketch\\shell\\open\\command",
+      "Software\\Classes\\FiggureMyUI.Sketch\\shell\\open\\command",
       "",
-      "\"[#FigcraftExe]\" \"%1\""
+      "\"[#AppExe]\" \"%1\""
     ],
     [
       "-1",
       "Software\\Classes\\.sketch\\OpenWithProgids",
-      "Figcraft.Sketch",
+      "FiggureMyUI.Sketch",
       ""
     ],
     [
       "-1",
-      "Software\\Classes\\Applications\\figcraft.exe",
+      "Software\\Classes\\Applications\\figguremyui.exe",
       "FriendlyAppName",
-      "FigCraft"
+      "Figgure My UI"
     ],
     [
       "-1",
-      "Software\\Classes\\Applications\\figcraft.exe\\shell\\open\\command",
+      "Software\\Classes\\Applications\\figguremyui.exe\\shell\\open\\command",
       "",
-      "\"[#FigcraftExe]\" \"%1\""
+      "\"[#AppExe]\" \"%1\""
     ],
     [
       "-1",
-      "Software\\Classes\\Applications\\figcraft.exe\\SupportedTypes",
+      "Software\\Classes\\Applications\\figguremyui.exe\\SupportedTypes",
       ".figcraft",
       ""
     ],
     [
       "-1",
-      "Software\\Classes\\Applications\\figcraft.exe\\SupportedTypes",
+      "Software\\Classes\\Applications\\figguremyui.exe\\SupportedTypes",
       ".svg",
       ""
     ],
     [
       "-1",
-      "Software\\Classes\\Applications\\figcraft.exe\\SupportedTypes",
+      "Software\\Classes\\Applications\\figguremyui.exe\\SupportedTypes",
       ".png",
       ""
     ],
     [
       "-1",
-      "Software\\Classes\\Applications\\figcraft.exe\\SupportedTypes",
+      "Software\\Classes\\Applications\\figguremyui.exe\\SupportedTypes",
       ".jpg",
       ""
     ],
     [
       "-1",
-      "Software\\Classes\\Applications\\figcraft.exe\\SupportedTypes",
+      "Software\\Classes\\Applications\\figguremyui.exe\\SupportedTypes",
       ".jpeg",
       ""
     ],
     [
       "-1",
-      "Software\\Classes\\Applications\\figcraft.exe\\SupportedTypes",
+      "Software\\Classes\\Applications\\figguremyui.exe\\SupportedTypes",
       ".sketch",
       ""
     ],
     [
       "-1",
-      "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\figcraft.exe",
+      "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\figguremyui.exe",
       "",
-      "[#FigcraftExe]"
+      "[#AppExe]"
     ],
     [
       "-1",
-      "Software\\FigCraft",
+      "Software\\Figgure My UI",
       "InstallDir",
       "[INSTALLFOLDER]"
     ]

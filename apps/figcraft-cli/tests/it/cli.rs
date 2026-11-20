@@ -4,11 +4,11 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 fn bin() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_figcraft-cli"))
+    Command::new(env!("CARGO_BIN_EXE_figguremyui-cli"))
 }
 
 fn tmp(name: &str) -> std::path::PathBuf {
-    let d = std::env::temp_dir().join(format!("figcraft-cli-test-{}-{name}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("figguremyui-cli-test-{}-{name}", std::process::id()));
     std::fs::create_dir_all(&d).unwrap();
     d
 }
@@ -99,7 +99,7 @@ fn bad_arguments_exit_2_without_panicking() {
         let out = bin().args(args).output().unwrap();
         assert_eq!(out.status.code(), Some(2), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
         let err = String::from_utf8_lossy(&out.stderr);
-        assert!(err.contains("Usage: figcraft-cli") || err.contains("try '--help'"), "{args:?}: {err}");
+        assert!(err.contains("Usage: figguremyui-cli") || err.contains("try '--help'"), "{args:?}: {err}");
         assert!(!err.contains("panicked"));
     }
     let out = bin().args(["info", "/no/such/file.figcraft"]).output().unwrap();
@@ -131,7 +131,7 @@ fn help_after_a_subcommand_prints_the_usage() {
         let out = bin().args(args).stdin(Stdio::null()).output().unwrap();
         assert_eq!(out.status.code(), Some(0), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
         let text = String::from_utf8_lossy(&out.stdout);
-        assert!(text.contains("Usage: figcraft-cli"), "{args:?}: {text}");
+        assert!(text.contains("Usage: figguremyui-cli"), "{args:?}: {text}");
         assert!(out.stderr.is_empty(), "{args:?}: nothing on stderr, got {}", String::from_utf8_lossy(&out.stderr));
     }
     // A value that happens to be `--help` is still a value, not a request for help.
@@ -226,6 +226,37 @@ fn run_takes_the_documented_gradient_shorthand() {
     std::fs::remove_dir_all(&d).ok();
 }
 
+/// A script's failing step says what failed for a program too (`errorDetail`), and a script, which
+/// has no window, is not told that a prototype was presented.
+#[test]
+fn run_reports_a_failed_step_with_its_code() {
+    let d = tmp("run-errors");
+    let frame = r#"{"command":"frame.create","params":{"x":0,"y":0,"width":100,"height":100}}"#;
+    for (name, step, code, in_text) in [
+        ("conflict", r#"{"command":"shape.rectangle","params":{"width":5,"height":5,"ifRevision":7}}"#, "conflict", "expected revision 7"),
+        ("present", r#"{"command":"proto.present"}"#, "unsupportedHere", "proto.simulate"),
+        ("node", r#"{"command":"node.set","params":{"ids":[424242],"props":{"x":1}}}"#, "noSuchNode", "no such node 424242"),
+    ] {
+        let script = d.join(format!("{name}.json"));
+        std::fs::write(&script, format!("[{frame},{step}]")).unwrap();
+        let out = bin().arg("run").arg(&script).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{name}");
+        let line: serde_json::Value =
+            serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{name}: {e}: {}", String::from_utf8_lossy(&out.stdout)));
+        assert_eq!((line["step"].clone(), line["ok"].clone(), line["rolledBack"].clone()), (1.into(), false.into(), true.into()), "{line}");
+        assert_eq!((line["errorDetail"]["code"].as_str(), line["errorDetail"]["step"].as_u64()), (Some(code), Some(1)), "{line}");
+        assert!(line["error"].as_str().unwrap().contains(in_text), "{line}");
+        // The step is said once, in front, not again inside the message.
+        let said = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(said.matches("step 1").count(), 1, "{said}");
+    }
+    // The revision a script starts from is the one all of its steps are checked against.
+    let script = d.join("ok.json");
+    std::fs::write(&script, format!(r#"[{frame},{{"command":"shape.rectangle","params":{{"width":5,"height":5,"ifRevision":1}}}}]"#)).unwrap();
+    assert!(bin().arg("run").arg(&script).status().unwrap().success());
+    std::fs::remove_dir_all(&d).ok();
+}
+
 #[test]
 fn mcp_over_stdio() {
     let mut child = bin().arg("mcp").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
@@ -245,6 +276,36 @@ fn mcp_over_stdio() {
     assert_eq!(lines[0]["result"]["protocolVersion"], "2025-06-18");
     assert_eq!(lines[1]["error"]["code"], -32700);
     assert_eq!(lines[2]["result"]["isError"], false);
+}
+
+/// QC2-09: the migration note's table names every resource and template the server lists, in its
+/// new form and its old one (which still reads).
+#[test]
+fn the_migration_note_lists_every_mcp_resource() {
+    let mut child = bin().arg("mcp").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"2025-06-18"}}}}"#).unwrap();
+        writeln!(stdin, r#"{{"jsonrpc":"2.0","method":"notifications/initialized"}}"#).unwrap();
+        writeln!(stdin, r#"{{"jsonrpc":"2.0","id":2,"method":"resources/list"}}"#).unwrap();
+        writeln!(stdin, r#"{{"jsonrpc":"2.0","id":3,"method":"resources/templates/list"}}"#).unwrap();
+    }
+    drop(child.stdin.take());
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let lines: Vec<serde_json::Value> = String::from_utf8_lossy(&out.stdout).lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    let mut uris: Vec<String> = Vec::new();
+    for l in &lines[1..] {
+        let list = l["result"]["resources"].as_array().or_else(|| l["result"]["resourceTemplates"].as_array()).unwrap_or_else(|| panic!("{l}"));
+        uris.extend(list.iter().map(|r| r["uri"].as_str().or_else(|| r["uriTemplate"].as_str()).unwrap().to_string()));
+    }
+    assert!(uris.len() >= 9, "{uris:?}");
+    let note = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/migration.md")).unwrap();
+    let row = note.lines().find(|l| l.starts_with("| MCP resources |")).expect("the Old → new table's MCP resources row");
+    for uri in &uris {
+        let old = uri.replacen("figguremyui://", "figcraft://", 1);
+        assert!(row.contains(&format!("`{uri}`")) && row.contains(&format!("`{old}`")), "docs/migration.md doesn't list {uri} (old {old})");
+    }
 }
 
 #[test]

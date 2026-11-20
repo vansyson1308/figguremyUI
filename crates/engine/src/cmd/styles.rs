@@ -172,7 +172,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "variable.set",
             "Set variable value",
-            "{variable, mode? (name or id; default first), value | {alias: variable} (same type, no loops) | {alpha} | {mix} (colour variables; shapes as in variable.create; no loops)}",
+            "{variable (its id, `Collection/name`, or a name only one variable has), mode? (name or id; default first), value | {alias: variable} (same type, no loops) | {alpha} | {mix} (colour variables; shapes as in variable.create; no loops)}",
             true,
             var_set
         ),
@@ -184,7 +184,7 @@ pub fn specs() -> Vec<CommandSpec> {
             |s, p| {
                 let v = req_string("variable.delete", p, "variable")?;
                 let doc = s.doc_mut()?;
-                let var = doc.variables.get(&v).ok_or_else(|| bad("variable.delete", "no such variable"))?;
+                let var = doc.variables.find(&v).map_err(|e| bad("variable.delete", e))?;
                 if var.extends.is_some() {
                     return Err(bad("variable.delete", "an inherited variable stays while the collection it extends has it"));
                 }
@@ -197,7 +197,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "variable.bind",
             "Bind variable",
-            "{ids?, field (fill|stroke (first paint)|fills/<i>/color|strokes/<i>/color|fills/<i>/stops/<j>/color (gradient stops)|effects/<i>/<offsetX|offsetY|radius|startRadius|spread|color|lightAngle|lightIntensity|refraction|depth|dispersion|splay> (glass: `radius` is its frost; intensity, refraction, dispersion and splay in percent)|layoutGrids/<i>/<size|count|gutter|offset>|componentProperties/<name> (instances: boolean/text properties; variant properties take string variables naming a value)|width|height|opacity (percent)|cornerRadius|gap|paddingHorizontal|characters|visible|fontSize…; list indices bottom first), variable (null unbinds)}",
+            "{ids?, field (fill|stroke (first paint)|fills/<i>/color|strokes/<i>/color|fills/<i>/stops/<j>/color (gradient stops)|effects/<i>/<offsetX|offsetY|radius|startRadius|spread|color|lightAngle|lightIntensity|refraction|depth|dispersion|splay> (glass: `radius` is its frost; intensity, refraction, dispersion and splay in percent)|layoutGrids/<i>/<size|count|gutter|offset>|componentProperties/<name> (instances: boolean/text properties; variant properties take string variables naming a value)|width|height|opacity (percent)|cornerRadius|gap|paddingHorizontal|characters|visible|fontSize…; list indices bottom first), variable (its id, `Collection/name`, or a name only one variable has; null unbinds)}",
             true,
             bind
         ),
@@ -510,7 +510,7 @@ fn bind_style(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(EngineError::Disabled(cmd.into(), crate::library::READ_ONLY.into()));
     }
     let var = match string(p, "variable") {
-        Some(v) => Some(doc.variables.get(&v).map(|x| (x.id.clone(), x.kind)).ok_or_else(|| bad(cmd, "no such variable"))?),
+        Some(v) => Some(doc.variables.find(&v).map(|x| (x.id.clone(), x.kind)).map_err(|e| bad(cmd, e))?),
         None => None,
     };
     let Some(style) = doc.styles.get_mut(idx) else { return Err(bad(cmd, "no such style")) };
@@ -852,7 +852,7 @@ pub fn bind(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = req_targets(cmd, s, p)?;
     let doc = s.doc_mut()?;
     let vid = match &var {
-        Some(v) => Some(doc.variables.get(v).map(|x| x.id.clone()).ok_or_else(|| bad(cmd, "no such variable"))?),
+        Some(v) => Some(doc.variables.find(v).map(|x| x.id.clone()).map_err(|e| bad(cmd, e))?),
         None => None,
     };
     bind_variable(cmd, doc, &ids, &field, vid.as_deref())?;
@@ -1028,7 +1028,8 @@ fn var_create(s: &mut Session, p: &Value) -> Result<Value> {
     // variable yet, so they can't loop).
     for val in values.values_mut() {
         if let VariableValue::Alias(a) = val {
-            let t = doc.variables.get(a).filter(|t| t.kind == kind).ok_or_else(|| bad(cmd, format!("no {} variable `{a}` to alias", kind.id())))?;
+            let t =
+                doc.variables.find(a).ok().filter(|t| t.kind == kind).ok_or_else(|| bad(cmd, format!("no {} variable `{a}` to alias", kind.id())))?;
             *a = t.id.clone();
         }
     }
@@ -1037,19 +1038,22 @@ fn var_create(s: &mut Session, p: &Value) -> Result<Value> {
         super::variables::check_resolves(cmd, &doc.variables, "", &coll.id, m, val)?;
     }
     let id = doc.new_variable_id();
-    doc.variables.variables.push(Variable {
-        id: id.clone(),
-        name,
-        collection: coll.id,
-        kind,
-        values,
-        description: string(p, "description").unwrap_or_default(),
-        scopes: None,
-        hidden_from_publishing: false,
-        extends: None,
-        overrides: Default::default(),
-        code_syntax: Default::default(),
-    });
+    doc.variables.variables.push(
+        Variable {
+            id: id.clone(),
+            name,
+            collection: coll.id,
+            kind,
+            values,
+            description: string(p, "description").unwrap_or_default(),
+            scopes: None,
+            hidden_from_publishing: false,
+            extends: None,
+            overrides: Default::default(),
+            code_syntax: Default::default(),
+        }
+        .into(),
+    );
     Ok(json!({"id": id}))
 }
 
@@ -1061,7 +1065,7 @@ pub fn var_set(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "variable.set";
     let v = req_string(cmd, p, "variable")?;
     let doc = s.doc_mut()?;
-    let var = doc.variables.get(&v).cloned().ok_or_else(|| bad(cmd, "no such variable"))?;
+    let var = doc.variables.find(&v).cloned().map_err(|e| bad(cmd, e))?;
     let coll = doc.variables.collection_by_id(&var.collection).cloned().ok_or_else(|| bad(cmd, "variable has no collection"))?;
     let mode = match string(p, "mode") {
         Some(m) => coll.find_mode(&m).map(|x| x.id.clone()).ok_or_else(|| bad(cmd, "no such mode"))?,
@@ -1260,27 +1264,29 @@ fn apply_bindings_matching(doc: &mut Document, only: Option<&std::collections::B
         Some(ids) => ids.iter().copied().filter(|i| doc.node(*i).is_some_and(|n| !n.bound.is_empty())).collect(),
         None => doc.nodes().filter(|n| !n.bound.is_empty()).map(|n| n.id).collect(),
     };
+    let mut pass = Pass::default();
     for id in bound {
-        let modes = doc.modes_for(id);
+        let (modes, known) = pass.modes(doc, id);
         let Some(n) = doc.node(id) else { continue };
-        let binds = n.bound.clone();
+        let was = doc.node_arc(id).cloned();
         let has_layout = n.layout.is_some();
         let mut sets = serde_json::Map::new();
         let mut effect_sets: Vec<(usize, String, VariableValue)> = Vec::new();
         let mut paint_sets: Vec<(bool, usize, Option<usize>, Color)> = Vec::new();
         let mut grid_sets: Vec<(usize, String, f64)> = Vec::new();
         let mut prop_sets: Vec<(String, VariableValue)> = Vec::new();
-        for (field, var) in binds {
-            if !include(&field) {
+        // Read in place (not copied): a field is copied only when its value is set below.
+        for (field, var) in &n.bound {
+            if !include(field) {
                 continue;
             }
             // A binding never creates an auto layout: without one it waits for the next.
             if !has_layout && super::props::LAYOUT_KEYS.contains(&field.as_str()) {
                 continue;
             }
-            let Some(val) = doc.variables.resolve(&var, &modes) else { continue };
+            let Some(val) = pass.resolve(&doc.variables, known, var, &modes) else { continue };
             // One list item's value: a paint's colour, an effect's or a layout grid's field.
-            if let Some((list, i, prop)) = list_binding(&field) {
+            if let Some((list, i, prop)) = list_binding(field) {
                 match (list, &val) {
                     (BoundList::Fills | BoundList::Strokes, VariableValue::Color(c)) if prop == "color" => {
                         paint_sets.push((list == BoundList::Fills, i, None, *c));
@@ -1315,7 +1321,7 @@ fn apply_bindings_matching(doc: &mut Document, only: Option<&std::collections::B
                 // Resolved values are plain, so these never occur here.
                 VariableValue::Alias(_) | VariableValue::ColorAlpha { .. } | VariableValue::ColorMix { .. } => continue,
             };
-            sets.insert(field, jv);
+            sets.insert(field.clone(), jv);
         }
         if !sets.is_empty() {
             // Most bound values are already in place: leave those layers untouched (shared with the
@@ -1345,7 +1351,102 @@ fn apply_bindings_matching(doc: &mut Document, only: Option<&std::collections::B
         if !prop_sets.is_empty() {
             super::component::apply_prop_bindings(doc, id, &prop_sets);
         }
+        pass.after(was.as_ref(), doc.node_arc(id));
     }
+}
+
+/// What one pass of [`apply_bindings_matching`] works out once: the layers' modes, each chain of
+/// parents once (siblings share it), and what each variable resolves to in each set of modes met
+/// (the variables don't change in a pass). A prototype's run applies bindings after nearly every
+/// action (performance budget PF2).
+#[derive(Default)]
+struct Pass {
+    modes: figcraft_doc::ModesCache,
+    /// Each set of modes met, by its place in `resolved`.
+    in_modes: figcraft_doc::fast_hash::FastMap<std::sync::Arc<BTreeMap<CollectionId, ModeId>>, usize>,
+    resolved: Vec<figcraft_doc::fast_hash::FastMap<String, Option<VariableValue>>>,
+    /// The set of modes met last and its place: layers next to each other share one (the same
+    /// `Arc` from `modes`), found without hashing it again.
+    last: Option<(std::sync::Arc<BTreeMap<CollectionId, ModeId>>, usize)>,
+}
+
+impl Pass {
+    /// Layer `id`'s modes (`Document::modes_for`), and their place for [`Self::resolve`].
+    fn modes(&mut self, doc: &Document, id: NodeId) -> (std::sync::Arc<BTreeMap<CollectionId, ModeId>>, usize) {
+        let modes = self.modes.shared(doc, id);
+        if let Some((last, i)) = &self.last
+            && std::sync::Arc::ptr_eq(last, &modes)
+        {
+            return (modes, *i);
+        }
+        let known = match self.in_modes.get(&*modes) {
+            Some(i) => *i,
+            None => {
+                self.in_modes.insert(modes.clone(), self.resolved.len());
+                self.resolved.push(Default::default());
+                self.resolved.len() - 1
+            }
+        };
+        self.last = Some((modes.clone(), known));
+        (modes, known)
+    }
+
+    /// `vars.resolve(var, modes)`, where `known` is the place [`Self::modes`] gave `modes`.
+    fn resolve(&mut self, vars: &Variables, known: usize, var: &str, modes: &BTreeMap<CollectionId, ModeId>) -> Option<VariableValue> {
+        let Some(known) = self.resolved.get_mut(known) else { return vars.resolve(var, modes) };
+        if let Some(v) = known.get(var) {
+            return v.clone();
+        }
+        let v = vars.resolve(var, modes);
+        known.insert(var.to_string(), v.clone());
+        v
+    }
+
+    /// A layer's bindings were applied (`was` before, `now` after): what the layers after it
+    /// resolve in changes with a layer's parent, children or modes, and with an instance's main
+    /// component (a bound variant property changes it here; its layers are rebuilt later, when the
+    /// edit is normalised).
+    fn after(&mut self, was: Option<&std::sync::Arc<Node>>, now: Option<&std::sync::Arc<Node>>) {
+        let changed = match (was, now) {
+            (Some(was), Some(now)) => !std::sync::Arc::ptr_eq(was, now) && moves_modes(was, now),
+            _ => true,
+        };
+        if changed {
+            self.modes.clear();
+        }
+    }
+}
+
+/// Whether going from `was` to `now` can change the variable modes of a layer (this one, or one
+/// inside it or elsewhere that inherits from it): see [`figcraft_doc::ModesCache`].
+fn moves_modes(was: &Node, now: &Node) -> bool {
+    fn instance(n: &Node) -> Option<(NodeId, &BTreeMap<String, Value>)> {
+        match &n.kind {
+            NodeKind::Instance { component, props } => Some((*component, props)),
+            _ => None,
+        }
+    }
+    was.parent != now.parent || was.var_modes != now.var_modes || was.children != now.children || instance(was) != instance(now)
+}
+
+/// Whether `list` compares equal to itself: not when a colour or a number in it is NaN.
+fn equals_itself(list: &[Paint]) -> bool {
+    list.eq(list)
+}
+
+/// Whether `list` after [`set_paint_color`] with these arguments would compare equal to it as it is
+/// (never for a list that doesn't equal itself: a NaN colour).
+pub(crate) fn paint_color_in_place(list: &[Paint], i: usize, stop: Option<usize>, c: Color) -> bool {
+    equals_itself(list)
+        && match (list.get(i), stop) {
+            (Some(p), Some(j)) => match &p.kind {
+                PaintKind::Gradient(g) => g.stops.get(j).is_none_or(|s| s.color == c),
+                _ => true,
+            },
+            (Some(p), None) => p.kind == PaintKind::Solid { color: c },
+            (None, None) => i != 0,
+            (None, Some(_)) => true,
+        }
 }
 
 /// Set paint `i`'s colour (or its gradient stop `stop`'s) to a bound colour; a first paint that
@@ -1400,6 +1501,15 @@ pub(crate) fn set_effect_field(effects: &mut [Effect], i: usize, prop: &str, val
 /// adds the paint.
 fn apply_paint_bindings(doc: &mut Document, id: NodeId, sets: &[(bool, usize, Option<usize>, Color)]) {
     let Some(n) = doc.node(id) else { return };
+    // Nearly always every colour is in place already: then nothing is copied to find that out (a
+    // prototype's run applies every binding after every action, PF2). Both lists are compared below,
+    // so both must equal themselves.
+    if equals_itself(&n.fills)
+        && equals_itself(&n.strokes)
+        && sets.iter().all(|(is_fill, i, stop, c)| paint_color_in_place(if *is_fill { &n.fills } else { &n.strokes }, *i, *stop, *c))
+    {
+        return;
+    }
     let (mut fills, mut strokes) = (n.fills.clone(), n.strokes.clone());
     for (is_fill, i, stop, c) in sets {
         set_paint_color(if *is_fill { &mut fills } else { &mut strokes }, *i, *stop, *c);

@@ -3,6 +3,19 @@ use super::{
     Transition, Trigger, Waiting,
 };
 
+/// A temporary state taken off while a lasting interaction runs under it.
+struct Lifted {
+    temp: Temp,
+    /// What the viewer was looking at: the document as displayed, its screen and that screen's
+    /// texture.
+    shown: Option<(Document, NodeId, Option<FrameTex>)>,
+}
+
+/// Whether two overlay stacks hold the same overlays in the same order.
+fn same_overlays(a: &[OverlayState], b: &[OverlayState]) -> bool {
+    a.iter().map(|o| o.id).eq(b.iter().map(|o| o.id))
+}
+
 #[derive(Clone, Copy)]
 struct ActionTiming {
     transition: Transition,
@@ -60,11 +73,17 @@ impl Presenter {
             Trigger::OnPress => Some(true),
             _ => None,
         };
+        // A lasting interaction (a click, a key, a delay) that fires while a hover or press shows
+        // acts on the state under it, so that what it does outlives the hover or press.
+        let lifted = if temp.is_none() { self.lift_temp() } else { None };
         let snap = if temp.is_some() && self.temp.is_none() { self.snapshot() } else { None };
         let mut did = false;
         let first_link = self.urls.len();
         for a in &it.actions {
             did |= self.perform(a, node, it.transition, dur, it.easing, rect, now);
+        }
+        if let Some(lifted) = lifted {
+            self.lay_temp(lifted, now);
         }
         let asked = live
             && matches!(
@@ -75,9 +94,76 @@ impl Presenter {
             link.1 = asked;
         }
         if did && let (Some(press), Some(snap), Some(rect)) = (temp, snap, rect) {
-            self.temp = Some(Temp { rect, press, snap, transition: it.transition, dur, easing: it.easing });
+            self.temp = Some(Temp { rect, press, snap, transition: it.transition, dur, easing: it.easing, node, actions: it.actions.clone() });
         }
         did
+    }
+
+    /// Before a lasting interaction runs while a "while hovering / pressing" state shows: take
+    /// that state off, leaving the document as it will be once the pointer leaves or lifts. The
+    /// interaction's actions then change that document, and [`lay_temp`](Self::lay_temp) puts the
+    /// hover or press back over the result. Without this, the pointer leaving restored a copy
+    /// from before the interaction: a click on a hovered button that opened a menu had its menu
+    /// closed on leaving the button, a counter it raised went back, and a click that left the
+    /// screen made the hover's change permanent.
+    ///
+    /// Only a temporary state that changed nothing but the document (variables, variants, modes:
+    /// a hover or pressed state) is lifted. One that itself changed the screen or the overlays
+    /// (a hover that shows another screen) keeps the older rule: what fires meanwhile is part of
+    /// it and goes with it.
+    fn lift_temp(&mut self) -> Option<Lifted> {
+        let t = self.temp.as_ref()?;
+        if t.snap.current != self.current || !same_overlays(&t.snap.overlays, &self.overlays) {
+            return None;
+        }
+        let shown = self.display().map(|d| (d, self.current, self.textures.get(&self.current).cloned()));
+        let temp = self.temp.take()?;
+        self.design = Some(temp.snap.doc.clone());
+        // What a revert puts back, besides the document: a hover that scrolled (a scroll-to
+        // while hovering) must not leave its scroll in the state the interaction builds on, or
+        // it would outlive the hover.
+        self.history.clone_from(&temp.snap.history);
+        self.scroll.clone_from(&temp.snap.scroll);
+        self.relayout();
+        Some(Lifted { temp, shown })
+    }
+
+    /// After a lasting interaction ran under a lifted hover or press: when the same screen and
+    /// overlays still show, the hover or press goes back over what the interaction left (its
+    /// actions run again, at once, and the state to revert to is the interaction's result);
+    /// otherwise it is over. A transition the interaction started leaves from what the viewer
+    /// was looking at, the hovered or pressed look.
+    fn lay_temp(&mut self, lifted: Lifted, now: f64) {
+        let Lifted { temp: mut t, shown } = lifted;
+        if let (Some(a), Some((doc, frame, tex))) = (self.anim.as_mut().filter(|a| a.start == now), shown) {
+            a.from_doc = doc;
+            a.from_frame = frame;
+            a.from_tex = tex;
+        }
+        // The layer still plays the hover or press that was showing (an instance the interaction
+        // changed to another variant plays that variant's now).
+        let trigger = if t.press { Trigger::OnPress } else { Trigger::OnHover };
+        let plays = |d: &Document| d.node(t.node).is_some_and(|n| n.interactions.iter().any(|it| it.trigger == trigger && it.actions == t.actions));
+        let still = self.temp.is_none()
+            && t.snap.current == self.current
+            && same_overlays(&t.snap.overlays, &self.overlays)
+            && self.doc.as_ref().is_some_and(plays);
+        if !still {
+            // What is under the pointer now gets its own mouse enter and hover.
+            self.hovered.clear();
+            return;
+        }
+        let Some(snap) = self.snapshot() else { return };
+        // Laying it back is not something happening: no transition of its own, no links opened
+        // again, and the interaction's transition plays on.
+        let (anim, links) = (self.anim.take(), self.urls.len());
+        for a in &t.actions.clone() {
+            self.perform(a, t.node, Transition::Instant, 0.0, t.easing, Some(t.rect), now);
+        }
+        self.anim = anim;
+        self.urls.truncate(links);
+        t.snap = snap;
+        self.temp = Some(t);
     }
 
     /// Run the widget clicks the player took: each calls its plugin back on the player's copy (the

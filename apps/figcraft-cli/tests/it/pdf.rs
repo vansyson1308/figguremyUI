@@ -3,7 +3,7 @@
 use std::process::Command;
 
 fn bin() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_figcraft-cli"))
+    Command::new(env!("CARGO_BIN_EXE_figguremyui-cli"))
 }
 
 fn pages(pdf: &[u8]) -> usize {
@@ -13,7 +13,7 @@ fn pages(pdf: &[u8]) -> usize {
 
 #[test]
 fn pdf_export_one_page_per_frame() {
-    let d = std::env::temp_dir().join(format!("figcraft-cli-pdf-{}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("figguremyui-cli-pdf-{}", std::process::id()));
     std::fs::create_dir_all(&d).unwrap();
     // Two frames and a loose rectangle (not a frame: left out of the frames PDF).
     let script = d.join("s.jsonl");

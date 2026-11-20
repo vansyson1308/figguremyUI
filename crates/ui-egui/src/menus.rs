@@ -153,7 +153,7 @@ pub fn invoke(app: &mut FigApp, id: &str) {
             // Only a selected layer has a link, and the copy goes through the control-channel fence
             // (`clipboard_set_text`): a synthetic gesture never replaces the user's clipboard.
             if let Some(id) = app.session.selection().first() {
-                app.clipboard_set_text(&format!("figcraft://node/{}", id.0));
+                app.clipboard_set_text(&format!("{}node/{}", figcraft_engine::figcraft_collab::scheme::PREFIX, id.0));
                 app.toast(tr("Link copied"));
             }
         }
@@ -219,7 +219,7 @@ pub fn invoke(app: &mut FigApp, id: &str) {
             // gestures keep the engine's copy but never replace the user's clipboard; `run` then
             // invalidates the old mirror because it no longer describes the engine clipboard.
             if !app.control_synthetic && !refused {
-                let text = mirror.unwrap_or_else(|| format!("figcraft://clipboard/{}", ids.len()));
+                let text = mirror.unwrap_or_else(|| format!("{}clipboard/{}", figcraft_engine::figcraft_collab::scheme::PREFIX, ids.len()));
                 app.clipboard_set_text(&text);
                 app.ui.last_copy = Some(text);
                 app.ui.last_copy_generation = app.session.clipboard.layers_generation;

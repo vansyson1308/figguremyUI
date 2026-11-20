@@ -473,6 +473,9 @@ fn every_command_survives_junk_params() {
         json!({"commands": [{"command": "select.all", "as": "\u{0}"}, {"command": "node.set", "params": {"ids": [
             {"$ref": "\u{0}", "field": "ids/18446744073709551616/x"}, {"$ref": {"x": 1}}, {"$step": 0, "field": "//"}, {"$ref": "\u{0}", "field": "/"}],
             "props": {"name": {"$ref": "nope", "field": 5}}}}]}),
+        // Positions and sizes past the range layers have (F-11), finite all the same.
+        json!({"ids": [2, 3], "type": "frame", "x": 5e9, "y": -1e300, "width": 1e308, "height": 2e9, "dx": 1e300, "dy": -1e300, "factor": 1e300,
+               "props": {"x": 1e12, "y": -1e308, "width": 1e308, "height": 3e9, "rotation": 1e308, "absoluteRotation": -1e308}}),
         // Font downloads: family names as junk and as paths (a family is only ever looked up in
         // the font index, never used as a path).
         json!({"family": "../../\u{0}Lato"}),
@@ -508,6 +511,10 @@ fn every_command_survives_junk_params() {
                 let _ = s.execute("text.create", &json!({"text": "t"}));
                 if let Err(EngineError::Internal { cmd, msg }) = s.execute(spec.id, params) {
                     panic!("{cmd} panicked on {params}: {msg}");
+                }
+                // Nor stores a position or size that isn't finite or lies past the range (F-11).
+                if let Some(n) = s.doc().ok().and_then(|d| d.nodes().find(|n| crate::session::out_of_range(n)).cloned()) {
+                    panic!("{} on {params} left \"{}\" at {:?}, {} x {}", spec.id, n.name, n.transform, n.width, n.height);
                 }
             }
         }
@@ -684,9 +691,9 @@ fn find_replace_changing_only_the_case_replaces_every_occurrence() {
     let mut s = sess();
     let t = id(&s.execute("text.create", &json!({"text": "figcraft and FIGCRAFT, figcraft", "x": 0, "y": 0})).unwrap());
     let f = id(&s.execute("frame.create", &json!({"x": 0, "y": 80, "width": 50, "height": 50, "name": "figcraft / figcraft"})).unwrap());
-    s.execute("edit.findReplace", &json!({"find": "figcraft", "replace": "FigCraft", "layerNames": true})).unwrap();
-    assert_eq!(s.doc().unwrap().node(t).unwrap().kind.text().unwrap().characters, "FigCraft and FigCraft, FigCraft");
-    assert_eq!(s.doc().unwrap().node(f).unwrap().name, "FigCraft / FigCraft");
+    s.execute("edit.findReplace", &json!({"find": "figcraft", "replace": "Figgure My UI", "layerNames": true})).unwrap();
+    assert_eq!(s.doc().unwrap().node(t).unwrap().kind.text().unwrap().characters, "Figgure My UI and Figgure My UI, Figgure My UI");
+    assert_eq!(s.doc().unwrap().node(f).unwrap().name, "Figgure My UI / Figgure My UI");
 }
 
 /// Damaged and too-old `.sketch` data sent to the file commands (which the junk sweep skips) fail

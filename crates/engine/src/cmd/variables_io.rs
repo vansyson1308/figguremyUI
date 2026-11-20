@@ -226,13 +226,13 @@ fn dart_comment(text: &str) -> String {
 /// per variable. Aliases are resolved to their value in that mode (a variable of another
 /// collection in that collection's default mode), so each class stands alone.
 fn dart(vars: &Variables, colls: &[&Collection]) -> String {
-    let mut out = String::from("// Variables exported from FigCraft.\n\nimport 'dart:ui';\n");
+    let mut out = String::from("// Variables exported from Figgure My UI.\n\nimport 'dart:ui';\n");
     let mut classes = BTreeSet::new();
     for c in colls {
         let base = dart_ident(&c.name, true);
         let mut members = BTreeSet::new();
         let names: Vec<(&Variable, String)> =
-            vars.variables.iter().filter(|v| v.collection == c.id).map(|v| (v, dart_unique(dart_ident(&v.name, false), &mut members))).collect();
+            vars.variables.iter().filter(|v| v.collection == c.id).map(|v| (&**v, dart_unique(dart_ident(&v.name, false), &mut members))).collect();
         for (i, m) in c.modes.iter().enumerate() {
             let class = dart_unique(if i == 0 { base.clone() } else { format!("{base}{}", dart_ident(&m.name, true)) }, &mut classes);
             out.push_str(&format!("\n/// {} · {}\nabstract final class {class} {{\n", dart_comment(&c.name), dart_comment(&m.name)));
@@ -321,9 +321,9 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
                     values: BTreeMap::new(),
                     extends: None,
                     overrides: BTreeSet::new(),
-                    ..v.clone()
+                    ..Variable::clone(v)
                 };
-                doc.variables.variables.push(blank);
+                doc.variables.variables.push(blank.into());
                 ids.insert(v.id.clone(), id);
                 added += 1;
             }

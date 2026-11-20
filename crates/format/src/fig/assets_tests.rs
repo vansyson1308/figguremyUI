@@ -73,7 +73,10 @@ fn themed() -> Document {
             &[("m-light", VariableValue::String("Hello".into())), ("m-dark", VariableValue::String("Grüße 😀".into()))],
         ),
         shown,
-    ];
+    ]
+    .into_iter()
+    .map(Into::into)
+    .collect();
     doc.node_mut(page).unwrap().var_modes.insert("c-space".into(), "m-only".into());
     let bind = |n: &mut Node, pairs: &[(&str, &str)]| n.bound.extend(pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())));
     let frame = add(&mut doc, page, NodeKind::Frame, "Card", (0.0, 0.0), (300.0, 200.0), &|n| {
@@ -356,14 +359,10 @@ fn bindings_the_format_cant_say_keep_their_value_with_a_warning() {
     n.var_modes.insert("c-gone".into(), "m-light".into());
     n.styles.fill = Some("s-gone".into());
     doc.variables.variables[0].scopes = Some(vec!["GAP".into(), "FONT_WEIGHT".into()]);
-    doc.variables.variables.push(var("v-lost", "lost", "c-gone", VariableType::Number, &[("m", VariableValue::Number(1.0))]));
-    doc.variables.variables.push(var(
-        "v-dangling",
-        "dangling",
-        "c-space",
-        VariableType::Number,
-        &[("m-only", VariableValue::Alias("v-gone".into()))],
-    ));
+    doc.variables.variables.push(var("v-lost", "lost", "c-gone", VariableType::Number, &[("m", VariableValue::Number(1.0))]).into());
+    doc.variables
+        .variables
+        .push(var("v-dangling", "dangling", "c-space", VariableType::Number, &[("m-only", VariableValue::Alias("v-gone".into()))]).into());
     let (bytes, warnings) = export(&doc, None).unwrap();
     for part in [
         "properties the format has no field for",
@@ -394,8 +393,8 @@ fn colour_calculations_are_written_as_the_colour_they_show() {
         to: ColorOperand::Literal { literal: Color::new(1.0, 0.0, 0.0, 1.0) },
         t: 0.5,
     };
-    doc.variables.variables.push(var("v-veil", "color/veil", "c-theme", VariableType::Color, &[("m-light", fade("v-bg")), ("m-dark", mix)]));
-    doc.variables.variables.push(var("v-broken", "color/broken", "c-theme", VariableType::Color, &[("m-light", fade("v-gone"))]));
+    doc.variables.variables.push(var("v-veil", "color/veil", "c-theme", VariableType::Color, &[("m-light", fade("v-bg")), ("m-dark", mix)]).into());
+    doc.variables.variables.push(var("v-broken", "color/broken", "c-theme", VariableType::Color, &[("m-light", fade("v-gone"))]).into());
     let (bytes, warnings) = export(&doc, None).unwrap();
     assert!(warnings.iter().any(|w| w == crate::CALCULATIONS_LEFT_OUT), "{warnings:?}");
     let (back, _) = import(&bytes, "x").unwrap();
@@ -443,7 +442,7 @@ fn styled() -> Document {
         kind,
         bound: Default::default(),
     };
-    doc.styles = vec![
+    *doc.styles = vec![
         style("s-text", "Heading", StyleKind::Text { style: heading.clone(), paragraph: Default::default() }),
         style("s-brand", "Brand/Primary", StyleKind::Paint { paints: vec![solid(0.25, 0.5, 1.0)] }),
         style("s-unused", "Brand/Unused", StyleKind::Paint { paints: vec![solid(1.0, 0.0, 0.0), solid(0.0, 1.0, 0.0)] }),
@@ -510,8 +509,11 @@ fn a_styled_layers_fill_variable_survives_a_round_trip() {
     let light = Color::new(0.1, 0.3, 0.7, 1.0);
     let dark = VariableValue::Color(Color::new(0.8, 0.9, 1.0, 1.0));
     doc.variables.variables =
-        vec![var("v-accent", "Accent color", "c-theme", VariableType::Color, &[("m-light", VariableValue::Color(light)), ("m-dark", dark)])];
-    doc.styles = vec![Style {
+        vec![var("v-accent", "Accent color", "c-theme", VariableType::Color, &[("m-light", VariableValue::Color(light)), ("m-dark", dark)])]
+            .into_iter()
+            .map(Into::into)
+            .collect();
+    *doc.styles = vec![Style {
         id: "s-accent".into(),
         name: "Accent".into(),
         description: String::new(),

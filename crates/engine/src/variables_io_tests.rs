@@ -644,7 +644,7 @@ fn stored_variable_ids_reset_only_the_inherited_parent_and_collection() {
         inherited.overrides = inherited.values.keys().cloned().collect();
         inherited.values.values_mut().for_each(|v| *v = VariableValue::Number(2.0));
         doc.variables.collections.push(coll);
-        doc.variables.variables.push(inherited);
+        doc.variables.variables.push(inherited.into());
         ex(&mut s, "variable.resetOverride", json!({"variable": "inherited", "mode": "Dark"}));
         let result = s.doc().unwrap().variables.get_by_id("inherited").unwrap();
         assert_eq!(result.values[&light], VariableValue::Number(2.0));

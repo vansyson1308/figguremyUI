@@ -129,6 +129,7 @@ pub(super) fn set(s: &mut Session, p: &Value) -> Result<Value> {
         None => Vec::new(),
     };
     let mut warnings = font_style_warnings(&s.ds()?.doc, &ids, &props);
+    warnings.extend(crate::fonts::props_family_warning(&props));
     // Type-specific keys go to the layers that take them and are skipped, with a warning, on the
     // others: auto layout keys to frame-like layers, `path` to vectors. With none among the targets
     // that take them, the first refuses them (`props::layout_mut`, `props::apply`).

@@ -27,9 +27,15 @@ pub struct Desktop {
     last_folder: Arc<Mutex<Option<PathBuf>>>,
 }
 
-/// The settings folder's name in the platform folder, as it always was (the suite keeps existing
-/// folder names), and craft-settings' app id: `FIGCRAFT_CONFIG_DIR` names another folder.
-const APP_ID: &str = "FigCraft";
+/// The settings folder's name in the platform folder, and craft-settings' app id:
+/// `FIGGUREMYUI_CONFIG_DIR` names another folder. Its own folder, so this fork never shares or
+/// overwrites FigCraft's settings.
+const APP_ID: &str = "FiggureMyUI";
+
+/// The settings folder FigCraft, which this app is a fork of, keeps in the platform folder. Its
+/// preferences are copied once into a new settings folder that has none ([`migrate`]); nothing is
+/// ever written there. Its recovery copies and plugins stay where they are.
+const OLD_APP_ID: &str = "FigCraft"; // brand: compat
 
 /// Where the preferences, recovery copies and installed plugins live ([`settings_dir`]).
 pub fn config_dir() -> Option<PathBuf> {
@@ -49,21 +55,64 @@ fn platform_dir() -> Option<PathBuf> {
 }
 
 /// The settings folder by the suite's rules (craft-settings), from what `probe` sees:
-/// `FIGCRAFT_CONFIG_DIR` (set but empty: none, nothing read or written); a `portable` file next
+/// `FIGGUREMYUI_CONFIG_DIR` (set but empty: none, nothing read or written); a `portable` file next
 /// to the executable (next to the `.app` on macOS), which puts them in `config/` beside it; else
-/// `FigCraft` in the platform folder, where they always were. A portable folder without
-/// preferences yet starts with a copy of the platform folder's, so an existing copy that becomes
-/// portable keeps its settings; the original stays for an installed app. No platform folder: none.
+/// `FiggureMyUI` in the platform folder. FigCraft's `FIGCRAFT_CONFIG_DIR` counts when
+/// `FIGGUREMYUI_CONFIG_DIR` isn't set. A portable folder without preferences yet starts with a copy
+/// of the platform folder's, so an existing copy that becomes portable keeps its settings; the
+/// original stays for an installed app. A new folder without preferences takes a copy of FigCraft's
+/// ([`migrate`]). No platform folder: none.
 pub(crate) fn settings_dir(probe: &craft_settings::Probe) -> Option<PathBuf> {
     use craft_settings::{Location, Portable, Rule};
+    let new_var = craft_settings::paths::env_var_name(APP_ID);
+    if (probe.env)(&new_var).is_none()
+        && let Some(old) = (probe.env)(&craft_settings::paths::env_var_name(OLD_APP_ID))
+    {
+        // Set but empty: isolated, as for the new name.
+        return (!old.is_empty()).then(|| PathBuf::from(old));
+    }
     let resolved = craft_settings::paths::resolve(APP_ID, &Portable::DEFAULT, &Location::Auto, probe);
     match (&resolved.rule, &resolved.dir, &probe.platform_config_dir) {
-        (Rule::Portable, Some(dir), Some(platform)) => seed(dir, &platform.join(APP_ID)),
+        (Rule::Portable, Some(dir), Some(platform)) => {
+            seed(dir, &platform.join(APP_ID));
+            migrate(dir, &platform.join(OLD_APP_ID));
+        }
+        (Rule::Platform, Some(dir), Some(platform)) => migrate(dir, &platform.join(OLD_APP_ID)),
         // The current directory instead: settings would follow wherever the app was started.
         (Rule::Fallback, ..) => return None,
         _ => {}
     }
     resolved.dir
+}
+
+/// Copy FigCraft's preferences from its folder `from` into the folder `to` once, when `to` has none
+/// and they read as preferences (owner-only, as written). Never moves them and never writes in
+/// `from`. Preferences that don't read are left alone: the app starts with the defaults and the log
+/// says why.
+fn migrate(to: &Path, from: &Path) {
+    let (target, source) = (to.join(STATE), from.join(STATE));
+    if target.exists() || !source.is_file() {
+        return;
+    }
+    let bytes = match std::fs::read(&source) {
+        Ok(bytes) => bytes,
+        Err(e) => return log::warn!("preferences: couldn't read {OLD_APP_ID}'s in {}: {e}; starting with the defaults", from.display()),
+    };
+    if !valid_state(&bytes) {
+        return log::warn!(
+            "preferences: {OLD_APP_ID}'s in {} don't read as preferences; starting with the defaults (that file is left as it is)",
+            source.display()
+        );
+    }
+    match std::fs::create_dir_all(to).and_then(|()| write_private(&target, &bytes)) {
+        Ok(()) => log::info!("preferences: copied {OLD_APP_ID}'s from {} into {}", source.display(), to.display()),
+        Err(e) => log::warn!("preferences: couldn't copy {OLD_APP_ID}'s into {}: {e}", to.display()),
+    }
+}
+
+/// Whether `bytes` is a preferences file the app reads: JSON whose `prefs` are [`Prefs`].
+fn valid_state(bytes: &[u8]) -> bool {
+    serde_json::from_slice::<Value>(bytes).ok().and_then(|v| v.get("prefs").cloned()).is_some_and(|p| serde_json::from_value::<Prefs>(p).is_ok())
 }
 
 /// Copy `from`'s preferences into the folder `to` when it has none (owner-only, as written).
@@ -439,7 +488,7 @@ fn read_clipboard<T>(c: &mut arboard::Clipboard, read: fn(&mut arboard::Clipboar
 /// Native Save as filters; other callers keep their existing combined filter.
 fn save_filters<'a>(exts: &'a [&'a str]) -> Vec<(&'static str, &'a [&'a str])> {
     if exts == ["figcraft", "fig"] {
-        vec![("FigCraft (.figcraft)", &exts[..1]), (figcraft_ui_egui::i18n::tr(".fig (experimental)"), &exts[1..])]
+        vec![(figcraft_ui_egui::native_file_type(), &exts[..1]), (figcraft_ui_egui::i18n::tr(".fig (experimental)"), &exts[1..])]
     } else {
         vec![("File", exts)]
     }
@@ -573,9 +622,9 @@ impl Services for Desktop {
 pub fn window_icon() -> Option<egui::IconData> {
     // macOS wants Apple's padded grid; the other platforms the rounded tile edge to edge.
     #[cfg(target_os = "macos")]
-    let bytes = include_bytes!("../../../assets/app-icon/figcraft-256.png");
+    let bytes = include_bytes!("../../../assets/app-icon/figguremyui-256.png");
     #[cfg(not(target_os = "macos"))]
-    let bytes = include_bytes!("../../../assets/app-icon/hicolor/256x256/apps/ai.storyteller.figcraft.png");
+    let bytes = include_bytes!("../../../assets/app-icon/hicolor/256x256/apps/io.github.vansyson1308.figguremyui.png");
     let img = image::load_from_memory(bytes).ok()?.to_rgba8();
     let (w, h) = img.dimensions();
     Some(egui::IconData { rgba: img.into_raw(), width: w, height: h })
@@ -646,8 +695,17 @@ mod save_filter_tests {
         let extensions = ["figcraft", "fig"];
         assert_eq!(
             save_filters(&extensions),
-            vec![("FigCraft (.figcraft)", &extensions[..1]), (figcraft_ui_egui::i18n::tr(".fig (experimental)"), &extensions[1..])]
+            vec![("Figgure My UI file (.figcraft)", &extensions[..1]), (figcraft_ui_egui::i18n::tr(".fig (experimental)"), &extensions[1..])]
         );
+    }
+
+    /// QC2-07: both labels are catalog entries, so the dialog shows them in the UI language (the
+    /// native format's label was a literal: English in every language).
+    #[test]
+    fn save_filter_labels_come_from_the_catalog() {
+        for (label, _) in save_filters(&["figcraft", "fig"]) {
+            assert!(figcraft_ui_egui::i18n::try_tr(label).is_some(), "{label:?} isn't in the catalog");
+        }
     }
 
     #[test]

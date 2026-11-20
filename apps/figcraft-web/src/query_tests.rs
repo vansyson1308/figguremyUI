@@ -4,7 +4,7 @@ use crate::query::{control, join_link, page_server};
 
 #[test]
 fn join_takes_the_rest_of_the_fragment() {
-    let link = "figcraft://join?host=192.168.1.20:47900&file=abc&token=AbCdEfGhIjKlMnOpQrStUv";
+    let link = "figguremyui://join?host=192.168.1.20:47900&file=abc&token=AbCdEfGhIjKlMnOpQrStUv";
     assert_eq!(join_link(&format!("#join={link}")), Some(link), "a pasted link keeps its own &s");
     assert_eq!(join_link(&format!("#x=1&join={link}")), Some(link), "after other entries");
     assert_eq!(join_link("#join=figcraft%3A%2F%2Fjoin%3Fhost%3Dh"), Some("figcraft%3A%2F%2Fjoin%3Fhost%3Dh"), "escaped, decoded later");
@@ -23,7 +23,7 @@ fn no_join_without_the_entry() {
 
 #[test]
 fn an_overlong_link_is_ignored() {
-    let long = format!("#join=figcraft://join?host=h&file=f&token={}", "a".repeat(7000));
+    let long = format!("#join=figguremyui://join?host=h&file=f&token={}", "a".repeat(7000));
     assert_eq!(join_link(&long), None);
     assert_eq!(join_link(&format!("#join={}", "é".repeat(4000))), None, "length counts bytes");
 }

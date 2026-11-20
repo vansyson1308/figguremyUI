@@ -161,6 +161,37 @@ fn add_variant_on_a_lone_component_keeps_prop_value_names_and_rolls_back_on_erro
     healthy(&s);
 }
 
+/// F-14: `{property, value}` on a lone component named without pairs used to fail ("unknown
+/// variant property") because the set it became had only "Property 1". The property asked for
+/// is the set's property instead, the component its `Default`.
+#[test]
+fn add_variant_with_a_property_on_a_lone_component_names_the_sets_property() {
+    let mut s = Session::new();
+    let c = component(&mut s, "Button", 0.0);
+    let steps = undo_len(&s);
+    let v = idv(&ex(&mut s, "component.addVariant", json!({"id": c, "property": "State", "value": "Hover"})));
+    let set = node(&s, c).parent.unwrap();
+    assert!(matches!(node(&s, set).kind, NodeKind::ComponentSet { .. }));
+    assert_eq!(node(&s, set).name, "Button");
+    assert_eq!(node(&s, c).name, "State=Default");
+    assert_eq!(node(&s, v).name, "State=Hover");
+    assert_eq!(undo_len(&s), steps + 1, "one undo step");
+    healthy(&s);
+    // The set's properties are known now: another value of it, and an unknown one says what to do.
+    let w = idv(&ex(&mut s, "component.addVariant", json!({"id": set, "property": "State", "value": "Pressed"})));
+    assert_eq!(node(&s, w).name, "State=Pressed");
+    let e = s.execute("component.addVariant", &json!({"id": set, "property": "Size", "value": "Large"})).unwrap_err().to_string();
+    assert!(e.contains("the set has: State") && e.contains("component.addProperty"), "{e}");
+
+    // `Default` itself is the component's value already; a bad property name is refused. Both
+    // leave no set behind.
+    let d = component(&mut s, "Chip", 400.0);
+    let before = s.doc().unwrap().clone();
+    assert!(s.execute("component.addVariant", &json!({"id": d, "property": "State", "value": "Default"})).is_err());
+    assert!(s.execute("component.addVariant", &json!({"id": d, "property": "a=b", "value": "x"})).is_err());
+    assert_eq!(*s.doc().unwrap(), before);
+}
+
 #[test]
 fn add_variant_on_a_lone_component_in_auto_layout_keeps_its_place() {
     let mut s = Session::new();

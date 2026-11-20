@@ -30,7 +30,7 @@ use eframe::egui_wgpu::{WgpuConfiguration, WgpuSetup};
 use eframe::wgpu::{self, Backends, Dx12Compiler, InstanceFlags, Limits, PowerPreference};
 
 /// Which of the [`attempts`] this start is: set by the app itself when it starts again.
-pub const ATTEMPT_ENV: &str = "FIGCRAFT_GRAPHICS_ATTEMPT";
+pub const ATTEMPT_ENV: &str = "FIGGUREMYUI_GRAPHICS_ATTEMPT";
 
 /// Frames drawn before a failure below which the window was still starting up: the second frame
 /// begins once the first was presented.

@@ -6,12 +6,20 @@ use super::{
 /// The server files are shared through online unless Preferences name another: the only place
 /// its address is written.
 ///
-/// A build can ship another one, or none: set `FIGCRAFT_DEFAULT_SERVER` when compiling to a
-/// server's address (`wss://host/`), or to nothing (`FIGCRAFT_DEFAULT_SERVER=`) for a build whose
-/// online sharing stays off until the user enters a server in Preferences.
-pub const DEFAULT_SERVER: &str = match option_env!("FIGCRAFT_DEFAULT_SERVER") {
+/// None by default in this fork: the public server upstream FigCraft ships with is run by the
+/// upstream team for their own builds, so a build of the fork must not upload people's files there
+/// unless they enter it themselves. Online sharing stays off until the user enters a server in
+/// Preferences. A build can ship one: set `FIGGUREMYUI_DEFAULT_SERVER` (or FigCraft's
+/// `FIGCRAFT_DEFAULT_SERVER`) to a server's address (`wss://host/`) when compiling.
+pub const DEFAULT_SERVER: &str = match BUILD_DEFAULT_SERVER {
     Some(server) => server,
-    None => "wss://collab.craftapps.dev/",
+    None => "",
+};
+
+/// The server the build names, if it names one ([`DEFAULT_SERVER`]).
+pub const BUILD_DEFAULT_SERVER: Option<&str> = match option_env!("FIGGUREMYUI_DEFAULT_SERVER") {
+    Some(server) => Some(server),
+    None => option_env!("FIGCRAFT_DEFAULT_SERVER"),
 };
 
 /// Most selected ids one presence update carries (the rest aren't shown to others).
@@ -109,7 +117,7 @@ pub struct SessionInfo {
     /// The shared file's name and pages (the host's).
     pub file_name: String,
     pub pages: Vec<PageInfo>,
-    /// The invite link (`figcraft://join?host=…&file=…&token=…`) and the same as a plain
+    /// The invite link (`figguremyui://join?host=…&file=…&token=…`) and the same as a plain
     /// WebSocket URL. Both carry the session's secret token: share them only with people you
     /// invite.
     pub link: String,
@@ -260,7 +268,7 @@ pub fn join_target(server: &str, typed: &str) -> std::result::Result<String, Str
     match code::parse(typed)? {
         Code::Local(local) => Ok(local.link()),
         Code::Online(_) if server.trim().is_empty() => Err(format!("that is an online join code, and {ONLINE_OFF}")),
-        Code::Online(code) => Ok(format!("figcraft://join?server={}&code={code}", server.trim())),
+        Code::Online(code) => Ok(format!("{}join?server={}&code={code}", figcraft_collab::scheme::PREFIX, server.trim())),
     }
 }
 

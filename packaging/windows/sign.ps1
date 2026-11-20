@@ -15,7 +15,7 @@
   timestamp server, ...). Optional overrides: WINDOWS_TIMESTAMP_URL, SIGNTOOL (path to signtool.exe).
 
 .EXAMPLE
-  pwsh packaging/windows/sign.ps1 dist/figcraft.exe dist/FigCraft.msi
+  pwsh packaging/windows/sign.ps1 dist/figguremyui.exe dist/Figgure My UI.msi
 #>
 param(
   [Parameter(Mandatory = $true, ValueFromRemainingArguments = $true)]
@@ -55,8 +55,8 @@ if (-not $haveCert -and -not $haveAzure) {
 }
 
 $script:SignTool = Find-SignTool
-$common = @('sign', '/v', '/fd', 'SHA256', '/td', 'SHA256', '/d', 'FigCraft', '/du', 'https://github.com/storytold/figcraft')
-$tmp = Join-Path ([IO.Path]::GetTempPath()) "figcraft-sign-$([IO.Path]::GetRandomFileName())"
+$common = @('sign', '/v', '/fd', 'SHA256', '/td', 'SHA256', '/d', 'Figgure My UI', '/du', 'https://github.com/vansyson1308/figguremyUI')
+$tmp = Join-Path ([IO.Path]::GetTempPath()) "figguremyui-sign-$([IO.Path]::GetRandomFileName())"
 New-Item -ItemType Directory -Path $tmp | Out-Null
 
 try {

@@ -279,6 +279,8 @@ fn cancel_retargeted_field_save(ui: &mut Ui, id: Id) {
     let select_all = select_all_id(editor);
     ui.data_mut(|d| {
         d.remove::<String>(id);
+        // A multiline field's draft, with the pass it was kept on.
+        d.remove::<(String, u64)>(id);
         d.remove::<String>(id.with("editing"));
         d.remove::<String>(id.with("kept"));
         d.remove::<String>(id.with("buf"));
@@ -614,11 +616,29 @@ pub fn secret_field_named(ui: &mut Ui, id: Id, value: &str, width: f32, name: &s
 /// A multi-line text field across the panel (descriptions, notes) that commits when it loses
 /// focus: returns the new text then, when it changed. The draft lives only while it has focus.
 pub fn multiline_field(ui: &mut Ui, id: Id, value: &str, hint: &str, rows: usize) -> Option<String> {
+    multiline_field_named(ui, id, value, hint, rows, hint)
+}
+
+/// [`multiline_field`] named `name` for screen readers and `ui.inspect` (the question it answers).
+pub fn multiline_field_named(ui: &mut Ui, id: Id, value: &str, hint: &str, rows: usize, name: &str) -> Option<String> {
     cancel_retargeted_field_save(ui, id);
     let t = Tokens::get(ui.ctx());
     let te = id.with("te");
+    // A draft exists from the first frame the field has the keyboard until it is committed. It
+    // is what the field holds on the frame the keyboard leaves it too: Tab moves the focus on
+    // before the field is drawn, and what was typed is what is committed then.
+    // The draft remembers the pass it was last kept on. One the field didn't keep on the pass
+    // before (the field was hidden while it had the keyboard: another section, an entry that
+    // went away) is not what the person left it with just now: it is dropped, never committed
+    // later over what the file holds by then.
+    let pass = ui.ctx().cumulative_pass_nr();
+    let draft: Option<String> = ui.data(|d| d.get_temp::<(String, u64)>(id)).and_then(|(text, kept)| (pass <= kept + 2).then_some(text));
     let focused = ui.memory(|m| m.has_focus(te));
-    let mut text: String = if focused { ui.data(|d| d.get_temp(id)).unwrap_or_else(|| value.to_string()) } else { value.to_string() };
+    let left = draft.is_some() && !focused;
+    if draft.is_none() {
+        ui.data_mut(|d| d.remove::<(String, u64)>(id));
+    }
+    let mut text: String = draft.unwrap_or_else(|| value.to_string());
     let mut done = false;
     ui.horizontal(|ui| {
         ui.add_space(PAD);
@@ -635,14 +655,17 @@ pub fn multiline_field(ui: &mut Ui, id: Id, value: &str, hint: &str, rows: usize
             )
         });
         crate::shortcuts::release_field_for_save(&r.inner);
-        done = r.inner.lost_focus();
+        a11y::text(&r.inner, name, &text);
+        // The keyboard's ring goes round the whole field, padding included, not the text alone.
+        a11y::ring_around(ui, r.response.rect, &r.inner);
+        done = r.inner.lost_focus() || left;
     });
     if done {
-        ui.data_mut(|d| d.remove::<String>(id));
+        ui.data_mut(|d| d.remove::<(String, u64)>(id));
         return (text != value).then_some(text);
     }
     if ui.memory(|m| m.has_focus(te)) {
-        ui.data_mut(|d| d.insert_temp(id, text));
+        ui.data_mut(|d| d.insert_temp(id, (text, pass)));
     }
     None
 }

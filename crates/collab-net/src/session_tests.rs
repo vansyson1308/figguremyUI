@@ -43,7 +43,7 @@ pub(crate) fn host_and_join() -> (Session, Session, u32, u32) {
     assert_eq!(r["role"], "host");
     assert_eq!(r["network"], false, "shared on this machine only by default");
     let link = r["link"].as_str().unwrap().to_string();
-    assert!(link.starts_with("figcraft://join?host=127.0.0.1:"), "{link}");
+    assert!(link.starts_with("figguremyui://join?host=127.0.0.1:"), "{link}");
     let r = guest.execute("collab.join", &json!({"link": link})).unwrap();
     assert_eq!(r["status"], "connecting");
     pump(&mut host, &mut guest, "the join", |h, g| {
@@ -133,7 +133,7 @@ fn the_host_stopping_ends_the_session_for_guests() {
 #[test]
 fn a_bad_invite_is_reported() {
     let mut guest = session("Ada");
-    let e = guest.execute("collab.join", &json!({"link": "figcraft://join?host=nope"})).unwrap_err().to_string();
+    let e = guest.execute("collab.join", &json!({"link": "figguremyui://join?host=nope"})).unwrap_err().to_string();
     assert!(e.contains("invite"), "{e}");
     let mut host = session("Hana");
     let r: Value = host.execute("collab.host", &json!({"port": 0})).unwrap();

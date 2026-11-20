@@ -1,6 +1,6 @@
 # Penpot import and export
 
-FigCraft reads and writes Penpot 2.x ZIP archives (`penpot/export-files`, version 1)
+Figgure My UI reads and writes Penpot 2.x ZIP archives (`penpot/export-files`, version 1)
 in Rust. Import and export run offline on desktop, CLI, MCP and WASM.
 
 ## Open and save
@@ -23,9 +23,9 @@ Without a path, `file.export` returns base64 `data`. Unsupported conversions are
 reported in `warnings`; the CLI prints them as notes.
 
 ```sh
-figcraft-cli info example.penpot --json
-figcraft-cli convert example.penpot editable.figcraft
-figcraft-cli export editable.figcraft -o out.penpot --format penpot
+figguremyui-cli info example.penpot --json
+figguremyui-cli convert example.penpot editable.figcraft
+figguremyui-cli export editable.figcraft -o out.penpot --format penpot
 ```
 
 ## Supported content
@@ -43,7 +43,7 @@ figcraft-cli export editable.figcraft -o out.penpot --format penpot
 Penpot source ids and selected source properties remain in layer metadata.
 Fingerprints let export reuse unchanged text, layout, strokes, interactions and
 tokens instead of regenerating them. Edited supported values are generated from
-FigCraft's model. New layers receive deterministic UUIDs.
+Figgure My UI's model. New layers receive deterministic UUIDs.
 
 ## Fonts
 
@@ -71,7 +71,7 @@ destination Penpot team.
   trees. Dense arrays cannot bypass it with small compressed or serialized sizes.
 - Token expressions share nesting and work budgets across aliases and theme
   modes. Grid-cell membership is indexed once per parent.
-- Raw SVG uses FigCraft's SVG importer where possible and retains source metadata.
+- Raw SVG uses Figgure My UI's SVG importer where possible and retains source metadata.
   Complex masks and unsupported geometry may remain placeholders with warnings.
 - Penpot export approximates unsupported paints/effects, custom dashes and
   transitions; unsupported actions and triggers are reported. Slices are omitted.
@@ -102,6 +102,6 @@ cargo test -p figcraft-engine penpot
 Optional local samples are not distributed or required:
 
 ```sh
-FIGCRAFT_PENPOT_SAMPLE=/path/to/example.penpot cargo test -p figcraft-format penpot
-FIGCRAFT_PENPOT_SAMPLES=/path/to/folder cargo test -p figcraft-engine penpot_export_tests
+FIGGUREMYUI_PENPOT_SAMPLE=/path/to/example.penpot cargo test -p figcraft-format penpot
+FIGGUREMYUI_PENPOT_SAMPLES=/path/to/folder cargo test -p figcraft-engine penpot_export_tests
 ```

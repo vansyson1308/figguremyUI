@@ -52,9 +52,9 @@ impl PropertyKind {
     /// stands for copied layers, so a paste never makes a text layer of it.
     fn marker(self) -> &'static str {
         match self {
-            PropertyKind::Fill => "figcraft://clipboard/fill",
-            PropertyKind::Stroke => "figcraft://clipboard/stroke",
-            PropertyKind::Effect => "figcraft://clipboard/effect",
+            PropertyKind::Fill => "figguremyui://clipboard/fill",
+            PropertyKind::Stroke => "figguremyui://clipboard/stroke",
+            PropertyKind::Effect => "figguremyui://clipboard/effect",
         }
     }
 

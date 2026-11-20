@@ -2,31 +2,33 @@
 //! opt-in Latin presentation fonts in `fonts/latin-manifest.txt` (Inter, Roboto, …). Unset or missing,
 //! `CRAFT_FONTS` is empty and native apps use system fonts. Required web releases enforce Inter
 //! Regular/SemiBold and Noto Sans Georgian Regular after filtering. Recipe: craft-fonts `docs/integration.md`.
-//! Noto Sans CJK only with `FIGCRAFT_EMBED_CJK` set (the web build's only way to show CJK UI text).
+//! Noto Sans CJK only with `FIGGUREMYUI_EMBED_CJK` set (the web build's only way to show CJK UI text).
 //! The other scripts' faces (Noto Sans Arabic, Hebrew, Thai, Devanagari…) stay out of web builds unless
-//! `FIGCRAFT_EMBED_SCRIPTS` names their script tags (`Arab,Hebr,Thai,Deva`: one tag per script wanted,
+//! `FIGGUREMYUI_EMBED_SCRIPTS` names their script tags (`Arab,Hebr,Thai,Deva`: one tag per script wanted,
 //! as the manifest's scripts column lists them; #1902).
-//! `FIGCRAFT_WEB_FONTS` (comma-separated families) adds manifest families to the web build.
+//! `FIGGUREMYUI_WEB_FONTS` (comma-separated families) adds manifest families to the web build.
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
 /// Font build script: emit `craft_fonts.rs` from `input_fonts`, passing the
-/// `CRAFT_FONTS_DIR`, `CRAFT_FONTS_REQUIRED`, wasm target, `FIGCRAFT_EMBED_CJK`, `FIGCRAFT_EMBED_SCRIPTS` and
-/// `FIGCRAFT_WEB_FONTS` inputs;
+/// `CRAFT_FONTS_DIR`, `CRAFT_FONTS_REQUIRED`, wasm target, `FIGGUREMYUI_EMBED_CJK`,
+/// `FIGGUREMYUI_EMBED_SCRIPTS` and `FIGGUREMYUI_WEB_FONTS` inputs (each also read under FigCraft's
+/// `FIGCRAFT_` name when the new one isn't set, [`input`]);
 /// report generation and write failures with `cargo::error`.
 fn main() {
     println!("cargo::rerun-if-env-changed=CRAFT_FONTS_DIR");
     println!("cargo::rerun-if-env-changed=CRAFT_FONTS_REQUIRED");
-    println!("cargo::rerun-if-env-changed=FIGCRAFT_EMBED_CJK");
-    println!("cargo::rerun-if-env-changed=FIGCRAFT_EMBED_SCRIPTS");
-    println!("cargo::rerun-if-env-changed=FIGCRAFT_WEB_FONTS");
+    for name in ["EMBED_CJK", "EMBED_SCRIPTS", "WEB_FONTS"] {
+        println!("cargo::rerun-if-env-changed=FIGGUREMYUI_{name}");
+        println!("cargo::rerun-if-env-changed=FIGCRAFT_{name}");
+    }
     let mut src = String::from("pub static CRAFT_FONTS: &[CraftFont] = &[\n");
     let dir = std::env::var_os("CRAFT_FONTS_DIR").map(PathBuf::from);
     let required = std::env::var_os("CRAFT_FONTS_REQUIRED").is_some();
     let wasm = std::env::var("CARGO_CFG_TARGET_ARCH").is_ok_and(|a| a == "wasm32");
-    let embed_cjk = std::env::var_os("FIGCRAFT_EMBED_CJK").is_some();
-    let embed_scripts = scripts_from(std::env::var("FIGCRAFT_EMBED_SCRIPTS").ok().as_deref());
-    let web_fonts = web_fonts(&std::env::var("FIGCRAFT_WEB_FONTS").unwrap_or_default());
+    let embed_cjk = input("EMBED_CJK").is_some();
+    let embed_scripts = scripts_from(input("EMBED_SCRIPTS").and_then(|v| v.into_string().ok()).as_deref());
+    let web_fonts = web_fonts(&input("WEB_FONTS").and_then(|v| v.into_string().ok()).unwrap_or_default());
     match input_fonts(dir.as_deref(), wasm, required, embed_cjk, &embed_scripts, &web_fonts) {
         Ok(entries) => src.push_str(&entries),
         Err(e) => println!("cargo::error={e}"),
@@ -38,13 +40,18 @@ fn main() {
     }
 }
 
-/// The script tags `FIGCRAFT_EMBED_SCRIPTS` names (comma- or space-separated), trimmed; none when
+/// The build input `FIGGUREMYUI_<name>`, else FigCraft's `FIGCRAFT_<name>` (still accepted).
+fn input(name: &str) -> Option<std::ffi::OsString> {
+    std::env::var_os(format!("FIGGUREMYUI_{name}")).or_else(|| std::env::var_os(format!("FIGCRAFT_{name}")))
+}
+
+/// The script tags `FIGGUREMYUI_EMBED_SCRIPTS` names (comma- or space-separated), trimmed; none when
 /// it is unset.
 fn scripts_from(var: Option<&str>) -> Vec<String> {
     var.unwrap_or_default().split([',', ' ']).map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned).collect()
 }
 
-/// The families `FIGCRAFT_WEB_FONTS` names: comma-separated, trimmed, empty names dropped.
+/// The families `FIGGUREMYUI_WEB_FONTS` names: comma-separated, trimmed, empty names dropped.
 fn web_fonts(list: &str) -> Vec<String> {
     list.split(',').map(str::trim).filter(|f| !f.is_empty()).map(str::to_owned).collect()
 }
@@ -67,7 +74,7 @@ fn input_fonts(
 ) -> Result<String, String> {
     let Some(dir) = dir else {
         for family in web_fonts {
-            println!("cargo::warning=FIGCRAFT_WEB_FONTS: {family:?} isn't embedded: this build has no craft-fonts");
+            println!("cargo::warning=FIGGUREMYUI_WEB_FONTS: {family:?} isn't embedded: this build has no craft-fonts");
         }
         return if required { Err("CRAFT_FONTS_REQUIRED is set but CRAFT_FONTS_DIR is missing".into()) } else { Ok(String::new()) };
     };
@@ -91,9 +98,9 @@ fn input_fonts(
         }
     }
     let why =
-        if loaded { "no manifest row was kept for it (misspelt? CJK also needs FIGCRAFT_EMBED_CJK)" } else { "no craft-fonts manifest was read" };
+        if loaded { "no manifest row was kept for it (misspelt? CJK also needs FIGGUREMYUI_EMBED_CJK)" } else { "no craft-fonts manifest was read" };
     for family in not_embedded(web_fonts, &faces) {
-        println!("cargo::warning=FIGCRAFT_WEB_FONTS: {family:?} isn't embedded: {why}");
+        println!("cargo::warning=FIGGUREMYUI_WEB_FONTS: {family:?} isn't embedded: {why}");
     }
     if required && wasm {
         for (family, style) in [("Inter", "Regular"), ("Inter", "SemiBold"), ("Noto Sans Georgian", "Regular")] {
@@ -157,9 +164,9 @@ fn craft_fonts(
         }
         // Web builds have a size budget: Inter, Noto Sans Georgian (small, for the Georgian UI), only the
         // SemiBold wordmark, optionally Noto Sans CJK (every CJK script, for CJK UI text), the faces
-        // of the scripts `FIGCRAFT_EMBED_SCRIPTS` names (an Arabic or Persian document needs Noto Sans
+        // of the scripts `FIGGUREMYUI_EMBED_SCRIPTS` names (an Arabic or Persian document needs Noto Sans
         // Arabic, +0.8 MB; the browser has no system fonts to fall back on, #1902), and the
-        // families a distribution names in `FIGCRAFT_WEB_FONTS` (a Thai face for Thai text, say).
+        // families a distribution names in `FIGGUREMYUI_WEB_FONTS` (a Thai face for Thai text, say).
         let wordmark = *family == "Archivo" && *style == "SemiBold";
         let asked = scripts.split(',').map(str::trim).any(|s| embed_scripts.iter().any(|e| e.eq_ignore_ascii_case(s)));
         let added = web_fonts.iter().any(|f| f == family);
@@ -275,7 +282,7 @@ mod tests {
     }
 
     /// #1902: a web build leaves the other scripts' faces out (an Arabic or Persian document shows
-    /// missing-glyph boxes) unless `FIGCRAFT_EMBED_SCRIPTS` names their script tags; native builds
+    /// missing-glyph boxes) unless `FIGGUREMYUI_EMBED_SCRIPTS` names their script tags; native builds
     /// keep every face, as before.
     #[test]
     fn web_embeds_other_scripts_faces_only_when_asked() {
@@ -301,7 +308,7 @@ mod tests {
         assert!(scripts_from(None).is_empty());
     }
 
-    /// Asserts `FIGCRAFT_WEB_FONTS` (split on commas, trimmed) adds the families it names to the web
+    /// Asserts `FIGGUREMYUI_WEB_FONTS` (split on commas, trimmed) adds the families it names to the web
     /// catalog only, leaves native and unset builds as they were, and reports a family nothing
     /// embedded.
     #[test]

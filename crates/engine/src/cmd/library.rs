@@ -46,7 +46,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "library.publishToServer",
             "Publish library to server",
-            "{server? (an edit link of this file on a figcraft-server; omit while this file is in a live session on a server, or give the server's address with its key to keep the file there first), key?, description?, include?, exclude? (as library.publish)}  publishes the library as the next version of the one kept on the server under this file (per-asset versions as library.publish); files that enabled it with a link of the file see the update → {id, version, components, styles, collections, variables, file?, edit?, view? (links when the file was kept there now)}",
+            "{server? (an edit link of this file on a figguremyui-server; omit while this file is in a live session on a server, or give the server's address with its key to keep the file there first), key?, description?, include?, exclude? (as library.publish)}  publishes the library as the next version of the one kept on the server under this file (per-asset versions as library.publish); files that enabled it with a link of the file see the update → {id, version, components, styles, collections, variables, file?, edit?, view? (links when the file was kept there now)}",
             false,
             publish_to_server
         ),
@@ -242,7 +242,7 @@ fn alias(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "library.aliasVariable";
     let own = req_string(cmd, p, "variable")?;
     let doc = s.doc()?;
-    let kind = doc.variables.get(&own).filter(|v| !is_remote_variable(doc, &v.id)).map(|v| v.kind);
+    let kind = doc.variables.find(&own).ok().filter(|v| !is_remote_variable(doc, &v.id)).map(|v| v.kind);
     let kind = kind.ok_or_else(|| bad(cmd, format!("no local variable `{own}`")))?;
     let (lib, key) = variable_arg(s, cmd, p, "alias")?;
     if lib.doc.variables.get_by_id(&key).is_some_and(|v| v.kind != kind) {

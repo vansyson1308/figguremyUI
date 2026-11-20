@@ -69,7 +69,7 @@ fn republish(lib: &mut Session) {
 /// The local copy of library variable `name`.
 fn copy_of(s: &Session, name: &str) -> Variable {
     let doc = s.doc().unwrap();
-    doc.variables.variables.iter().find(|v| v.name == name && is_remote_variable(doc, &v.id)).cloned().unwrap()
+    doc.variables.variables.iter().find(|v| v.name == name && is_remote_variable(doc, &v.id)).map(|v| Variable::clone(v)).unwrap()
 }
 
 #[test]

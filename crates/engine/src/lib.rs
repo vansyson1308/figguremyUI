@@ -14,8 +14,10 @@ mod automation;
 mod boards;
 mod canvas;
 pub mod catalog;
+pub mod check;
 pub mod cmd;
 mod content;
+pub mod design;
 mod dev;
 pub mod events;
 mod extensions;
@@ -24,6 +26,9 @@ pub mod guard;
 pub mod keymap;
 pub mod measure;
 pub mod proto_run;
+pub mod proto_sim;
+pub mod proto_snapshot;
+pub mod proto_verify;
 mod selection;
 mod sharing;
 pub use assets::components;
@@ -108,8 +113,8 @@ mod session;
 mod view_state;
 
 pub use derived::{changed_nodes, normalize};
-pub use doc_state::{DocState, History, HistoryEntry, Interaction, PREVIEW_READ_ONLY, Preedit, TextEdit, VersionPreview};
-pub use error::{EngineError, Result, bad};
+pub use doc_state::{Change, DocState, History, HistoryEntry, Interaction, PREVIEW_READ_ONLY, Preedit, TextEdit, USER_AUTHOR, VersionPreview};
+pub use error::{Conflict, EngineError, Result, bad, bad_param};
 pub use prefs::{Clipboard, DefaultProps, MAX_RECENT_ACTIONS, Prefs, UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_SIZES, UiRequest, clamp_ui_scale};
 pub use session::Forward;
 pub use view_state::ViewState;
@@ -162,6 +167,16 @@ pub struct Session {
     pub agent: Option<String>,
     /// Where an attached AI agent last worked ([`Session::agent_presence_at`]): display only.
     pub agent_presence: Option<agent::AgentPresence>,
+    /// This session has no window (the headless MCP server, the CLI): a command that only does
+    /// something in one — presenting a prototype — is refused ([`EngineError::Unsupported`])
+    /// instead of answering as if a player had opened.
+    pub windowless: bool,
+    /// While a request runs on a file behind the tab in front ([`Session::bring_forward`]): that
+    /// file's uid and the tab that is really in front ([`Session::front_uid`]).
+    forwarded: Option<(u64, Option<u64>)>,
+    /// How many [`Session::execute`] calls are running inside each other (a command that runs
+    /// other commands): only the outermost counts a change of the document's revision.
+    executing: usize,
 }
 
 impl Default for Session {
@@ -174,6 +189,8 @@ impl Default for Session {
 mod a11y_keys_tests;
 #[cfg(test)]
 mod agent_presence_tests;
+#[cfg(test)]
+mod agent_safety_tests;
 #[cfg(test)]
 mod al_behaviour_tests;
 #[cfg(test)]
@@ -242,6 +259,8 @@ mod branch_versions_tests;
 mod brush_tests;
 #[cfg(test)]
 mod canvas_fixes_tests;
+#[cfg(test)]
+mod changed_nodes_tests;
 #[cfg(test)]
 mod code_connect_tests;
 #[cfg(test)]
@@ -531,6 +550,8 @@ mod rest_slot_tests;
 #[cfg(test)]
 mod retained_walk_tests;
 #[cfg(test)]
+mod revision_tests;
+#[cfg(test)]
 mod rotated_guides_tests;
 #[cfg(test)]
 mod rotated_select_tests;
@@ -564,6 +585,8 @@ mod shapebuilder_tests;
 mod shapes_behaviour_tests;
 #[cfg(test)]
 mod shortcut_parity_tests;
+#[cfg(test)]
+mod shortcuts_tests;
 #[cfg(test)]
 mod sketch_import_tests;
 #[cfg(test)]

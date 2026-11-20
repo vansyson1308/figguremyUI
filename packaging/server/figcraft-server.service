@@ -1,11 +1,11 @@
-# systemd unit for figcraft-server; setup in docs/server.md ("Deploy on a Linux server").
+# systemd unit for figguremyui-server; setup in docs/server.md ("Deploy on a Linux server").
 # Install: sudo cp figcraft-server.service /etc/systemd/system/ && sudo systemctl daemon-reload
 #          sudo systemctl enable --now figcraft-server
 # Logs:    journalctl -u figcraft-server
 
 [Unit]
-Description=FigCraft collaboration server
-Documentation=https://github.com/storytold/figcraft/blob/main/docs/server.md
+Description=Figgure My UI collaboration server
+Documentation=https://github.com/vansyson1308/figguremyUI/blob/main/docs/server.md
 Wants=network-online.target
 After=network-online.target
 
@@ -13,7 +13,7 @@ After=network-online.target
 Type=simple
 User=figcraft
 Group=figcraft
-ExecStart=/usr/local/bin/figcraft-server --config /etc/figcraft-server/server.toml
+ExecStart=/usr/local/bin/figguremyui-server --config /etc/figcraft-server/server.toml
 # SIGTERM (systemctl stop/restart) stops it gracefully: open files are saved and compacted, and
 # apps are told the server is restarting (they reconnect when it is back).
 KillSignal=SIGTERM

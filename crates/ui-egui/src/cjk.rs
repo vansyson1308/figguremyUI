@@ -2,7 +2,7 @@
 //! for them, so the UI adds a face per script it needs: the UI language's, the scripts in the open file's names
 //! and comments, the language picker's and typed text. Desktop finds them among the installed
 //! fonts (the system font scan), only once one is needed, so English users load none; the web
-//! build has only the CJK faces built in from craft-fonts (`FIGCRAFT_EMBED_CJK`), else none (no
+//! build has only the CJK faces built in from craft-fonts (`FIGGUREMYUI_EMBED_CJK`), else none (no
 //! Bengali or Thai face is built in, so the web leaves them out).
 
 use std::sync::Arc;

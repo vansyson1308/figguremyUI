@@ -50,9 +50,9 @@ fn escape_closes_the_join_dialog_and_keeps_the_selection() {
 #[test]
 fn opening_the_app_with_an_invite_link_asks_before_joining() {
     let (mut h, _) = Harness::new();
-    let link = "figcraft://join?host=127.0.0.1:47900&file=abc&token=AbCdEfGhIjKlMnOpQrStUv";
+    let link = "figguremyui://join?host=127.0.0.1:47900&file=abc&token=AbCdEfGhIjKlMnOpQrStUv";
     crate::live::open_invite(&mut h.app, &format!(" {link} "));
-    // The system hands the app whatever `figcraft://` link was followed, which may come from a
+    // The system hands the app whatever `figguremyui://` link was followed, which may come from a
     // page or a message, so the link is shown and confirmed rather than acted on.
     assert_eq!(h.app.ui.live.join.as_deref(), Some(link), "the dialog opens with the link filled in");
     assert_eq!(h.app.session.live().status, Status::Off, "nothing is joined until the person confirms");
@@ -87,8 +87,8 @@ impl LiveLink for Browser {
 fn a_link_that_cant_be_used_opens_the_dialog_with_it() {
     let (mut h, _) = Harness::new();
     h.app.session.live.install(Box::new(Browser));
-    crate::live::open_invite(&mut h.app, "figcraft://nope");
-    assert_eq!(h.app.ui.live.join.as_deref(), Some("figcraft://nope"), "the link stays in the field to fix");
+    crate::live::open_invite(&mut h.app, "figguremyui://nope");
+    assert_eq!(h.app.ui.live.join.as_deref(), Some("figguremyui://nope"), "the link stays in the field to fix");
     // The link is not tried until the person presses Join, so its reason shows then, not now.
     assert!(h.app.ui.last_error.is_none());
     assert_eq!(h.app.session.live().status, Status::Off);
@@ -111,7 +111,7 @@ fn the_browser_shares_through_a_server_but_does_not_host() {
     assert!(has_text(&shapes, "Join with a code") && has_text(&shapes, "Join"));
     assert!(has_text(
         &shapes,
-        "In the browser you can join sessions the desktop app hosts and files on a FigCraft server. A page opened over https reaches other computers only through wss:// links (a server behind TLS)."
+        "In the browser you can join sessions the desktop app hosts and files on a Figgure My UI server. A page opened over https reaches other computers only through wss:// links (a server behind TLS)."
     ));
     // With one, it shares online only (the local network needs a page that can listen).
     h.app.session.execute("pref.publishServer", &json!({"url": "ws://127.0.0.1:47910/"})).unwrap();

@@ -34,6 +34,9 @@ impl Session {
             pending_events: Vec::new(),
             agent: None,
             agent_presence: None,
+            windowless: false,
+            forwarded: None,
+            executing: 0,
         }
     }
 
@@ -68,8 +71,10 @@ impl Session {
                 }
             }
             // Still a file without changes.
+            let unrecorded = ds.unrecorded_change();
             ds.doc = Arc::new(doc);
             ds.saved_doc = ds.doc.clone();
+            ds.same_revision(unrecorded);
             ds.revision += 1;
         }
     }

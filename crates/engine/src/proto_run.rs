@@ -3,14 +3,14 @@
 //! navigating to a section goes, which instance "Change to" changes, the interactions instances
 //! play (interactive components), and the hotspots a screen offers.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
-use figcraft_doc::proto::{Action, ConditionalBlock, Expr, Interaction};
-use figcraft_doc::{Document, NodeId, NodeKind, VariableType, VariableValue};
+use figcraft_doc::proto::{Action, ConditionalBlock, Expr, Interaction, Trigger};
+use figcraft_doc::{Document, NodeId, NodeKind, VariableType, VariableValue, Variables};
 use figcraft_geom::Rect;
 use serde_json::Value;
 
-use crate::cmd::styles::apply_bindings;
+use crate::cmd::styles::{apply_bindings, apply_bindings_to};
 use crate::params::{color_of, f64_of};
 
 /// A JSON value as a value of a `kind` variable (`None` when it doesn't fit).
@@ -34,7 +34,7 @@ pub fn literal(kind: VariableType, v: &Value) -> Option<VariableValue> {
 
 /// An expression result as a value of a `kind` variable: numbers and booleans become text for
 /// string variables; other mismatches don't fit.
-fn fit(kind: VariableType, v: VariableValue) -> Option<VariableValue> {
+pub(crate) fn fit(kind: VariableType, v: VariableValue) -> Option<VariableValue> {
     match (kind, v) {
         (VariableType::String, v @ (VariableValue::Number(_) | VariableValue::Boolean(_))) => Some(VariableValue::String(v.display())),
         (k, v) if v.type_of() == Some(k) => Some(v),
@@ -43,8 +43,16 @@ fn fit(kind: VariableType, v: VariableValue) -> Option<VariableValue> {
 }
 
 /// Set stored variable id `variable` to `value`, or to `expr` evaluated in the modes of `node`
-/// (the layer whose interaction runs), in every mode, and re-apply bindings. False when nothing
-/// could be set.
+/// (the layer whose interaction runs), in every mode, and re-apply the bindings that read it. False
+/// when nothing could be set.
+///
+/// Re-applied are the layers bound to the variable or to one that reads it (an alias, a colour
+/// calculation), and those with bound component properties (they choose the variants the others
+/// resolve in), in the order a pass over every binding takes them. A binding nothing here changed
+/// that was out of date already stays so until the edit is normalised, which applies every binding
+/// again: both callers (the prototype player and the simulator) settle the copy right after, as
+/// they did when this applied every binding itself (a run sets variables after nearly every action,
+/// performance budget PF2).
 pub fn set_variable(doc: &mut Document, node: NodeId, variable: &str, value: &Value, expr: Option<&Expr>) -> bool {
     let Some(var) = doc.variables.get_by_id(variable) else { return false };
     let (id, kind) = (var.id.clone(), var.kind);
@@ -57,9 +65,33 @@ pub fn set_variable(doc: &mut Document, node: NodeId, variable: &str, value: &Va
     for val in slot.values.values_mut() {
         *val = v.clone();
     }
-    apply_bindings(doc);
+    let readers = readers_of(&doc.variables, &id);
+    let reading: BTreeSet<NodeId> = doc
+        .nodes()
+        .filter(|n| n.bound.iter().any(|(field, var)| readers.contains(var.as_str()) || field.starts_with(crate::components::PROP_BINDING)))
+        .map(|n| n.id)
+        .collect();
+    apply_bindings_to(doc, Some(&reading));
     crate::style_vars::refresh(doc, None, None);
     true
+}
+
+/// `id` and every variable whose value reads it, directly or through others (aliases and colour
+/// calculations): the variables that can resolve differently once `id` changes.
+fn readers_of<'a>(vars: &'a Variables, id: &'a str) -> BTreeSet<&'a str> {
+    let mut out = BTreeSet::from([id]);
+    // Each round adds at least one variable or ends.
+    loop {
+        let known = out.len();
+        for v in &vars.variables {
+            if !out.contains(v.id.as_str()) && v.values.values().any(|x| x.references().iter().any(|r| out.contains(r.as_str()))) {
+                out.insert(v.id.as_str());
+            }
+        }
+        if out.len() == known {
+            return out;
+        }
+    }
 }
 
 /// Switch `collection` to `mode` (ids or names) for the prototype `frame` is in: on its page, and
@@ -133,15 +165,18 @@ pub fn play_interactions(doc: &mut Document) {
         .filter_map(|n| {
             let NodeKind::Instance { component, .. } = &n.kind else { return None };
             let main = doc.node(*component)?;
-            let variants = crate::components::variant_set(doc, *component).and_then(|s| doc.node(s)).map_or(vec![*component], |s| s.children.clone());
+            let alone = [*component];
+            let variants: &[NodeId] = crate::components::variant_set(doc, *component).and_then(|s| doc.node(s)).map_or(&alone, |s| &s.children);
             let copied = |it: &Interaction| variants.iter().filter_map(|v| doc.node(*v)).any(|v| v.interactions.contains(it));
             let own: Vec<&Interaction> = n.interactions.iter().filter(|it| !copied(it)).collect();
-            let plays: Vec<Interaction> = own
-                .iter()
-                .map(|it| (*it).clone())
-                .chain(main.interactions.iter().filter(|it| own.iter().all(|o| o.trigger != it.trigger)).cloned())
-                .collect();
-            (plays != n.interactions).then_some((n.id, plays))
+            let inherited = || main.interactions.iter().filter(|it| own.iter().all(|o| o.trigger != it.trigger));
+            // Compared before anything is copied: most instances play what they hold (a
+            // prototype's run makes this copy after nearly every action, PF2).
+            if own.iter().copied().chain(inherited()).eq(n.interactions.iter()) {
+                return None;
+            }
+            let plays: Vec<Interaction> = own.iter().map(|it| (*it).clone()).chain(inherited().cloned()).collect();
+            Some((n.id, plays))
         })
         .collect();
     for (id, its) in plays {
@@ -163,9 +198,18 @@ pub fn change_to_target(doc: &Document, node: NodeId, dest: NodeId) -> Option<No
     std::iter::once(node).chain(doc.ancestors(node)).find(in_set).or_else(|| crate::components::owning_instance(doc, node))
 }
 
+/// Whether a person sets trigger `t` off on the layer itself, with the pointer (a click or tap,
+/// hovering, pressing, dragging, the mouse entering, leaving, going down or up), rather than a
+/// timer (after delay) or a key that fires wherever the pointer is.
+pub fn pointer_trigger(t: &Trigger) -> bool {
+    !matches!(t, Trigger::AfterDelay { .. } | Trigger::KeyPress { .. })
+}
+
 /// The hotspots of the screen `root` (a presented frame or overlay): its visible layers with
-/// interactions, bottom-most first, with their bounds on the page clipped by the frames around
-/// them that clip content (the presenter flashes them after a click where nothing reacts).
+/// interactions a person sets off with the pointer ([`pointer_trigger`]; a frame that only moves
+/// on after a delay is no hotspot, QC-12), bottom-most first, with their bounds on the page
+/// clipped by the frames around them that clip content (the presenter flashes them after a click
+/// where nothing reacts).
 pub fn hotspots(doc: &Document, root: NodeId) -> Vec<(NodeId, Rect)> {
     let mut out = Vec::new();
     // Each visible layer's clip: its bounds cut by the clipping frames around it (inside `root`).
@@ -190,7 +234,7 @@ pub fn hotspots(doc: &Document, root: NodeId) -> Vec<(NodeId, Rect)> {
             (c, _) => c,
         };
         clips.insert(id, own);
-        if n.interactions.is_empty() {
+        if !n.interactions.iter().any(|it| pointer_trigger(&it.trigger)) {
             continue;
         }
         let Some(b) = bounds else { continue };
@@ -200,4 +244,29 @@ pub fn hotspots(doc: &Document, root: NodeId) -> Vec<(NodeId, Rect)> {
         }
     }
     out
+}
+
+/// The screens of `page` the presenter steps through with its next and previous arrows (QC-11),
+/// in reading order: its top-level frames, but not components or component sets, nor frames only
+/// ever shown as overlays (some interaction opens or swaps them in as an overlay, and none
+/// navigates to them and no flow starts on them), as the flow check counts screens. `current`,
+/// the frame shown, is always among them, so the arrows know where they are.
+pub fn screens(doc: &Document, page: NodeId, current: NodeId) -> Vec<NodeId> {
+    let (mut navigated, mut overlaid) = (BTreeSet::new(), BTreeSet::new());
+    for n in doc.nodes() {
+        if let NodeKind::Page { flows, .. } = &n.kind {
+            navigated.extend(flows.iter().map(|f| f.start));
+        }
+        for a in n.interactions.iter().flat_map(|it| figcraft_doc::proto::walk(&it.actions)) {
+            match a {
+                Action::Navigate { dest, .. } => navigated.extend(navigate_target(doc, *dest, &HashMap::new())),
+                Action::OpenOverlay { dest, .. } | Action::SwapOverlay { dest } => {
+                    overlaid.insert(*dest);
+                }
+                _ => {}
+            }
+        }
+    }
+    let component = |id: NodeId| doc.node(id).is_some_and(|n| matches!(n.kind, NodeKind::Component { .. } | NodeKind::ComponentSet { .. }));
+    doc.top_frames(page).into_iter().filter(|f| *f == current || !(component(*f) || (overlaid.contains(f) && !navigated.contains(f)))).collect()
 }

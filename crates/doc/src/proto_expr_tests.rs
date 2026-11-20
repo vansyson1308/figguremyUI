@@ -33,7 +33,10 @@ pub(crate) fn vars() -> Variables {
             var("s", VariableType::String, values(VariableValue::String("hi".into()), VariableValue::String("yo".into()))),
             var("b", VariableType::Boolean, values(VariableValue::Boolean(true), VariableValue::Boolean(false))),
             var("alias", VariableType::Number, values(VariableValue::Alias("n".into()), VariableValue::Alias("n".into()))),
-        ],
+        ]
+        .into_iter()
+        .map(Into::into)
+        .collect(),
     }
 }
 

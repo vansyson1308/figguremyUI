@@ -1,7 +1,7 @@
 # Attribution
 
 Every asset bundled in this repository (images, icons, fonts, data files) is listed here with its
-author, source and licence. `cargo xtask assets` fails if a file under `assets/`, `docs/brand/` or
+author, source and licence. `cargo xtask assets` fails if a file under `assets/`, `docs/brand/` (no longer present) or
 `docs/images/` is missing from this list.
 
 FigCraft's user-interface icons are drawn in code (`crates/ui-egui/src/icons.rs`): original work,
@@ -11,9 +11,9 @@ MIT OR Apache-2.0. No third-party icon sets are used.
 
 | Path | Author | Source | Licence | Notes |
 |---|---|---|---|---|
-| `assets/app-icon/` (all files: `figcraft.svg`, `figcraft-small.svg`, `figcraft-*.png`, `figcraft.ico`, `hicolor/`) | The project owner (engraving-style drawing, vectorised) | Original work, see [`assets/app-icon/README.md`](assets/app-icon/README.md); derived files rendered by `cargo xtask icon` | MIT OR Apache-2.0, [`assets/app-icon/LICENSE.txt`](assets/app-icon/LICENSE.txt) | FigCraft app icon (chameleon) |
-| `docs/brand/artcraft-logo.svg`, `docs/brand/artcraft-logo.png`, `docs/brand/artcraft-logo-white.svg`, `docs/brand/artcraft-logo-white.png`, `docs/brand/artcraft-mark.svg`, `docs/brand/artcraft-mark.png`, `docs/brand/artcraft-mark-black.svg`, `docs/brand/artcraft-mark-black.png` | ArtCraft Team | ArtCraft brand kit | ArtCraft brand terms (`docs/brand/LICENSE-brand.txt`), not open source | Trademarks; unmodified use within FigCraft only |
-| `docs/images/` (all screenshots and exports: `shot-*.png`, `art-*.png`) | FigCraft contributors | Screenshots of FigCraft showing synthetic demo documents made in FigCraft, and PNG exports of those documents by FigCraft's renderer | MIT OR Apache-2.0 | No third-party artwork |
+| `assets/app-icon/` (all files: `figguremyui.svg`, `figguremyui-small.svg`, `figguremyui-*.png`, `figguremyui.ico`, `hicolor/`) | Figgure My UI contributors | Original work made for Figgure My UI from simple shapes (a screen card and a check card on a tile), see [`assets/app-icon/README.md`](assets/app-icon/README.md); derived files rendered from the masters (`cargo xtask icon`) | MIT OR Apache-2.0, [`assets/app-icon/LICENSE.txt`](assets/app-icon/LICENSE.txt) | Figgure My UI app icon; no third-party material. Replaces FigCraft's chameleon icon, which stays in the repository history only |
+| `docs/images/` (screenshots and exports from upstream: `shot-*.png`, `art-*.png`) | FigCraft contributors | Screenshots of FigCraft showing synthetic demo documents made in FigCraft, and PNG exports of those documents by FigCraft's renderer | MIT OR Apache-2.0 | No third-party artwork |
+| `docs/images/m11-editor-signup.png`, `docs/images/m11-presenter-signup-error.png`, `docs/images/m11-panel-findings.png`, `docs/images/m11-dashboard-1440.png`, `docs/images/m11-dashboard-360.png`, `docs/images/m11-panel-proposals-dark.png` | Figgure My UI contributors | Window screenshots of Figgure My UI (release build of `f47cc033`, under a virtual display; `m11-editor-signup.png` and `m11-panel-findings.png` retaken 2026-11-20 from `9f05ba8e` after declared states were added) showing the synthetic example files in `examples/`, each state reached by clicks, keys and typing in the app (the proposal in the dark-theme shot was made by a second control connection acting as an agent) | MIT OR Apache-2.0 | Retaken 2026-11-19 after the rename (QC round 2); no third-party artwork, no personal data |
 | `examples/*.figcraft` | FigCraft contributors | Synthetic demo documents built through FigCraft's command API; invented copy, shapes and vectors drawn from scratch, no images or embedded fonts | MIT OR Apache-2.0 | Text uses Inter (OFL, from craft-fonts or the system); no third-party artwork |
 
 ## Fonts (build input, not in this repository)

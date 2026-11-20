@@ -89,7 +89,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "component.addVariant",
             "Add variant",
-            "{id? (component set, variant, or a main component not in a set yet: it becomes a set of itself and the new variant), property?, value?}  (duplicates the variant; `property`=`value` names the new one)",
+            "{id? (component set, variant, or a main component not in a set yet: it becomes a set of itself and the new variant), property?, value?}  (duplicates the variant; `property`=`value` names the new one. A set's `property` must be one of its variant properties; a lone component named without `property=value` pairs gets `property` for its set, the component being its `Default`)",
             true,
             add_variant
         ),

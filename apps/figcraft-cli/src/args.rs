@@ -10,16 +10,22 @@ use std::net::{Ipv4Addr, SocketAddr};
 use clap::{ArgAction, Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use figcraft_doc::{PrintSettings, VdCompat};
 
-/// FigCraft without a window
+/// Figgure My UI without a window
 ///
-/// Files: .figcraft (native), .penpot (Penpot 2.x), .json (FigCraft or REST API file JSON), .fig
+/// Files: .figcraft (native), .penpot (Penpot 2.x), .json (Figgure My UI or REST API file JSON), .fig
 /// (best effort; `info` lists what wasn't imported), .sketch (Sketch 48 or newer, best effort),
 /// .svg, .png/.jpg/.webp/.gif/.bmp (open as an image layer).
 #[derive(Parser)]
-#[command(name = "figcraft-cli", bin_name = "figcraft-cli", version, arg_required_else_help = true, after_help = "See docs/cli.md and docs/mcp.md.")]
+#[command(
+    name = "figguremyui-cli",
+    bin_name = "figguremyui-cli",
+    version,
+    arg_required_else_help = true,
+    after_help = "See docs/cli.md and docs/mcp.md."
+)]
 pub struct Cli {
-    /// Lay text out with the fonts built into FigCraft only, for renders that match on every
-    /// machine (or set FIGCRAFT_NO_SYSTEM_FONTS=1). Otherwise installed fonts are indexed the
+    /// Lay text out with the fonts built into Figgure My UI only, for renders that match on every
+    /// machine (or set FIGGUREMYUI_NO_SYSTEM_FONTS=1). Otherwise installed fonts are indexed the
     /// first time text is laid out, as in the app
     #[arg(long, global = true)]
     pub no_system_fonts: bool,
@@ -36,6 +42,7 @@ pub enum Command {
     Run(RunArgs),
     Commands(CommandsArgs),
     Mcp(McpArgs),
+    Doctor(DoctorArgs),
     /// Publish plugins to a server's plugin directory
     Plugin {
         #[command(subcommand)]
@@ -201,11 +208,11 @@ pub struct CommandsArgs {
 /// Serve MCP on stdio: headless, or attached to a running app
 ///
 /// The automation roots confine the headless session's file access. A server started with
-/// --attach is confined by the app it attaches to: start that app with `figcraft --control PORT`
+/// --attach is confined by the app it attaches to: start that app with `figguremyui --control PORT`
 /// and the same roots.
 #[derive(Args)]
 pub struct McpArgs {
-    /// Attach to the app started with `figcraft --control PORT`; a bare port means 127.0.0.1:PORT.
+    /// Attach to the app started with `figguremyui --control PORT`; a bare port means 127.0.0.1:PORT.
     /// Refuses the automation roots
     #[arg(long, value_name = "PORT", value_parser = attach, conflicts_with_all = ["automation_read_root", "automation_write_root"])]
     pub attach: Option<String>,
@@ -216,15 +223,35 @@ pub struct McpArgs {
     pub roots: RootArgs,
 }
 
+/// Check this install and print how to connect an AI agent
+///
+/// Prints the version and this binary's path, runs an MCP self-test in this process (initialize,
+/// tools/list, get_capabilities, then a small prototype built, rendered, flow-checked and its
+/// scenario run), reports the fonts text can use, and prints ready-to-paste setup lines for Claude
+/// Code, Codex and an mcpServers JSON, headless and attached. It writes no files and uses no
+/// network. Exit code 0 when every check passes, 1 when one fails (each failure says what to do).
+#[derive(Args)]
+pub struct DoctorArgs {
+    /// Print one JSON object (stable keys; see docs/cli.md)
+    #[arg(long)]
+    pub json: bool,
+    /// Also open this document and run its stored scenarios and the flow check
+    #[arg(long, value_name = "FILE")]
+    pub example: Option<String>,
+    /// The control port the attached-mode lines use (`figguremyui --control PORT`)
+    #[arg(long, value_name = "PORT", default_value = "7979", value_parser = clap::value_parser!(u16).range(1..))]
+    pub port: u16,
+}
+
 #[derive(Subcommand)]
 pub enum PluginCommand {
     Publish(PublishArgs),
 }
 
-/// Send a plugin folder to a figcraft-server's plugin directory as a new version
+/// Send a plugin folder to a figguremyui-server's plugin directory as a new version
 ///
 /// The folder holds figcraft-plugin.json, its module and an optional assets/ folder. The server's
-/// key comes from the address or the FIGCRAFT_SERVER_KEY environment variable (which keeps it out
+/// key comes from the address or the FIGGUREMYUI_SERVER_KEY environment variable (which keeps it out
 /// of the shell history); it is never printed.
 #[derive(Args)]
 pub struct PublishArgs {
@@ -362,7 +389,7 @@ mod tests {
     use super::{Cli, Command, ConnectCommand, PluginCommand, parse};
 
     fn try_parse(args: &[&str]) -> Result<Cli, clap::Error> {
-        parse(std::iter::once("figcraft-cli").chain(args.iter().copied()).map(Into::into).collect())
+        parse(std::iter::once("figguremyui-cli").chain(args.iter().copied()).map(Into::into).collect())
     }
 
     fn ok(args: &[&str]) -> Command {
@@ -552,7 +579,7 @@ mod tests {
         }
         // The help is the subcommand's, even after a mistake.
         let help = try_parse(&["plugin", "publish", "--bogus", "--help"]).err().map(|e| e.to_string()).unwrap_or_default();
-        assert!(help.contains("Usage: figcraft-cli plugin publish"), "{help}");
+        assert!(help.contains("Usage: figguremyui-cli plugin publish"), "{help}");
         // After `--`, `-h` is a file name.
         let Command::Info(a) = ok(&["info", "--", "-h"]) else { panic!("info") };
         assert_eq!(a.file, "-h");
@@ -566,7 +593,7 @@ mod tests {
         let mut todo = vec![cli];
         while let Some(mut cmd) = todo.pop() {
             let help = cmd.render_long_help().to_string();
-            assert!(help.contains("Usage: figcraft-cli"), "{}: {help}", cmd.get_name());
+            assert!(help.contains("Usage: figguremyui-cli"), "{}: {help}", cmd.get_name());
             for arg in cmd.get_arguments().filter(|a| !matches!(a.get_long(), Some("help" | "version"))) {
                 assert!(arg.get_help().is_some(), "{} {}", cmd.get_name(), arg.get_id());
             }

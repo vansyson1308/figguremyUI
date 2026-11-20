@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use base64::Engine as _;
+use figcraft_doc::shared::Shared;
 use figcraft_doc::{Collection, Comment, DevSnapshot, Document, ImageData, Style, Variable};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -40,7 +41,7 @@ impl Keyed for Collection {
     }
 }
 
-impl Keyed for Variable {
+impl Keyed for Shared<Variable> {
     type Key = String;
     fn key(&self) -> String {
         self.id.clone()
@@ -120,7 +121,7 @@ const COLLECTIONS: List<Collection> = List {
     get_mut: |d| &mut d.variables.collections,
     index: |i| &mut i.collections,
 };
-const VARIABLES: List<Variable> = List {
+const VARIABLES: List<Shared<Variable>> = List {
     whole: DocProp::Variables,
     order: DocProp::VariableOrder,
     entry: Entry::Variable,
@@ -353,6 +354,7 @@ doc_scalars! {
     Timer => timer,
     Vote => vote,
     VoteHistory => vote_history,
+    Design => design,
 }
 
 /// Keyed maps (no order): changed and added entries are put, missing ones removed.
@@ -396,6 +398,15 @@ pub(crate) fn diff(a: &Document, b: &Document, out: &mut Vec<Change>) -> Result<
     diff_map(&a.votes, &b.votes, |x, y| x == y, |k| Entry::Ballot(k.clone()), Json::of, out)
 }
 
+/// A design context a collaborator sends must be within the limits the commands keep (lists of
+/// at most `MAX_ENTRIES`, texts of at most `MAX_TEXT` characters): one that passes them is refused
+/// whole, as an invalid change. It isn't cut here: every replica has to end up with what was sent.
+fn design_within_limits(value: &Json) -> Result<(), Error> {
+    let mut ctx: figcraft_doc::design::DesignContext = value.read("design")?;
+    let cut = ctx.clamp();
+    if cut.is_empty() { Ok(()) } else { Err(Error::Invalid(format!("design: larger than a file may hold ({})", cut.join("; ")))) }
+}
+
 /// [`apply_indexed`] for one change on its own.
 #[cfg(test)]
 pub(crate) fn apply(doc: &mut Document, change: &Change) -> Result<bool, Error> {
@@ -408,6 +419,9 @@ pub(crate) fn apply(doc: &mut Document, change: &Change) -> Result<bool, Error> 
 pub(crate) fn apply_indexed(doc: &mut Document, change: &Change, index: &mut Index) -> Result<bool, Error> {
     match change {
         Change::SetDoc { prop, value } => {
+            if *prop == DocProp::Design {
+                design_within_limits(value)?;
+            }
             if set_scalar(doc, *prop, value)? {
                 return Ok(*prop == DocProp::Libraries);
             }

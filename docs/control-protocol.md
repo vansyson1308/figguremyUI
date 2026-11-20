@@ -1,6 +1,6 @@
-# FigCraft control protocol
+# Figgure My UI control protocol
 
-The desktop app can be driven by other programs (tests, scripts, `figcraft-cli mcp --attach`,
+The desktop app can be driven by other programs (tests, scripts, `figguremyui-cli mcp --attach`,
 sibling Crafting Apps) through a loopback socket:
 
 ```sh
@@ -14,7 +14,27 @@ one request object per line, one reply line per request, in order.
 request:  {"id": 1, "method": "engine.execute", "params": {...}}
 reply:    {"id": 1, "ok": true, "result": ...}
           {"id": 1, "ok": false, "error": "message"}
+          {"id": 1, "ok": false, "error": "message", "errorDetail": {"code": "noSuchNode", "message": "message", "node": 41}}
+          {"id": 1, "ok": true, "result": ..., "revision": 12, "revisionDocument": 3}     (engine.execute, ui.pointer, ui.key, ui.type)
 ```
+
+`errorDetail` (sent by the desktop app, the web build and the headless MCP backend) says what
+kind of failure `error` is, for a program: `{code, message}`
+plus, where the error knows them, `command`, `param`, `node`, `step`, `expected`, `actual`,
+`since`, `document`, `label`, `author`. It is `figcraft_engine::EngineError::detail()` for an
+engine error, and `{"code": "badParams" | "unknownMethod" | "failed", "message"}` for one the
+control handler raises itself (also for a timeout, a full queue, a line too large or not JSON).
+The codes are listed in [mcp.md](mcp.md) (Errors). A client reads it when it is there and
+otherwise takes the error as `{"code": "error", "message"}`; `error` stays the text it always was.
+
+`revision` (on an `engine.execute` reply, success or failure, and on a `ui.pointer`, `ui.key` or
+`ui.type` reply) is the revision of the document the request acted on, read right after it ran,
+in the same request: a client reports it as the state its command left, without a second request
+that could already include somebody else's change. `revisionDocument` beside it is the `id` (as
+`doc.list` gives it) of the document that revision belongs to: the one `document` named, else the
+tab in front once the request ran (the file a `file.new` or `file.open` brought there). An app
+that doesn't send `revision` is read as before (`doc.list` / `document.inspect`); one that sends
+`revision` without `revisionDocument` means the document the request named, else the tab in front.
 
 Requests are queued and run on the UI thread at the start of the next frame, so replies reflect the
 real UI state. A request that the UI doesn't answer within 60 s gets a timeout error that says what
@@ -87,11 +107,11 @@ an error, and so is a `document` naming a file behind the tab in front on any ot
 ## Confining file access
 
 ```sh
-figcraft --control 7979 --automation-read-root /work/project --automation-write-root /work/project/out
+figguremyui --control 7979 --automation-read-root /work/project --automation-write-root /work/project/out
 ```
 
 `--automation-read-root <dir>` and `--automation-write-root <dir>` (each repeatable, `--flag=<dir>`
-works too; the same flags as `figcraft-cli mcp`) confine the files the app reads and writes for
+works too; the same flags as `figguremyui-cli mcp`) confine the files the app reads and writes for
 whoever asks: every control request (`engine.execute`, `ui.render`, `ui.screenshot`, `window.new`,
 `ui.key`, `ui.menu.invoke`…) and every frame of every window, so input injected with `ui.input`
 and what a person does in the window are held to the same folders. Files are read only inside a
@@ -100,16 +120,16 @@ read or write root and written only inside a write root; anything else is an ord
 resolved as `docs/mcp.md` › Confining file access describes. A root that isn't an existing folder
 stops the app before its window opens, and so does any option the app doesn't know (a mistyped
 flag such as `--automation-write-roots` exits with `unknown option`, never starts unconfined).
-Confined work reaches no FigCraft or plugin server either: hosting, joining, publishing and
+Confined work reaches no Figgure My UI or plugin server either: hosting, joining, publishing and
 sharing files, team libraries on a server and plugin directories are refused (`automation roots
 are set: commands don't reach the network …`). A root on a network share (a UNC path such as
 `\\server\share\…`, or a mounted network drive) is the exception: files read and written inside it,
-documents saved there included, go to that file server. Without the flags nothing changes. The flags arrived in FigCraft 0.7.0: 0.6.0 and earlier ignore
+documents saved there included, go to that file server. Without the flags nothing changes. The flags arrived in version 0.7.0: 0.6.0 and earlier ignore
 them and confine nothing.
 
 Not confined: opening the files given on the command line when the app starts and the documents
 the system hands over (Finder, Open With; saving them later is confined like any write), and the
-app's own folders (preferences, recovery copies, plugins installed from a plugin directory). Run `figcraft-cli mcp --attach PORT` without the flags against
+app's own folders (preferences, recovery copies, plugins installed from a plugin directory). Run `figguremyui-cli mcp --attach PORT` without the flags against
 such an app (it refuses them: the app does the confining). `ui.screenshot` and `ui.render` without a
 `path` return the PNG as data, which is how the attached MCP server takes them, so it writes no
 temporary files.
@@ -119,7 +139,9 @@ temporary files.
 ### `engine.execute {command, params?}`
 
 Run any command (the same ids as the menus, shortcuts, Actions palette, CLI and MCP). Programmatic
-calls never open dialogs: dialog requests are dropped. Returns the command's result (creation
+calls never open dialogs: dialog requests are dropped, and an object result then gains
+`"ui": "dropped (<request kinds>)"` (e.g. `file.colorProfile {}` without a profile:
+`"dropped (dialog.colorProfile)"`) so it doesn't read as if one had opened. Returns the command's result (creation
 commands return `{"id": N}`). Paints (`fills`, `strokes`, `paint`) take a colour, the full paint
 JSON or the gradient shorthand `{"type":"linearGradient","stops":["#hex","#hex"],"from"?,"to"?}`
 (as in `docs/mcp.md`). A parameter the command's doc (`engine.commands`) doesn't list is an error
@@ -128,7 +150,28 @@ naming it and the ones it takes, never ignored; `ids` and `id` are always taken.
 `agent` (a string, next to `command`) runs the command for an AI agent of that name, as the MCP
 server does with its client's name: comments it makes are signed "<agent> (agent)" ("AI agent" for
 an empty name), marked `"agent": true`, and keep their own read state. Without it the command acts
-as the user (the name from Preferences).
+as the user (the name from Preferences). The undo step a command makes remembers that author
+(`document.inspect`: `history.steps`, `[{label, author}]`, `author` the agent's signed name or
+`user`), and an agent's `edit.undo` / `edit.redo` take only its own steps: one made by the user or
+another agent is refused, naming the step and its author, unless the params say `others: true`.
+
+**Revisions and conditional changes.** Every open document has a `revision`: 1 when it was opened,
+one more for every committed change (an edit, a batch, a finished gesture, an undo or redo, a
+reload from disk, a change from a live session; not reading, selecting or saving). It is in
+`document.inspect`, in each entry of `doc.list`, and in what `file.open`, `file.new` and
+`file.revert` return (with the document's `id`). Every command takes the reserved parameter
+`ifRevision` in its `params`: the command runs only when the document it acts on is at that
+revision, and is otherwise refused without changing anything, with an error that says the expected
+and the actual revision and lists the changes made in between with their authors (`errorDetail`:
+`{"code": "conflict", "expected", "actual", "since": [{revision, label, author}], "document"}`).
+The steps of a `command.batch` are checked against the revision the batch started from.
+`ui.pointer`, `ui.key` and `ui.type` take `ifRevision` too, beside their other params (not in a
+`params` object): the gesture, key or text is refused before it does anything (nothing moves,
+nothing is selected or typed) unless the tab in front is at that revision, with the same
+`conflict` error naming the method. The check is in the request that acts, so no change can land
+between it and the gesture; an app whose `app.info` `features` include `canvasIfRevision` does
+this (one without it ignores the parameter, and a client checks first with `doc.list
+{ifRevision}`, which is not atomic).
 
 ```json
 {"id":1,"method":"engine.execute","params":{"command":"shape.rectangle","params":{"x":10,"y":10,"width":100,"height":50}}}
@@ -217,6 +260,11 @@ boolean; without options the output stays sparse. `outline: true` with `fields` 
 `engine.execute`, the engine command `node.get` takes the same options but no `depth`; it always
 returns one level of children.
 
+While a person previews an earlier version (`version.preview`), what both methods read is that
+version's layers, shown in place of the document: `document.inspect` and `node.get` (the method
+and the command) then also carry `previewing: {version, name, note}`, and `revision` stays the
+document's own.
+
 ```json
 {"id":5,"method":"document.inspect","params":{"depth":6,"outline":true}}
 {"id":6,"method":"node.get","params":{"id":3,"depth":2,"fields":["name","width","height"]}}
@@ -224,7 +272,7 @@ returns one level of children.
 
 ### `ui.inspect {}`
 
-UI state: panels and tabs (`panels`: the `left` and `right` panels' widths as asked for and whether the left one is closed, `leftCollapsed`), the cursor the canvas shows (`cursor`: a CSS cursor name such as `default`, `crosshair`, `ew-resize`, `grab`, `copy`, `not-allowed`, `zoom-in`, or one FigCraft draws: `rotate <degrees>`, `pen`, `pen-close`, `pen-add`, `pen-bend`, `eyedropper`, `comment`; `null` while the pointer is elsewhere or over something with a cursor of its own, a ruler guide or a gradient handle; the engine's own hint is `tool.overlay.cursor`), current tool (`tool`: its id, overlay hints and, for a selected
+UI state: panels and tabs (`panels`: the `left` and `right` panels' widths as asked for and whether the left one is closed, `leftCollapsed`), the cursor the canvas shows (`cursor`: a CSS cursor name such as `default`, `crosshair`, `ew-resize`, `grab`, `copy`, `not-allowed`, `zoom-in`, or one Figgure My UI draws: `rotate <degrees>`, `pen`, `pen-close`, `pen-add`, `pen-bend`, `eyedropper`, `comment`; `null` while the pointer is elsewhere or over something with a cursor of its own, a ruler guide or a gradient handle; the engine's own hint is `tool.overlay.cursor`), current tool (`tool`: its id, overlay hints and, for a selected
 ellipse, its arc handles `arcHandles`, for a selected rectangle, frame, polygon or star, its corner radius and ratio handles `shapeHandles`; see [mcp.md](mcp.md#measuring-the-scale-tool-arc-handles-and-selecting)), canvas rect, dialogs, view, timings (`frameMs`,
 `renderMs`), frames drawn since start or the last `ui.set {resetFrameStats: true}` (`framesDrawn`;
 an idle window draws none), how long building them took (`frameTimes`: `{frames, meanMs, maxMs}`, the
@@ -256,10 +304,32 @@ whether a click where nothing reacts flashes them (`hotspotHints`) and they are 
 (`inspected`), whether its bars are hidden (`hideUi`), and the link an Open link notice waits to open (`linkNotice`, else `null`) (`null`
 when nothing plays). `presentOptions` holds the options the next presentation
 starts with (`scale`, `deviceFrame`, `comments`, `hotspotHints`, `inspect`, `hideUi`).
+`designContext` is the Design context panel as the person sees it (the left sidebar, opened from
+the rail, View ▸ Panels ▸ Design context or `view.designContext {section?, on?}`): whether it is
+`open`, its `rect` in window points, the `section` showing (`brief`, `assumptions`, `decisions`,
+`flow`, `findings` or `alternatives`), the file's `stage` and `briefRevision`, `counts`
+(`assumptions`, `decisions`, `proposedDecisions`, `scenarios`, `endStates`, `findings`,
+`openFindings`, `alternatives`), the `form` open in it (`assumption`, `decision`, `finding`,
+`findingAction`, `alternative`, `alternativeMember`, `alternativeSet`, `choose`, `state` (declaring
+or editing a state of a screen), `required` (an element the brief requires), else `null`), what
+the engine last `refused` there (`{about, message}`: the entry or form and the engine's error as
+shown, else `null`), the entry a followed link points out (`highlight`), what refers to the
+selected layer (`selected`: `{node, refs}` with `design.forNode`'s answer), and the results it
+shows, each with `stale: true` once the file has changed since: `scenarioRun` (`{passed, total,
+failed, results: [{id, passed, failedStep, failures}]}`), `flowCheck` (`{problems: [{rule,
+severity, nodes, message}], screens}`), `checks` (`{findings: [{rule, severity, nodes, message}],
+summary, skipped: [rule ids], stage}`), `recorded` (what `design.check.record` last answered) and
+`compare` (`{set, members, warnings}`); each is `null` until it has been run in the panel;
+`states` (`{declared, proposed, summary}`: how many states the screens are declared to have, how
+many an agent proposed, and `proto.state.list`'s summary as the panel last read it) and `required`
+(`{total, unlinked, proposed}`: the brief's required elements). The
+panel reads the file every frame, so what a command changes shows on the next one.
 `textPreview` is true while a live text preview shows on the canvas (a hovered text style or named
 instance, a dragged axis slider; see `text.preview` in [mcp.md](mcp.md)).
 `focus` is keyboard navigation's state: the `region` with the keyboard (`toolbar`, `layers`,
-`canvas` or `properties`), whether `keyboard` mode is on (F6 or Tab moved the focus since the last
+`canvas` or `properties`; `designContext` while the Design context panel shows in the layers'
+place, with the `entry` (`D1`, `S2`, `R1`, `state <frame> <kind> <name>`…) the focused control belongs to, or null; `rail`
+while it is on the icon rail beside the left panel, which F6 counts with the layers), whether `keyboard` mode is on (F6 or Tab moved the focus since the last
 pointer press, so the focus ring shows) and the name of the `control` with the keyboard (what a
 screen reader announces; empty when nothing has it). `reduceMotion` is true when the preference or
 the system's accessibility setting turns the interface's animations off. `uiScale` is the interface
@@ -278,7 +348,7 @@ document can't be edited now (`readOnly`: the "View only", "Can comment" or "Pub
 session itself is `engine.execute {command: "collab.peers"}` (sharing with a join code, hosting,
 joining and publishing are `collab.share`, `collab.host`, `collab.join` and `collab.publish`, opening invite links `collab.registerLinks`,
 see [mcp.md](mcp.md#live-sessions)). The app also joins the invite link it
-was started with (`figcraft "figcraft://join?…"`). `online` is the home screen's Online section:
+was started with (`figguremyui "figguremyui://join?…"`). `online` is the home screen's Online section:
 whether it shows (`open`), your online files as its rows read (`files: [{file, name, detail,
 shared, state, hasOwnerToken}]`; never a token or a link of yours), whether the servers are being
 asked (`checking`), how many couldn't say (`problems`), and the file whose removal is being
@@ -297,6 +367,15 @@ tools, a press on a frame's or section's name label (as the canvas last drew it,
 frame's top edge) selects and drags that frame; a double-click there renames the frame in place in
 the desktop app (the name field opens over the label).
 
+`ui.pointer`, `ui.key` and `ui.type` act on the editor's canvas. While the presenter plays a
+prototype over it they are refused, with an error that says a prototype is playing and where the
+input goes instead, rather than selecting and editing layers of a canvas nobody sees: send the
+player's input with `ui.input` (window points; `ui.inspect` → `presenter.hotspots` gives each
+reacting layer's rect), or play the prototype without a window with the `proto.simulate` command.
+With the preview pane open the canvas still shows, so they work as usual; only a `ui.pointer` given
+in screen points (`sx`, `sy`) that lands on the pane is refused, since it would reach the canvas
+under the pane.
+
 ```json
 {"id":4,"method":"engine.execute","params":{"command":"tool.set","params":{"tool":"ellipse"}}}
 {"id":5,"method":"ui.pointer","params":{"kind":"drag","x":200,"y":200,"to":[300,260],"shift":true}}
@@ -310,12 +389,28 @@ tool, `ArrowUp`/`ArrowDown` open the previous/next thread of the Comments panel'
 (returns `{"comment": id}`). While text is being edited, the text shortcuts (Bold, alignment,
 size steps, Save…) run and other keys go to the text editor. Shortcuts follow the platform the app
 runs on (`cmd` is Cmd on macOS and Ctrl elsewhere; on macOS `ctrl` is the separate Control key).
-Returns `{"command": id}` for shortcuts.
+Returns `{"command": id}` for shortcuts. Refused while the presenter plays (see `ui.pointer`).
 
 ### `ui.type {text}`
 
 Type into the text being edited (start editing with a double-click, `text.edit.begin {id}`, or the
-text tool).
+text tool). Refused while the presenter plays (see `ui.pointer`).
+
+`ui.pointer`, `ui.key` and `ui.type` take `agent` like `engine.execute` (the desktop app, the web
+build and the headless MCP backend): what the gesture or the typed text changes is then that
+agent's step in the undo history, named as `engine.execute {agent}` names it, so the agent's
+`edit.undo` takes it back and refuses the person's. Whoever acted before is put back when the
+gesture ends, also when it fails.
+
+They also take `ifRevision` (an app with the `canvasIfRevision` feature, the headless MCP backend):
+refused, before anything happens, unless the tab in front is at that revision (code `conflict`,
+as a command's; see "Revisions and conditional changes"). Their replies carry the `revision` and
+`revisionDocument` the gesture left.
+
+```json
+{"id":7,"method":"ui.pointer","params":{"kind":"drag","x":200,"y":200,"to":[300,260],"ifRevision":12,"agent":"Claude"}}
+{"id":7,"ok":false,"error":"`ui.pointer`: …","errorDetail":{"code":"conflict","expected":12,"actual":13,"since":[…],"document":{…}},"revision":13,"revisionDocument":3}
+```
 
 ### `ui.input {events}`
 
@@ -343,6 +438,11 @@ separate calls. Returns `{queued}`.
 ### `ui.menu.invoke {id}`
 
 Invoke a menu item exactly like clicking it (this may open a dialog). Returns `{ok, lastError}`.
+
+`ui.input`, `ui.menu.invoke` and `ui.set` act as the person at the window (raw input reaches every
+control, the panel's Accept buttons among them), so a request that carries `agent` is refused
+(`badParams`, `param: "agent"`) and nothing is done: an AI agent runs commands with
+`engine.execute {agent}` and canvas gestures with `ui.pointer`, `ui.key` and `ui.type` with `agent`.
 
 ### `ui.set {rightTab?, leftTab?, theme?, home?, homeSection?, homeSearch?, homeRecentsView?, homeRecentsSort?, homeRecentsOrder?, palette?, mainMenu?, focusRegion?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?, stylePicker?, stylePickerEdit?, stylePickerView?, iconGallery?, protoEditor?, contextMenu?, contextSelectLayer?, commentOpen?, commentDraft?, commentFilter?, commentSort?, commentSearch?, commentReply?, commentEdit?, presentComments?, devCompare?, devCompareMode?, devCompareSplit?, annotationFilter?, resetFrameStats?, pluginsWindow?, pluginsTab?, pluginConfirm?, pluginForm?, devCompareVersion?}`
 
@@ -435,6 +535,30 @@ command does the same.
 Closing a window closes its files, asking first when one has unsaved changes; the main window
 closing while others are open takes over one of them, and closing the last window quits.
 
+### `app.info {}`
+
+Which run of the app answers: `{"instance", "version", "pid", "window", "features"}` (`window`:
+true from the desktop app and the web build, false from the headless MCP backend; an app from
+before them leaves both out). `instance` is 32 hex digits made once when the app starts; it stays the same for
+as long as that process runs and differs in every other run, so a client that reconnects (or finds
+the port answered by something else) can tell whether it reached the same app, with the same open
+files and undo history, or another one. `version` is the app's version and `pid` its process id
+(0 in the browser). It needs no open file.
+
+```json
+{"id":1,"method":"app.info"}
+{"id":1,"result":{"instance":"5f0c2a9e41d7b3a86e1f0c2a9e41d7b3","pid":41327,"version":"0.18.1","window":true,"features":["errorDetail","revision","canvasIfRevision"]}}
+```
+
+`features` lists what this app's control channel does beyond the first protocol (`errorDetail`:
+failed replies carry it; `revision`: documents count revisions and commands take `ifRevision`;
+`canvasIfRevision`: `ui.pointer`, `ui.key` and `ui.type` check `ifRevision` in the request that
+acts, and replies say which document their `revision` is of, `revisionDocument`); an app that
+leaves it out does none of these. A client that reconnects asks again: when `instance` differs,
+the app was restarted, and every document id, node id and revision the client holds is stale.
+`figguremyui-cli mcp --attach` asks on each new connection and fails the first tool call after a
+restart, once, with code `transport`; an app that doesn't know `app.info` is used as before.
+
 ### `app.quit {}`
 
 Close the app (every window, without asking about unsaved changes).
@@ -443,7 +567,7 @@ Close the app (every window, without asking about unsaved changes).
 
 ```sh
 port=7979
-figcraft --control $port &
+figguremyui --control $port &
 exec 3<>/dev/tcp/127.0.0.1/$port
 echo '{"id":1,"method":"engine.execute","params":{"command":"frame.create","params":{"preset":"iPhone 16","x":0,"y":0}}}' >&3
 read -r reply <&3; echo "$reply"
@@ -451,13 +575,13 @@ echo '{"id":2,"method":"ui.screenshot","params":{"path":"/tmp/figcraft.png"}}' >
 read -r reply <&3; echo "$reply"
 ```
 
-For agents, prefer the MCP server (`figcraft-cli mcp --attach 7979`, see `docs/mcp.md`): it wraps
+For agents, prefer the MCP server (`figguremyui-cli mcp --attach 7979`, see `docs/mcp.md`): it wraps
 these methods in documented tools and returns images inline.
 
 ## In the browser: `window.figcraft`
 
 The web build has no TCP server (a page can't listen on a socket), so it offers the same methods to the
-page itself, as promises on `window.figcraft` (`apps/figcraft-web/src/api.rs`). An agent driving FigCraft in a
+page itself, as promises on `window.figcraft` (`apps/figcraft-web/src/api.rs`). An agent driving Figgure My UI in a
 browser tab, or a host app showing it in an `<iframe>`, uses the commands it would send to the desktop
 app. It is opt-in: the page installs `window.figcraft` only when its URL has a `control` query entry
 (`index.html?control`, which can be combined with other flags: `?webgl&control`).
@@ -477,4 +601,4 @@ app. It is opt-in: the page installs `window.figcraft` only when its URL has a `
 Errors reject with an `Error` carrying the method's message. Requests run on the UI's next frame, so a
 hidden tab (whose frames the browser pauses) answers when it is shown again.
 
-`request`, `execute`, `commands`, `docInspect`, `uiInspect` and `screenshot` come from [`craft-web-api`](https://github.com/storytold/craft-libs/tree/main/crates/web-api) (storytold/craft-libs#413), the same shape in every Craft app. A call the app does not answer within 30 seconds rejects, and the app drops it unrun if it had not started it. `openFile`, `captureDownloads`, `files`, `readFile` and `inspect` are FigCraft's own.
+`request`, `execute`, `commands`, `docInspect`, `uiInspect` and `screenshot` come from [`craft-web-api`](https://github.com/storytold/craft-libs/tree/main/crates/web-api) (storytold/craft-libs#413), the same shape in every Craft app. A call the app does not answer within 30 seconds rejects, and the app drops it unrun if it had not started it. `openFile`, `captureDownloads`, `files`, `readFile` and `inspect` are Figgure My UI's own.

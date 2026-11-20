@@ -35,11 +35,20 @@ pub(crate) fn apply_prop_bindings(doc: &mut Document, id: NodeId, sets: &[(Strin
     let Some(NodeKind::Instance { component, .. }) = doc.node(id).map(|n| &n.kind) else { return };
     let component = *component;
     if let Some(set) = variant_set(doc, component) {
-        let options = variant_options(doc, set);
         let current = doc.node(component).map(|c| variant_props(&c.name)).unwrap_or_default();
+        // A value the variant shown has already changes nothing: the set's options are worked
+        // out only for another (most bindings hold the value they held, and a prototype's run
+        // applies them after nearly every action, PF2).
+        let differs = |name: &String, t: &String| current.get(name) != Some(t);
+        let options = if sets.iter().any(|(name, val)| matches!(val, VariableValue::String(t) if differs(name, t))) {
+            variant_options(doc, set)
+        } else {
+            Vec::new()
+        };
         let mut wanted = current.clone();
         for (name, val) in sets {
             if let VariableValue::String(t) = val
+                && differs(name, t)
                 && options.iter().any(|(o, vals)| o == name && vals.contains(t))
             {
                 wanted.insert(name.clone(), t.clone());

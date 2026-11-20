@@ -26,7 +26,7 @@ fn tmp(name: &str) -> std::io::Result<TempDir> {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
     loop {
         let n = NEXT.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("figcraft-cli-test-{}-{n}-{name}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("figguremyui-cli-test-{}-{n}-{name}", std::process::id()));
         match fs::create_dir(&dir) {
             Ok(()) => return Ok(TempDir(dir)),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -40,10 +40,10 @@ fn completions_name_the_cli_its_subcommands_and_options() -> std::io::Result<()>
     let temp = tmp("completions")?;
     let dir = temp.path();
     generator::generate(dir)?;
-    for name in ["figcraft-cli.bash", "figcraft-cli.elv", "figcraft-cli.fish", "_figcraft-cli.ps1", "_figcraft-cli"] {
+    for name in ["figguremyui-cli.bash", "figguremyui-cli.elv", "figguremyui-cli.fish", "_figguremyui-cli.ps1", "_figguremyui-cli"] {
         let text = fs::read_to_string(dir.join(name))?;
         for word in [
-            "figcraft-cli",
+            "figguremyui-cli",
             "info",
             "export",
             "convert",
@@ -53,6 +53,7 @@ fn completions_name_the_cli_its_subcommands_and_options() -> std::io::Result<()>
             "mcp",
             "plugin",
             "perf",
+            "doctor",
             "publish",
             "no-system-fonts",
             "format",
@@ -71,7 +72,7 @@ fn bash_dispatch_states_have_matching_option_blocks() -> std::io::Result<()> {
     let temp = tmp("bash-completion-states")?;
     let dir = temp.path();
     generator::generate(dir)?;
-    let text = fs::read_to_string(dir.join("figcraft-cli.bash"))?;
+    let text = fs::read_to_string(dir.join("figguremyui-cli.bash"))?;
     let states: Vec<_> =
         text.lines().filter_map(|line| line.trim().strip_prefix("cmd=\"")?.strip_suffix('"')).filter(|state| !state.is_empty()).collect();
     assert!(states.len() > 1, "the completion has no subcommand dispatch states");
@@ -98,19 +99,20 @@ fn man_pages_cover_every_subcommand_without_synthetic_help_pages() -> std::io::R
     assert_eq!(
         pages,
         [
-            "figcraft-cli-commands.1",
-            "figcraft-cli-connect-publish.1",
-            "figcraft-cli-connect.1",
-            "figcraft-cli-convert.1",
-            "figcraft-cli-export.1",
-            "figcraft-cli-info.1",
-            "figcraft-cli-mcp.1",
-            "figcraft-cli-perf.1",
-            "figcraft-cli-plugin-publish.1",
-            "figcraft-cli-plugin.1",
-            "figcraft-cli-render.1",
-            "figcraft-cli-run.1",
-            "figcraft-cli.1",
+            "figguremyui-cli-commands.1",
+            "figguremyui-cli-connect-publish.1",
+            "figguremyui-cli-connect.1",
+            "figguremyui-cli-convert.1",
+            "figguremyui-cli-doctor.1",
+            "figguremyui-cli-export.1",
+            "figguremyui-cli-info.1",
+            "figguremyui-cli-mcp.1",
+            "figguremyui-cli-perf.1",
+            "figguremyui-cli-plugin-publish.1",
+            "figguremyui-cli-plugin.1",
+            "figguremyui-cli-render.1",
+            "figguremyui-cli-run.1",
+            "figguremyui-cli.1",
         ]
     );
     for name in &pages {
@@ -120,11 +122,12 @@ fn man_pages_cover_every_subcommand_without_synthetic_help_pages() -> std::io::R
         assert!(!text.contains("man-and-completions"), "{name} names the example instead of the CLI");
     }
     for (page, option) in [
-        ("figcraft-cli.1", "--no-system-fonts"),
-        ("figcraft-cli-export.1", "--format"),
-        ("figcraft-cli-export.1", "--automation-read-root"),
-        ("figcraft-cli-plugin-publish.1", "--server"),
-        ("figcraft-cli-connect-publish.1", "--dry-run"),
+        ("figguremyui-cli.1", "--no-system-fonts"),
+        ("figguremyui-cli-export.1", "--format"),
+        ("figguremyui-cli-export.1", "--automation-read-root"),
+        ("figguremyui-cli-plugin-publish.1", "--server"),
+        ("figguremyui-cli-connect-publish.1", "--dry-run"),
+        ("figguremyui-cli-doctor.1", "--example"),
     ] {
         let text = fs::read_to_string(dir.join(page))?.replace("\\-", "-");
         assert!(text.contains(option), "{page} does not contain {option}");
@@ -139,13 +142,13 @@ fn generation_creates_the_output_directory_and_can_run_again() -> std::io::Resul
     let output = dir.join("new").join("docs");
     assert!(!output.exists());
     generator::generate(&output)?;
-    let page = output.join("figcraft-cli.1");
+    let page = output.join("figguremyui-cli.1");
     let first = fs::read(&page)?;
     assert!(!first.is_empty());
     fs::write(&page, "old page")?;
     generator::generate(&output)?;
     assert_eq!(fs::read(page)?, first);
-    assert_eq!(fs::read_dir(output)?.count(), 18);
+    assert_eq!(fs::read_dir(output)?.count(), 19);
     Ok(())
 }
 
@@ -158,7 +161,7 @@ fn generation_returns_filesystem_errors() -> std::io::Result<()> {
     assert!(generator::generate(&file).is_err());
     assert_eq!(fs::read_to_string(&file)?, "keep me");
     // A valid directory can still fail when writing one of the generated pages.
-    fs::create_dir(dir.join("figcraft-cli.1"))?;
+    fs::create_dir(dir.join("figguremyui-cli.1"))?;
     assert!(generator::generate(dir).is_err());
     Ok(())
 }

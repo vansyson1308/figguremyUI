@@ -4,7 +4,7 @@
 /// The invite link in `#join=<link>` (`fragment` is `location.hash`, with or without its `#`), still
 /// escaped. The fragment, unlike the query, never leaves the browser, so the link's secret stays out
 /// of the web host's logs and `Referer` headers. `join` takes the rest of the fragment, so a pasted
-/// `figcraft://join?host=…&file=…&token=…` keeps its own `&`s. Anything longer than an escaped invite
+/// `figguremyui://join?host=…&file=…&token=…` keeps its own `&`s. Anything longer than an escaped invite
 /// link can be is ignored; what is left is checked by `collab.join` like a link the desktop app is
 /// opened with.
 pub fn join_link(fragment: &str) -> Option<&str> {

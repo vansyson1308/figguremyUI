@@ -54,21 +54,43 @@ pub struct Tokens {
     pub focus: Color32,
 }
 
-/// FigCraft's brand green for solid surfaces.
-pub const BRAND: Color32 = Color32::from_rgb(0x02, 0xDA, 0x96);
-/// Contrast-safe green for thin selection outlines and white-on-green labels.
-/// It reaches 4.5:1 on white and 3:1 on the dark canvas.
-pub const ACCENT: Color32 = Color32::from_rgb(0x00, 0x87, 0x5F);
-/// Ink on the bright green brand surface (white would not have enough contrast).
-pub const ACCENT_ON: Color32 = Color32::from_rgb(0x07, 0x35, 0x2A);
-/// Id of the canvas overlays' green for this frame ([`set_canvas_page`]).
+/// Figgure My UI's brand orange for solid surfaces (the app icon's check card).
+pub const BRAND: Color32 = Color32::from_rgb(0xFF, 0x7A, 0x4D);
+/// Contrast-safe orange for thin selection outlines and white-on-orange labels.
+/// It reaches 5.2:1 on white and 3.2:1 on the dark canvas.
+pub const ACCENT: Color32 = Color32::from_rgb(0xC2, 0x41, 0x0C);
+/// Ink on the bright orange brand surface, the icon's navy (5.9:1; white would not have enough
+/// contrast).
+pub const ACCENT_ON: Color32 = Color32::from_rgb(0x1D, 0x24, 0x40);
+/// Id of the canvas overlays' accent for this frame ([`set_canvas_page`]).
 const CANVAS_ACCENT: &str = "figcraft-canvas-accent";
 
 /// Remember the page colour the canvas shows. Its overlays (outlines, handles, arrows) take
-/// whichever green contrasts more with it: the bright one on a dark page, the darker on a light one.
+/// whichever accent contrasts more with it: the bright one on a dark page, the darker on a light one.
 pub fn set_canvas_page(ctx: &Context, page: Color32) {
     let pick = if c(BRAND).contrast(c(page)) > c(ACCENT).contrast(c(page)) { BRAND } else { ACCENT };
-    ctx.data_mut(|d| d.insert_temp(egui::Id::unique(CANVAS_ACCENT), pick));
+    ctx.data_mut(|d| {
+        d.insert_temp(egui::Id::unique(CANVAS_ACCENT), pick);
+        d.insert_temp(egui::Id::unique(CANVAS_PAGE), page);
+    });
+}
+
+/// Id of the page colour the canvas shows this frame ([`set_canvas_page`]).
+const CANVAS_PAGE: &str = "figcraft-canvas-page";
+
+/// The page colour the canvas shows ([`set_canvas_page`]); `None` before a page shows.
+pub fn canvas_page(ctx: &Context) -> Option<Color32> {
+    ctx.data(|d| d.get_temp(egui::Id::unique(CANVAS_PAGE)))
+}
+
+/// The grey for names drawn on the page (frame labels): `preferred` (the theme's secondary text)
+/// when it reads at 4.5:1 (WCAG AA for text) on `page`, else the other theme's secondary grey
+/// when that does, else black or white, whichever contrasts more. The page is the file's colour,
+/// not the theme's: a light page in the dark theme gets the darker grey, and the other way round.
+pub fn label_on(page: Color32, preferred: Color32) -> Color32 {
+    let reads = |x: Color32| c(x).contrast(c(page)) >= 4.5;
+    let greys = [preferred, Tokens::light().text_secondary, Tokens::dark().text_secondary];
+    greys.into_iter().find(|g| reads(*g)).unwrap_or(if c(page).is_dark() { Color32::WHITE } else { Color32::BLACK })
 }
 
 /// `x` (opaque) as a document colour, for its contrast with another.
@@ -76,12 +98,12 @@ fn c(x: Color32) -> figcraft_color::Color {
     figcraft_color::Color::new(f32::from(x.r()) / 255.0, f32::from(x.g()) / 255.0, f32::from(x.b()) / 255.0, 1.0)
 }
 
-/// The green for overlays drawn on the page ([`set_canvas_page`]); [`ACCENT`] before a page shows.
+/// The accent for overlays drawn on the page ([`set_canvas_page`]); [`ACCENT`] before a page shows.
 pub fn canvas_accent(ctx: &Context) -> Color32 {
     ctx.data(|d| d.get_temp(egui::Id::unique(CANVAS_ACCENT))).unwrap_or(ACCENT)
 }
 
-/// A fill under white text: the darker green stands in for the bright one.
+/// A fill under white text: the darker orange stands in for the bright one.
 pub fn under_white(c: Color32) -> Color32 {
     if c == BRAND { ACCENT } else { c }
 }
@@ -118,12 +140,13 @@ impl Tokens {
             field: Color32::from_rgb(0xF5, 0xF5, 0xF5),
             field_hover_border: Color32::from_rgb(0xE6, 0xE6, 0xE6),
             accent: BRAND,
-            accent_hover: Color32::from_rgb(0x00, 0xAD, 0x78),
+            // The ink still reads 5.0:1 on it.
+            accent_hover: Color32::from_rgb(0xF0, 0x6D, 0x3C),
             accent_on: ACCENT_ON,
-            // Darker green keeps links and labels legible on white and selected rows.
-            accent_text: Color32::from_rgb(0x00, 0x7A, 0x56),
-            selected_row: Color32::from_rgb(0xE0, 0xFB, 0xF1),
-            selected_row_child: Color32::from_rgb(0xF1, 0xFC, 0xF7),
+            // Darker orange keeps links and labels legible on white (6.0:1) and selected rows (5.4:1).
+            accent_text: Color32::from_rgb(0xB2, 0x3A, 0x0A),
+            selected_row: Color32::from_rgb(0xFF, 0xF0, 0xE9),
+            selected_row_child: Color32::from_rgb(0xFF, 0xF8, 0xF4),
             // A shade darker than the canvas purple: 5.5:1 on white, 4.7:1 on the selected
             // component row and 5.0:1 on a hovered row (the canvas purple reaches 3.8:1 and 4.1:1).
             component: Color32::from_rgb(0x86, 0x38, 0xF0),
@@ -140,7 +163,7 @@ impl Tokens {
             menu_text: Color32::from_rgb(0xFF, 0xFF, 0xFF),
             menu_hover: ACCENT,
             menu_dim: Color32::from_rgb(0x9A, 0x9A, 0x9A),
-            focus: Color32::from_rgb(0x00, 0x7A, 0x56),
+            focus: Color32::from_rgb(0xB2, 0x3A, 0x0A),
         }
     }
 
@@ -162,11 +185,12 @@ impl Tokens {
             field: Color32::from_rgb(0x38, 0x38, 0x38),
             field_hover_border: Color32::from_rgb(0x4D, 0x4D, 0x4D),
             accent: BRAND,
-            accent_hover: Color32::from_rgb(0x52, 0xE9, 0xB7),
+            accent_hover: Color32::from_rgb(0xFF, 0x9A, 0x75),
             accent_on: ACCENT_ON,
-            accent_text: Color32::from_rgb(0x52, 0xE9, 0xB7),
-            selected_row: Color32::from_rgb(0x16, 0x42, 0x36),
-            selected_row_child: Color32::from_rgb(0x12, 0x37, 0x2D),
+            // 6.7:1 on the panel, 6.1:1 on a selected row.
+            accent_text: Color32::from_rgb(0xFF, 0x9A, 0x75),
+            selected_row: Color32::from_rgb(0x4A, 0x2B, 0x1F),
+            selected_row_child: Color32::from_rgb(0x3D, 0x25, 0x19),
             // 5.4:1 on the panel, 4.6:1 on the selected component row, 4.5:1 on a hovered row
             // (the canvas purple reaches 3.1:1 and 2.7:1, #1903).
             component: Color32::from_rgb(0xD2, 0x7C, 0xFF),
@@ -327,7 +351,7 @@ pub fn install_fonts(ctx: &Context, system: bool, cjk: u8) {
     }
     brand.extend(fonts.families.get(&FontFamily::Name("semibold".into())).cloned().unwrap_or_default());
     fonts.families.insert(FontFamily::Name("brand".into()), brand);
-    // CJK and other scripts from craft-fonts as fallbacks (Noto Sans CJK only with FIGCRAFT_EMBED_CJK).
+    // CJK and other scripts from craft-fonts as fallbacks (Noto Sans CJK only with FIGGUREMYUI_EMBED_CJK).
     const BUILT_IN: [&str; 7] =
         ["Inter", "BIZ UDPGothic", "Noto Sans CJK SC", "Noto Sans Arabic", "Noto Sans Hebrew", "Noto Sans Georgian", "Noto Sans Thai"];
     let lang = crate::i18n::current().map_or("en", |l| l.code);
@@ -422,17 +446,20 @@ pub fn brand(size: f32) -> FontId {
 /// The two-tone Archivo wordmark used in the home sidebar and About window.
 pub fn paint_wordmark(painter: &egui::Painter, left_center: egui::Pos2, size: f32, t: &Tokens) {
     let font = brand(size);
-    let fig = painter.layout_no_wrap("Fig".into(), font.clone(), t.text);
-    let fig_width = fig.size().x;
-    painter.galley(egui::pos2(left_center.x, left_center.y - fig.size().y / 2.0), fig, t.text);
-    painter.text(egui::pos2(left_center.x + fig_width, left_center.y), egui::Align2::LEFT_CENTER, "Craft", font, t.accent_text);
+    let name = painter.layout_no_wrap(WORDMARK.0.into(), font.clone(), t.text);
+    let name_width = name.size().x;
+    painter.galley(egui::pos2(left_center.x, left_center.y - name.size().y / 2.0), name, t.text);
+    painter.text(egui::pos2(left_center.x + name_width, left_center.y), egui::Align2::LEFT_CENTER, WORDMARK.1, font, t.accent_text);
 }
 
-/// Paint the owner's original chameleon icon from the existing app asset.
+/// The wordmark's two parts: the name in the text colour, then "UI" in the accent text colour.
+pub const WORDMARK: (&str, &str) = ("Figgure My ", "UI");
+
+/// Paint the app icon (assets/app-icon) at `rect`.
 pub fn paint_app_icon(ui: &egui::Ui, rect: egui::Rect) {
     static ICON: OnceLock<Option<egui::ColorImage>> = OnceLock::new();
     let image = ICON.get_or_init(|| {
-        let rgba = image::load_from_memory(include_bytes!("../../../assets/app-icon/figcraft-64.png")).ok()?.to_rgba8();
+        let rgba = image::load_from_memory(include_bytes!("../../../assets/app-icon/figguremyui-64.png")).ok()?.to_rgba8();
         Some(egui::ColorImage::from_rgba_unmultiplied([rgba.width() as usize, rgba.height() as usize], rgba.as_raw()))
     });
     let Some(image) = image else {
@@ -481,8 +508,46 @@ pub fn doc_c32(ctx: &Context, c: figcraft_color::Color) -> Color32 {
 mod tests {
     use super::*;
 
+    /// QC-05: frame names on the page read at 4.5:1 whatever the page's colour, in both themes
+    /// (the dark theme's grey on a light page was 1.92:1).
     #[test]
-    fn canvas_overlays_take_the_green_that_stands_out_on_the_page() {
+    fn frame_names_read_on_any_page_colour_in_both_themes() {
+        let pages = [0xF5F5F5, 0xFFFFFF, 0x1E1E1E, 0x2C2C2C, 0x000000, 0x808080, 0x777777, 0x0B6E8A, 0xFFF1DC];
+        for t in [Tokens::light(), Tokens::dark()] {
+            for hex in pages {
+                let page = Color32::from_rgb((hex >> 16) as u8, (hex >> 8) as u8, hex as u8);
+                let label = label_on(page, t.text_secondary);
+                let ratio = c(label).contrast(c(page));
+                assert!(ratio >= 4.5, "{label:?} on #{hex:06X} (dark theme: {}): {ratio:.2}:1", t.dark);
+            }
+        }
+        // The theme's own grey where it reads: nothing changes on the theme's own page.
+        let (light, dark) = (Tokens::light(), Tokens::dark());
+        assert_eq!(label_on(light.canvas, light.text_secondary), light.text_secondary);
+        assert_eq!(label_on(dark.canvas, dark.text_secondary), dark.text_secondary);
+        let page = Color32::from_rgb(0xF5, 0xF5, 0xF5);
+        assert_ne!(label_on(page, dark.text_secondary), dark.text_secondary, "the case QC-05 saw");
+    }
+
+    /// Text on the brand colour and its stand-ins reaches WCAG AA (4.5:1) in both themes: the ink on
+    /// the brand orange and its hover, white on the darker orange, the accent text on panels and
+    /// selected rows.
+    #[test]
+    fn text_on_the_brand_colour_reaches_aa() {
+        let ratio = |a: Color32, b: Color32| c(a).contrast(c(b));
+        assert_eq!(BRAND, Color32::from_rgb(0xFF, 0x7A, 0x4D), "the app icon's orange");
+        assert!(ratio(ACCENT_ON, BRAND) >= 4.5, "{:.2}", ratio(ACCENT_ON, BRAND));
+        assert!(ratio(Color32::WHITE, ACCENT) >= 4.5, "{:.2}", ratio(Color32::WHITE, ACCENT));
+        for t in [Tokens::light(), Tokens::dark()] {
+            assert!(ratio(t.accent_on, t.accent) >= 4.5 && ratio(t.accent_on, t.accent_hover) >= 4.5, "dark: {}", t.dark);
+            for bg in [t.panel, t.selected_row, t.selected_row_child, t.hover] {
+                assert!(ratio(t.accent_text, bg) >= 4.5, "dark {}: accent text on {bg:?}: {:.2}", t.dark, ratio(t.accent_text, bg));
+            }
+        }
+    }
+
+    #[test]
+    fn canvas_overlays_take_the_accent_that_stands_out_on_the_page() {
         let ctx = Context::default();
         assert_eq!(canvas_accent(&ctx), ACCENT, "before any page shows");
         set_canvas_page(&ctx, Color32::from_rgb(0x1E, 0x1E, 0x1E));

@@ -1,8 +1,8 @@
 # Localization parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-05 · **Change:** minor (a right-to-left UI language (Arabic) mirrors the window: the icon rail and layers panel on the right, the Design panel on the left, popovers beside it over the canvas, egui's scroll bars, submenus and checkboxes mirrored; `FIGCRAFT_EMBED_SCRIPTS` embeds other scripts' craft-fonts faces in a web build, so Arabic and Persian documents draw there (#1902); documents: a paragraph's base direction can be forced with Text ▸ Text direction, as Add right-to-left text says (#1830); Bosnian draft catalog, one/few/other plurals; German terminology corrections (M10): gradient stops, OpenType stylistic sets and the Home-screen preference; partial review, catalog remains a draft; Arabic draft catalog, count-neutral plurals and web font gate; Thai draft catalog and Thai UI fonts; a missing translation fails no check: `cargo xtask i18n-report` lists them; Vietnamese draft catalog; string counts re-measured: 2,352 entries; Russian and Turkish catalogs reviewed by native speakers, Russian one/few/many plurals; Czech and Indonesian drafts; the Japanese draft completed; counts re-measured; Windows UI language from the first preferred language; draft catalogs catch up: every draft translates every string again; Simplified Chinese draft catalog; macOS finds its downloadable CJK system fonts (#406); string counts re-measured: 2,272 entries, the drafts at 95–99%; Swedish command labels and menu wordings; Russian, Swedish, Turkish, Czech and Indonesian listed; a duplicated paragraph removed) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-05 · **Change:** minor (a right-to-left UI language (Arabic) mirrors the window: the icon rail and layers panel on the right, the Design panel on the left, popovers beside it over the canvas, egui's scroll bars, submenus and checkboxes mirrored; `FIGGUREMYUI_EMBED_SCRIPTS` embeds other scripts' craft-fonts faces in a web build, so Arabic and Persian documents draw there (#1902); documents: a paragraph's base direction can be forced with Text ▸ Text direction, as Add right-to-left text says (#1830); Bosnian draft catalog, one/few/other plurals; German terminology corrections (M10): gradient stops, OpenType stylistic sets and the Home-screen preference; partial review, catalog remains a draft; Arabic draft catalog, count-neutral plurals and web font gate; Thai draft catalog and Thai UI fonts; a missing translation fails no check: `cargo xtask i18n-report` lists them; Vietnamese draft catalog; string counts re-measured: 2,352 entries; Russian and Turkish catalogs reviewed by native speakers, Russian one/few/many plurals; Czech and Indonesian drafts; the Japanese draft completed; counts re-measured; Windows UI language from the first preferred language; draft catalogs catch up: every draft translates every string again; Simplified Chinese draft catalog; macOS finds its downloadable CJK system fonts (#406); string counts re-measured: 2,272 entries, the drafts at 95–99%; Swedish command labels and menu wordings; Russian, Swedish, Turkish, Czech and Indonesian listed; a duplicated paragraph removed) · **Target:** Figma Design (desktop app 126.10.7)
 
-FigCraft's interface has a localization layer with an English catalog, a Russian catalog reviewed
+Figgure My UI's interface has a localization layer with an English catalog, a Russian catalog reviewed
 by a native speaker, and Spanish (with a Latin American overlay), French, German, Brazilian
 Portuguese, Japanese, Korean, Simplified Chinese, Traditional Chinese, Indonesian, Vietnamese, Bosnian and Czech drafts (machine-drafted,
 waiting for native speakers' review), plus Swedish and Turkish catalogs. This page lists the twelve key
@@ -18,7 +18,7 @@ browser's page translation. The `.lproj` folders in `/Applications/Figma.app` (6
 Electron/Chromium locale packs, not Figma's own UI languages. Text *content* in any script is
 supported by both apps (CJK, Arabic and Devanagari shaping, IME); Figma has no vertical text.
 
-## What FigCraft has (measured 2026-10-22, from source)
+## What Figgure My UI has (measured 2026-10-22, from source)
 
 - **Layer:** one TOML catalog per language in `crates/ui-egui/locales/`, baked into the binary by
   the UI crate's build script (desktop and web; nothing read at run time). Keys are the English text
@@ -92,12 +92,12 @@ supported by both apps (CJK, Arabic and Devanagari shaping, IME); Figma has no v
   TC and Heiti TC, so Han takes Traditional shapes; changing the
   UI language lays the faces out again. Only that face's file is read and egui shares its bytes, so English users load
   nothing (startup and memory measured unchanged); no CJK font installed means tofu, never a
-  crash. The web build has no system fonts: built with craft-fonts and `FIGCRAFT_EMBED_CJK=1` it
+  crash. The web build has no system fonts: built with craft-fonts and `FIGGUREMYUI_EMBED_CJK=1` it
   embeds Noto Sans CJK SC (+16 MB) and offers Japanese, Korean and Simplified Chinese; without a
   Noto Sans CJK TC face built in it leaves Traditional Chinese out too; otherwise the language picker and
   System leave them out. No font file is in this repo.
   embeds Noto Sans CJK SC (+16 MB) and offers Japanese, Korean and Simplified Chinese; otherwise the language picker and
-  System leave them out. `FIGCRAFT_EMBED_SCRIPTS=Arab,Hebr,Thai,Deva` (one tag per script wanted, as
+  System leave them out. `FIGGUREMYUI_EMBED_SCRIPTS=Arab,Hebr,Thai,Deva` (one tag per script wanted, as
   the craft-fonts manifest lists them) embeds those scripts' faces as well, so an Arabic or Persian
   document draws in Noto Sans Arabic (+0.8 MB) instead of missing-glyph boxes (#1902), and with `Arab`
   the picker offers the Arabic UI catalog too, as on the desktop. No font file is in this repo.
@@ -107,20 +107,20 @@ supported by both apps (CJK, Arabic and Devanagari shaping, IME); Figma has no v
 | Language | Code | UI strings translated | Dialogs / tooltips / help | Script support | Native review | Status | Hours to full |
 |---|---|---|---|---|---|---|---|
 | English | en | 2,352 / 2,352 (100%, source) | yes | Latin | yes (source) | full | 0 |
-| Simplified Chinese (Mandarin) | zh-Hans | 2,216 / 2,352 (94.2%, draft) | yes | CJK text and IME in documents; UI text in an installed Chinese face, ahead of Japanese ones (web: the `FIGCRAFT_EMBED_CJK` build) | no | draft | 1–2 (after native review) |
+| Simplified Chinese (Mandarin) | zh-Hans | 2,216 / 2,352 (94.2%, draft) | yes | CJK text and IME in documents; UI text in an installed Chinese face, ahead of Japanese ones (web: the `FIGGUREMYUI_EMBED_CJK` build) | no | draft | 1–2 (after native review) |
 | Traditional Chinese (Taiwan) | zh-Hant | 2,647 / 2,647 (100%: 1,975 UI strings, 641 command labels, 31 menu wordings; draft, counted 2026-11-03) | yes | CJK text and IME in documents; UI text in an installed Noto Sans CJK TC, then Microsoft JhengHei, PingFang TC or Heiti TC (web: only with a built-in TC face); zh-TW, zh-HK, zh-MO and zh-Hant read it, an explicit Hans stays Simplified | no | draft | 1–2 (after native review) |
 | Spanish | es, es-419 | 2,352 / 2,352 (100%, draft); es-419 overlays 104 Latin American wordings (draft) | yes | Latin | no | draft | 0–1 (after native review) |
 | Hindi | hi | 0 (0%) | no | Devanagari shaping works in documents; UI font fallback to check | no | none | 4–7 |
-| Arabic | ar | 1,857 / 1,857 UI strings, 620 command labels, 31 menu wordings (draft, counted 2026-10-28) | catalog complete; native review pending | Existing bidi/shaping and Arabic system fallback; web: only a build with `FIGCRAFT_EMBED_SCRIPTS=Arab` embeds Noto Sans Arabic (the font budget leaves it out otherwise, #1902); documents draw in it and the picker offers the Arabic UI then; panels do not mirror | no | draft | review + panel mirroring (not re-estimated) |
+| Arabic | ar | 1,857 / 1,857 UI strings, 620 command labels, 31 menu wordings (draft, counted 2026-10-28) | catalog complete; native review pending | Existing bidi/shaping and Arabic system fallback; web: only a build with `FIGGUREMYUI_EMBED_SCRIPTS=Arab` embeds Noto Sans Arabic (the font budget leaves it out otherwise, #1902); documents draw in it and the picker offers the Arabic UI then; panels do not mirror | no | draft | review + panel mirroring (not re-estimated) |
 | Hindi | hi | 0 (0%) | no | Devanagari shaping works in documents; the desktop UI takes an installed Devanagari face (Nirmala UI, Kohinoor Devanagari, Noto Sans Devanagari, Lohit) for names and values (#2014); no UI catalog | no | none | 4–7 |
 | Arabic | ar | 1,857 / 1,857 UI strings, 620 command labels, 31 menu wordings (draft, counted 2026-10-28) | catalog complete; native review pending | Existing bidi/shaping and Arabic system fallback; web not offered (font budget excludes Arabic); panels do not mirror | no | draft | review + panel mirroring (not re-estimated) |
 | Arabic | ar | 1,857 / 1,857 UI strings, 620 command labels, 31 menu wordings (draft, counted 2026-10-28) | catalog complete; native review pending | Existing bidi/shaping and Arabic system fallback; web not offered (font budget excludes Arabic); the window mirrors (panels swap sides), rows inside the panels do not | no | draft | review + mirrored panel rows (not re-estimated) |
 | French | fr | 2,328 / 2,352 (99.0%, draft) | yes | Latin | no | draft | 1–2 (after native review) |
 | Portuguese | pt-BR | 2,331 / 2,352 (99.1%, draft) | yes | Latin | no | draft | 1–2 (after native review) |
 | Indonesian | id | 2,292 / 2,352 (97.4%, draft) | yes | Latin | no | draft | 1–2 (after native review) |
-| Japanese | ja | 2,304 / 2,352 (98.0%, draft) | yes | CJK text and IME in documents; UI text in an installed Japanese face (web: the `FIGCRAFT_EMBED_CJK` build) | no | draft | 1–2 (after native review) |
+| Japanese | ja | 2,304 / 2,352 (98.0%, draft) | yes | CJK text and IME in documents; UI text in an installed Japanese face (web: the `FIGGUREMYUI_EMBED_CJK` build) | no | draft | 1–2 (after native review) |
 | German | de | 2,226 / 2,352 (94.6%, draft) | yes | Latin; long words elide in narrow fields | no | draft | 1–2 (after native review) |
-| Korean | ko | 2,216 / 2,352 (94.2%, draft) | yes | Hangul text and IME in documents; UI text in an installed Korean face (web: the `FIGCRAFT_EMBED_CJK` build) | no | draft | 1–2 (after native review) |
+| Korean | ko | 2,216 / 2,352 (94.2%, draft) | yes | Hangul text and IME in documents; UI text in an installed Korean face (web: the `FIGGUREMYUI_EMBED_CJK` build) | no | draft | 1–2 (after native review) |
 | Vietnamese | vi | 2,352 / 2,352 (100%, draft) | yes | Latin with stacked diacritics | no | draft | 1–2 (after native review) |
 | Thai | th | 1,791 / 1,791 UI strings, 589 of 598 command labels, 31 menu wordings (draft) | yes | Thai text in documents; UI text (and layer and page names in Thai, whatever the UI language) in an installed Thai face, desktop only; the web build leaves Thai out | no | draft | 1–2 (after native review) |
 

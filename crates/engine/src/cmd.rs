@@ -95,6 +95,9 @@ fn registry() -> &'static Registry {
         list.extend(library::specs());
         list.extend(proto::specs());
         list.extend(proto_actions::specs());
+        list.extend(crate::proto_verify::specs());
+        list.extend(crate::proto_snapshot::specs());
+        list.extend(crate::design::specs());
         list.extend(comment::specs());
         list.extend(crate::vectoredit::specs());
         list.extend(crate::shapebuilder::specs());
@@ -177,12 +180,10 @@ pub fn refuse_unknown_params(id: &str, params: &Value) -> Result<()> {
     let (Some(names), Some(given)) = (param_names(id), params.as_object()) else { return Ok(()) };
     let taken = |k: &str| matches!(k, "ids" | "id") || names.contains(&k);
     let unknown: Vec<String> = given.keys().filter(|k| !taken(k)).map(|k| format!("`{k}`")).collect();
-    if unknown.is_empty() {
-        return Ok(());
-    }
+    let Some(first) = given.keys().find(|k| !taken(k)) else { return Ok(()) };
     let s = if unknown.len() == 1 { "" } else { "s" };
     let takes = if names.is_empty() { "none".to_string() } else { names.join(", ") };
-    Err(crate::bad(id, format!("unknown parameter{s} {} (it takes {takes})", unknown.join(", "))))
+    Err(crate::error::bad_param(id, first, format!("unknown parameter{s} {} (it takes {takes})", unknown.join(", "))))
 }
 
 /// The top-level items of a `{…}` params doc (`{ids?, direction? (horizontal|vertical)}` →

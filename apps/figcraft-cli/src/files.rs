@@ -334,7 +334,7 @@ pub fn export(file: &str, out: &str, t: &Target) -> CliResult<ExitCode> {
 fn refuse_dropping_images(input: &str, out: &str, images_left_out: usize) -> CliResult<()> {
     if images_left_out > 0 && figcraft_engine::file_access::same_file(input, out) {
         return Err(CliError::Failed(format!(
-            "{out} wasn't written: {images_left_out} of its images weren't loaded (together they pass what FigCraft reads from one file), and writing over it would delete them. Write to another path; {input} keeps them."
+            "{out} wasn't written: {images_left_out} of its images weren't loaded (together they pass what Figgure My UI reads from one file), and writing over it would delete them. Write to another path; {input} keeps them."
         )));
     }
     Ok(())
@@ -432,6 +432,8 @@ pub fn run_script(script: &str, input: Option<&str>, out: Option<&str>) -> CliRe
         }
         None => (Session::new(), 0),
     };
+    // No window here: a step that only presents a prototype fails instead of reporting success.
+    s.windowless = true;
     // One undo step and all-or-nothing, the way the same commands behave through `command.batch`
     // (MCP, the control channel, plugins): `{"$step": n}` and `{"$ref": "name"}` resolve against the
     // steps before it, and a step that fails takes the whole script back instead of leaving the
@@ -450,9 +452,14 @@ pub fn run_script(script: &str, input: Option<&str>, out: Option<&str>) -> CliRe
     if let Err(e) = outcome {
         let cmd = steps.get(failed_at).map_or("", |step| step.command.as_str());
         let i = failed_at;
-        println!("{}", json!({"step": i, "command": cmd, "ok": false, "error": e.to_string(), "rolledBack": true}));
+        // The error names its step itself; here the step is said once, in front.
+        let why = match &e {
+            figcraft_engine::EngineError::Step { error, .. } => error.to_string(),
+            other => other.to_string(),
+        };
+        println!("{}", json!({"step": i, "command": cmd, "ok": false, "error": why, "errorDetail": e.detail(), "rolledBack": true}));
         // Plugin-supplied text: escape terminal controls and line breaks.
-        eprintln!("error: step {i} ({}) failed: {}", plain(cmd), plain(&e.to_string()));
+        eprintln!("error: step {i} ({}) failed: {}", plain(cmd), plain(&why));
         eprintln!("the script's document changes were rolled back");
         return Ok(ExitCode::from(1));
     }
@@ -508,7 +515,7 @@ mod tests {
     /// `info` and a script's failure print what a file and its steps name, controls escaped.
     #[test]
     fn info_and_a_failed_script_print_what_they_were_given() {
-        let dir = std::env::temp_dir().join(format!("figcraft-cli-plain-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("figguremyui-cli-plain-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let (svg, script) = (dir.join("a.svg"), dir.join("s.json"));
         std::fs::write(&svg, r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>"#).unwrap();
@@ -580,7 +587,7 @@ mod tests {
         }
         doc.create(parent, figcraft_doc::NodeKind::Rectangle, "leaf", 0.0, 0.0, 8.0, 8.0).unwrap();
         let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let dir = std::env::temp_dir().join(format!("figcraft-cli-export-depth-{}-{stamp}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("figguremyui-cli-export-depth-{}-{stamp}", std::process::id()));
         std::fs::create_dir(&dir).unwrap();
         for ext in ["svg", "pdf"] {
             let path = dir.join(format!("previous.{ext}"));
@@ -598,7 +605,7 @@ mod tests {
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {
         let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let dir = std::env::temp_dir().join(format!("figcraft-cli-{tag}-{}-{stamp}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("figguremyui-cli-{tag}-{}-{stamp}", std::process::id()));
         std::fs::create_dir(&dir).unwrap();
         dir
     }

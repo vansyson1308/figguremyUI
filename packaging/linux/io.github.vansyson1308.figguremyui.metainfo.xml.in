@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AppStream metadata (software centres, Flathub). Template: package.sh and the Flatpak
+     manifest substitute @VERSION@ and @DATE@ from Cargo.toml and the build date. -->
+<component type="desktop-application">
+  <id>io.github.vansyson1308.figguremyui</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT OR Apache-2.0</project_license>
+  <name>Figgure My UI</name>
+  <summary>Design and prototype user interfaces</summary>
+  <developer id="io.github.vansyson1308">
+    <name>Figgure My UI contributors</name>
+  </developer>
+  <description>
+    <p>
+      Figgure My UI is an open-source, native tool to design and verify interactive prototypes with
+      people and AI agents. Lay out screens
+      on an infinite canvas with frames, auto layout and constraints, build reusable components
+      and variants, and link screens into clickable prototypes.
+    </p>
+    <ul>
+      <li>Frames, vector shapes, text and images on an infinite canvas</li>
+      <li>Auto layout and constraints for responsive designs</li>
+      <li>Components, variants, shared styles and variables</li>
+      <li>Prototyping with interactions and transitions, and a presentation mode</li>
+      <li>Inspect panel with measurements and code snippets; SVG and PNG export</li>
+      <li>Every action is a command, scriptable from a CLI, a JSON control channel and an MCP server</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.vansyson1308.figguremyui.desktop</launchable>
+  <icon type="stock">io.github.vansyson1308.figguremyui</icon>
+  <!-- Only url types known to appstream 0.15 (Ubuntu 22.04, where CI validates): no vcs-browser. -->
+  <url type="homepage">https://github.com/vansyson1308/figguremyUI</url>
+  <url type="bugtracker">https://github.com/vansyson1308/figguremyUI/issues</url>
+  <url type="help">https://github.com/vansyson1308/figguremyUI</url>
+  <categories>
+    <!-- Freedesktop registered categories only ("Design" isn't one; the .desktop file says X-Design). -->
+    <category>Graphics</category>
+    <category>2DGraphics</category>
+    <category>VectorGraphics</category>
+  </categories>
+  <keywords>
+    <keyword>interface design</keyword>
+    <keyword>prototyping</keyword>
+    <keyword>ui</keyword>
+    <keyword>wireframe</keyword>
+  </keywords>
+  <branding>
+    <color type="primary" scheme_preference="light">#ffd2c2</color>
+    <color type="primary" scheme_preference="dark">#1d2440</color>
+  </branding>
+  <requires>
+    <display_length compare="ge">760</display_length>
+  </requires>
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </supports>
+  <provides>
+    <binary>figguremyui</binary>
+    <!-- The .figcraft file type keeps its MIME type (files are interchangeable with upstream). -->
+    <mediatype>application/x-figcraft</mediatype>
+    <mediatype>application/x-sketch</mediatype>
+  </provides>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="@VERSION@" date="@DATE@"/>
+  </releases>
+</component>

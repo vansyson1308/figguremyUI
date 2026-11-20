@@ -1,5 +1,6 @@
 pub mod assets_panel;
 pub mod component_panel;
+pub mod design_context;
 pub mod dev_compare;
 pub mod dev_mode;
 pub mod export_panel;

@@ -56,19 +56,22 @@ fn colourful() -> (Document, NodeId) {
         modes: vec![Mode { id: "m1".into(), name: "M".into() }],
         extends: None,
     });
-    d.variables.variables.push(Variable {
-        id: "v1".into(),
-        name: "red".into(),
-        collection: "c1".into(),
-        kind: VariableType::Color,
-        values: BTreeMap::from([("m1".to_string(), VariableValue::Color(RED))]),
-        description: String::new(),
-        scopes: None,
-        hidden_from_publishing: false,
-        extends: None,
-        overrides: Default::default(),
-        code_syntax: Default::default(),
-    });
+    d.variables.variables.push(
+        Variable {
+            id: "v1".into(),
+            name: "red".into(),
+            collection: "c1".into(),
+            kind: VariableType::Color,
+            values: BTreeMap::from([("m1".to_string(), VariableValue::Color(RED))]),
+            description: String::new(),
+            scopes: None,
+            hidden_from_publishing: false,
+            extends: None,
+            overrides: Default::default(),
+            code_syntax: Default::default(),
+        }
+        .into(),
+    );
     d.document_colors.push(RED);
     (d, r)
 }

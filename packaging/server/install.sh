@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install or upgrade figcraft-server on a Debian or Ubuntu machine, behind Caddy (TLS), as a
+# Install or upgrade figguremyui-server on a Debian or Ubuntu machine, behind Caddy (TLS), as a
 # server open to the public. See docs/server.md ("Running a public server").
 #
 #   sudo ./install.sh --host figcraft.example.com --email you@example.com
@@ -27,11 +27,12 @@
 #   -h, --help         this text
 set -euo pipefail
 
-REPO="storytold/figcraft"
+# The fork's releases only (it has published none yet: then the script builds from source).
+REPO="vansyson1308/figguremyUI"
 CONFIG_DIR=/etc/figcraft-server
 CONFIG="$CONFIG_DIR/server.toml"
 DATA=/var/lib/figcraft-server
-BIN=/usr/local/bin/figcraft-server
+BIN=/usr/local/bin/figguremyui-server
 BUILD=/var/cache/figcraft-build
 BUILDER=figcraft-build
 # Root's own work (downloads, its clone, the swap file, the built binary once copied out): never
@@ -153,7 +154,7 @@ from_release() { # download and check the release archive; sets NEW_BIN and FILE
     version="$(curl --proto '=https' -fsSL "https://api.github.com/repos/$REPO/releases/latest" | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p' | head -n 1)" || return 1
     [[ -n "$version" ]] || return 1
   fi
-  name="figcraft-server-$version-linux-$ARCH"
+  name="figguremyui-server-$version-linux-$ARCH"
   dir="$WORK/release"
   rm -rf "$dir"
   mkdir -p "$dir"
@@ -162,7 +163,7 @@ from_release() { # download and check the release archive; sets NEW_BIN and FILE
   curl --proto '=https' -fsSL -o "$dir/SHA256SUMS.txt" "https://github.com/$REPO/releases/download/v$version/SHA256SUMS.txt" || return 1
   (cd "$dir" && grep " $name.tar.gz\$" SHA256SUMS.txt | sha256sum -c --quiet -) || die "the download doesn't match SHA256SUMS.txt"
   tar -C "$dir" -xzf "$dir/$name.tar.gz"
-  NEW_BIN="$dir/$name/figcraft-server"
+  NEW_BIN="$dir/$name/figguremyui-server"
   FILES="$dir/$name"
 }
 
@@ -233,22 +234,22 @@ from_source() { # build the source tree around this script, else a fresh clone; 
   SWAP=""
   # Copied out with the build user's rights into a file root made: a link the build user planted
   # can't make root read (or install) anything else.
-  NEW_BIN="$WORK/figcraft-server.built"
+  NEW_BIN="$WORK/figguremyui-server.built"
   rm -f "$NEW_BIN"
-  as_builder cat "$BUILD/target/release/figcraft-server" >"$NEW_BIN" || die "the build left no binary"
+  as_builder cat "$BUILD/target/release/figguremyui-server" >"$NEW_BIN" || die "the build left no binary"
   chmod 755 "$NEW_BIN"
   FILES="$src/packaging/server"
 }
 
-if [[ -x "$HERE/figcraft-server" ]] && [[ "$FROM_SOURCE" = false ]]; then
-  NEW_BIN="$HERE/figcraft-server" # run from an unpacked release archive
+if [[ -x "$HERE/figguremyui-server" ]] && [[ "$FROM_SOURCE" = false ]]; then
+  NEW_BIN="$HERE/figguremyui-server" # run from an unpacked release archive
 elif [[ -n "$LOCAL_SRC" ]] && [[ -z "$VERSION" ]]; then
   from_source # the source copied to (or checked out on) this machine, as it is
 elif [[ "$FROM_SOURCE" = true ]] || ! from_release; then
   [[ "$FROM_SOURCE" = true ]] || say "No release archive for linux-$ARCH: building from source instead"
   from_source
 fi
-[[ -x "$NEW_BIN" ]] || die "no figcraft-server binary to install"
+[[ -x "$NEW_BIN" ]] || die "no figguremyui-server binary to install"
 # The units and the Caddyfile beside this script when it has them (a checkout or an archive).
 [[ -f "$HERE/figcraft-backup.timer" ]] && FILES="$HERE"
 for f in figcraft-server.service Caddyfile figcraft-backup.service figcraft-backup.timer; do
@@ -273,7 +274,7 @@ install -d -m 755 "$CONFIG_DIR"
 if [[ ! -f "$CONFIG" ]]; then
   say "Writing $CONFIG"
   {
-    printf '# figcraft-server settings (docs/server.md, "Configuration"). install.sh never overwrites this file.\n'
+    printf '# figguremyui-server settings (docs/server.md, "Configuration"). install.sh never overwrites this file.\n'
     printf 'listen = "127.0.0.1:47900"\n'
     printf 'data = "%s"\n' "$DATA"
     printf 'public_url = "wss://%s/"\n' "$HOST"
@@ -303,7 +304,7 @@ if [[ ! -f "$CONFIG" ]]; then
   CHANGED=true
 fi
 as_server "$BIN" --config "$CONFIG" check >/dev/null ||
-  die "$CONFIG isn't right for this figcraft-server (see above; a release older than open hosting needs --from-source)"
+  die "$CONFIG isn't right for this figguremyui-server (see above; a release older than open hosting needs --from-source)"
 
 install_file() { # install_file SOURCE TARGET MODE: true when it changed
   local source="$1" target="$2" mode="$3"
@@ -322,7 +323,7 @@ if [[ "$UNITS" = true ]]; then
 fi
 systemctl enable --quiet "$SERVICE"
 if [[ "$CHANGED" = true ]] || ! systemctl is-active --quiet "$SERVICE"; then
-  say "Starting figcraft-server"
+  say "Starting figguremyui-server"
   systemctl restart "$SERVICE"
 fi
 if [[ "$BACKUPS" = true ]]; then
@@ -392,13 +393,13 @@ for _ in $(seq 1 50); do
   curl -fs http://127.0.0.1:47900/healthz >/dev/null && break
   sleep 0.2
 done
-curl -fs http://127.0.0.1:47900/healthz >/dev/null || die "figcraft-server isn't answering: journalctl -u $SERVICE"
-ADMIN="sudo -u figcraft figcraft-server --config $CONFIG"
+curl -fs http://127.0.0.1:47900/healthz >/dev/null || die "figguremyui-server isn't answering: journalctl -u $SERVICE"
+ADMIN="sudo -u figcraft figguremyui-server --config $CONFIG"
 cat <<EOF
 
-figcraft-server is running behind Caddy.
+figguremyui-server is running behind Caddy.
 
-  Publish:   in FigCraft, Share > Publish to server..., address wss://$HOST/
+  Publish:   in Figgure My UI, Share > Publish to server..., address wss://$HOST/
              $(if [[ "$OPEN" = true ]]; then echo "(open to the public: no key needed; each file gets an owner token)"; else echo "(with the key: $ADMIN key)"; fi)
   Check:     curl https://$HOST/healthz      (once DNS points here and Caddy has its certificate)
   Logs:      journalctl -u $SERVICE -f

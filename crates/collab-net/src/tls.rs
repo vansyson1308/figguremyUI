@@ -1,5 +1,5 @@
 //! TLS for `wss://` addresses (native): rustls with ring, trusting Mozilla's root certificates
-//! (compiled in) plus any in the PEM file `FIGCRAFT_CA_FILE` names (a private authority or a
+//! (compiled in) plus any in the PEM file `FIGGUREMYUI_CA_FILE` names (a private authority or a
 //! self-signed server). Certificates are always verified.
 //!
 //! A connection's reader and writer threads share one TLS session ([`Tls`]), each holding it only
@@ -17,8 +17,9 @@ use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, ServerName};
 use rustls::{CertificateError, ClientConfig, ClientConnection, RootCertStore};
 
-/// The variable naming a PEM file of extra certificate authorities to trust.
-pub const CA_FILE: &str = "FIGCRAFT_CA_FILE";
+/// The variable naming a PEM file of extra certificate authorities to trust (FigCraft's
+/// `FIGGUREMYUI_CA_FILE` is still read when it isn't set: [`figcraft_doc::env`]).
+pub const CA_FILE: &str = "FIGGUREMYUI_CA_FILE";
 
 /// One connection's TLS session, shared by its reader and writer.
 pub type Tls = Arc<Mutex<ClientConnection>>;
@@ -67,7 +68,7 @@ fn config() -> Result<Arc<ClientConfig>, String> {
 
 fn make_config() -> Result<Arc<ClientConfig>, String> {
     let mut roots = RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    if let Some(path) = std::env::var_os(CA_FILE) {
+    if let Some(path) = figcraft_doc::env::var_os("CA_FILE") {
         let shown = std::path::Path::new(&path).display().to_string();
         let certs: Vec<CertificateDer> = CertificateDer::pem_file_iter(&path)
             .and_then(Iterator::collect)

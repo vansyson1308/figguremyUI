@@ -157,6 +157,56 @@ fn a_sections_label_renames_it_and_a_click_elsewhere_commits() {
     assert_eq!(u.app.session.ds().unwrap().history.undo.len(), undo + 1, "one undo step");
 }
 
+/// The colour a frame name label is painted in this frame.
+fn label_colour(u: &mut Ui, name: &str) -> egui::Color32 {
+    fn walk(shape: &egui::Shape, name: &str, out: &mut Option<egui::Color32>) {
+        match shape {
+            egui::Shape::Text(t) if t.galley.text() == name => {
+                *out = t.galley.job.sections.first().map(|s| s.format.color).or(Some(t.fallback_color));
+            }
+            egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, name, out)),
+            _ => {}
+        }
+    }
+    let out = u.frame_output(vec![]);
+    let mut found = None;
+    for c in &out.shapes {
+        walk(&c.shape, name, &mut found);
+    }
+    found.unwrap_or_else(|| panic!("no label {name:?} painted"))
+}
+
+/// QC-05: in the dark theme, a frame's name on a light page (an example file's #F5F5F5) reads at
+/// 4.5:1; so does the light theme's on a dark page.
+#[test]
+fn frame_names_read_on_the_pages_own_colour_in_either_theme() {
+    let lum = |c: egui::Color32| {
+        let ch = |v: u8| {
+            let v = f64::from(v) / 255.0;
+            if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+        };
+        0.2126 * ch(c.r()) + 0.7152 * ch(c.g()) + 0.0722 * ch(c.b())
+    };
+    let ratio = |a: egui::Color32, b: egui::Color32| {
+        let (x, y) = (lum(a) + 0.05, lum(b) + 0.05);
+        x.max(y) / x.min(y)
+    };
+    for (theme, page) in [("dark", egui::Color32::from_rgb(0xF5, 0xF5, 0xF5)), ("light", egui::Color32::from_rgb(0x1E, 0x1E, 0x1E))] {
+        let mut s = Session::new();
+        s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 300, "height": 200, "name": "Welcome"})).unwrap();
+        s.execute("page.setBackground", &json!({"color": format!("#{:02X}{:02X}{:02X}", page.r(), page.g(), page.b())})).unwrap();
+        s.execute("select.none", &json!({})).unwrap();
+        let mut u = Ui::new(s);
+        u.app.session.prefs.theme = theme.into();
+        u.frame(vec![]);
+        u.frame(vec![]);
+        assert_eq!(u.app.ui.dark, theme == "dark");
+        let colour = label_colour(&mut u, "Welcome");
+        let r = ratio(colour, page);
+        assert!(r >= 4.5, "{theme} theme, page {page:?}: label {colour:?} reads at {r:.2}:1");
+    }
+}
+
 #[test]
 fn a_sections_pill_is_above_the_labels_of_frames_inside_it() {
     // A frame near the section's top-left puts its label over the section's pill (#1150): the pill

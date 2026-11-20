@@ -1,14 +1,22 @@
-//! The command line: `figcraft [--control <port>] [--automation-read-root <dir>]…
-//! [--automation-write-root <dir>]… [files…] [figcraft://join?…]`. An invite link
-//! (what the system passes when a `figcraft://` link is opened) joins that session once the window
+//! The command line: `figguremyui [--control <port>] [--automation-read-root <dir>]…
+//! [--automation-write-root <dir>]… [files…] [figguremyui://join?…]`. An invite link
+//! (what the system passes when a `figguremyui://` link is opened, or FigCraft's `figcraft://` link
+//! given by hand) joins that session once the window
 //! is up; everything else that isn't a flag is a file to open, as a path or a `file://` URL (the
 //! Linux desktop entry passes URLs, `%U`, so that it can also hand over invite links). Any other
 //! `--flag` is unknown and stops the app at startup (#836): a mistyped root flag must never leave
 //! the app running unconfined. After a bare `--`, every argument is a file.
 
+/// What `--help` prints, and what an unknown option prints after naming it.
+pub const USAGE: &str =
+    "Usage: figguremyui [--control PORT] [--automation-read-root DIR]... [--automation-write-root DIR]... [FILE | figguremyui://join?...]...
+       figguremyui --help | --version";
+
 /// What the app was started with.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Args {
+    /// `--help` or `-h`: print [`USAGE`] and start nothing (F-16).
+    pub help: bool,
     /// `--control <port>` (or `--control=<port>`): the JSON-lines control server.
     pub control: Option<u16>,
     pub files: Vec<String>,
@@ -23,9 +31,10 @@ pub struct Args {
     pub unknown: Vec<String>,
 }
 
-/// An invite link rather than a file (`figcraft:` links, in any case).
+/// An invite link rather than a file (`figguremyui:` links, or FigCraft's `figcraft:` ones, in any
+/// case).
 pub fn is_invite(arg: &str) -> bool {
-    arg.get(..9).is_some_and(|s| s.eq_ignore_ascii_case("figcraft:"))
+    arg.split_once(':').is_some_and(|(scheme, _)| figcraft_engine::figcraft_collab::scheme::is_own(scheme))
 }
 
 /// The path a local `file://` URL names (`%XX` escapes decoded); `None` for anything else.
@@ -71,6 +80,8 @@ pub fn parse(args: &[String]) -> Args {
         };
         if let Some(roots) = roots {
             roots.push(inline.or_else(|| it.next().cloned()).unwrap_or_default());
+        } else if a == "--help" || a == "-h" {
+            out.help = true;
         } else if flag == "--control" {
             out.control = inline.or_else(|| it.next().cloned()).and_then(|p| p.parse().ok());
         } else if is_invite(a) {
