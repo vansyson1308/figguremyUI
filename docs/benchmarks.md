@@ -9,7 +9,11 @@
 > run; none of these is a code cost (the server's instructions are equal to or fewer than the
 > baseline's). PF6 saving is met; reopening is **missed** for `signup-flow` (+18% mean, +33% p95)
 > and `pantry-dashboard` (+11% / +15%): the cost of reading the context's JSON (+7.6% and +4.2% of
-> the instructions). Details under each table.
+> the instructions). Details under each table. **After review (M12.47–M12.50, `1bc2ca40`):** the
+> caches' hash is keyed per process (a file could choose ids that all collide), and a stored context
+> opens, and is refused, exactly as through a `Value`; this costs +0.5% / +0.5% / +0.9% of
+> `proto.check`'s instructions and takes a context's reopening overhead to +8.2% / +4.7% / +5.4%;
+> PF2–PF5 still met (n = 30). See [After the review fixes](#after-the-review-fixes-m1247m1250).
 
 ## How it was measured
 
@@ -112,8 +116,9 @@ so these counts reopen distinct saved copies, as `pf6.py` does.)
   `Arc` copied on write) shared by its copies until one changes them; read, compared (by value), written
   to the file and read back as before.
 - **M12.44:** the per-pass caches (binding resolution, `ModesCache`, the text layout cache) use
-  `FastMap`, a multiply-rotate hash; they are only read by key, and a text-cache hit is confirmed in
-  full.
+  `FastMap`, a cheaper hash than the standard one; they are only read by key, and a text-cache hit
+  is confirmed in full. (As first written it was a multiply-rotate hash with a fixed constant, which
+  a file could defeat: M12.47 keys it.)
 - **M12.45:** a stored design context that reads whole is read straight from its JSON text into its
   types (serde_json's `raw_value`); one that doesn't goes through a `Value` as before, so what is
   kept, repaired and reported is the same.
@@ -122,6 +127,66 @@ Instructions now (callgrind as above): `proto.check` 78.7 M / 143.0 M / 172.8 M,
 of `9f05ba8e`'s and on bike-repair-booking below `21e99ada`'s on its own, smaller, files; the first
 call 110 M / 176 M / 215 M (was 371 M / 483 M / 528 M); reopening with a context +7.6% / +4.2% /
 +4.9% over the same file without one.
+
+## After the review fixes (M12.47–M12.50)
+
+A review of M12.40–M12.46 found three faults, fixed on top of `859be1d9` (each with a test that
+fails at `859be1d9`):
+
+- **M12.47, `FastMap` could be made to collide by a file.** It hashed a word as `id × K` with a
+  known `K` and no final mix, and its keys come from the file (layer ids in `ModesCache`, variable
+  ids in a binding pass, text in the text cache): 50,000 layer ids `(i << 24) · K⁻¹` share one slot
+  (inserting them took 1.39 s against 2.0 ms), and a 16-byte variable id's second word can cancel its
+  first. Now each word is folded in by a 64 × 64 → 128-bit multiply with a secret key, the result
+  goes through MurmurHash3's 64-bit finaliser, and the keys are drawn once per process from the
+  standard library's `RandomState` (no new dependency; it builds for wasm32). The tests bound slot
+  collisions rather than time: the crafted ids, and 50,000 byte strings crafted to collide fully,
+  put at most 32 keys in one slot of 2¹⁶.
+- **M12.48, a key given twice in a state's `shownBy`** read as the other variant straight than
+  through a `Value`; `ShownBy` now always picks its variant from a `Value` (the last of a key, as
+  before).
+- **M12.48 and M12.50, JSON a `Value` refuses opened.** A lone surrogate (`"\ud800"`) used to make
+  the file fail to open as corrupt; read straight, the file opened with the whole context dropped,
+  and saving deleted it. A number past `f64` (`1e400`) in a field the context doesn't know, and
+  nesting past serde_json's limit (counted from the context rather than the document), also opened.
+  A one-pass scan of the context's text flags these (numbers and nesting generously; 8 bytes at a
+  time through strings, 5.6 µs for signup-flow's 12.6 KB context), and so does a context whose
+  `Value` read fails; the document is then read again with the context through a `Value` from the
+  document's own reader, which gives the old result or the old error, at its place, exactly. The
+  old refusal of `1e400` is kept, since the scan is cheap. (A `Document` deserialized from a
+  `serde_json::Value` rather than from text, as only tests do, gets an error naming
+  `figcraft_doc::design::document_from_json` for a context nested 100 deep.)
+
+Instructions (callgrind, release, `1bc2ca40` against `99e3ae65`):
+
+| | signup-flow | pantry-dashboard | bike-repair-booking |
+|---|---:|---:|---:|
+| `proto.check`, a call after a warm-up (mean of 3) | 79.3 M (+0.5%) | 144.4 M (+0.5%) | 174.5 M (+0.9%) |
+| `proto.scenario.run`, a call after a warm-up | 78.5 M (+0.7%) | 140.4 M (+0.5%) | 173.5 M (+1.0%) |
+| `proto.check`, the first call | 110.0 M (+0.4%) | 177.1 M (+0.4%) | 216.8 M (+0.6%) |
+| Reopening (10 copies): with a context / without | 115.0 M / 106.3 M (+8.2%) | 134.6 M / 128.6 M (+4.7%) | 161.3 M / 153.1 M (+5.4%) |
+
+(Reopening was +7.6% / +4.2% / +4.9% at `99e3ae65`. The `proto.*` rows were counted at `9a2d3d4d`,
+before M12.50, which changes only how a file is opened.) A whole `figguremyui-cli perf --layers 1000
+--instances 0` run (fixed repeat counts) is 4.825 G instructions against 4.820 G (+0.09%).
+
+Wall-clock, n = 30 (3 rounds × 10), load 0.95 → 1.26 → 1.15, same scripts as the deciding run:
+`proto.check` p95 25.0 / 31.8 / 45.1 ms (mean 13.3 / 21.5 / 34.6), `proto.scenario.run` p95 13.6 /
+32.4 / 42.7, `design.check` p95 16.2 / 38.3 / 37.1: PF2–PF5 still met. `99e3ae65` in the same
+session: `proto.check` p95 26.5 / 37.7 / 51.5. PF1 against the baseline, mean / p95: outline −0% /
+−11%, depth 64 −15% / −10%, `create_node` −42% / −33%, `set_properties` −14% / −25%, `batch` −37% /
+−29%, screenshot −7% / −17%, `undo` +32% / +24%, `save_file` +8% / +41%, `open_file` +2% / −8%
+(`99e3ae65`, same session: undo −5% / +6%, save +3% / +8%). PF6, mean / p95 with a context against
+without: save −9.5% to +1.8% / +0.8% to +2.7%; reopen −0.3% / +1.4% (signup-flow), −1.7% / +5.1%
+(pantry-dashboard), +7.0% / −3.0% (bike-repair-booking); `99e3ae65` in the same session: reopen
++18.9% / +6.1%, −3.9% / −2.9%, +39.5% / +86.1%. At n = 30 these sub-millisecond and per-file figures
+move by tens of points between two runs of the same binary (compare the two builds' PF6 rows), so
+they show the budgets weren't moved, not small differences; the instruction counts above are the
+measurement of what the fixes cost. The `perf` table, median of eight interleaved runs each (load
+0.67 → 0.76), moved within −7% to +4% in the rows that use these caches (build + normalize, edit
+main component, `document.inspect`, select all + move) and by up to ±34% in rows that don't (a
+re-render after one move at 10,000 layers: +20% / +34%), which is the run-to-run spread of this
+machine.
 
 ## PF1: operations that existed at the baseline (budget: at most 10% slower, mean and p95)
 
@@ -261,6 +326,7 @@ faults per server of 100 saves and 100 reopens: +6.5% with the context).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-20 | minor | After review (M12.47–M12.50, `1bc2ca40`): `FastMap` keyed per process with a full-avalanche finish (a file could make its ids collide); a stored context with a key twice in `shownBy`, a lone surrogate, a number past `f64` or deep nesting reads, or is refused, exactly as through a `Value`. +0.5% / +0.5% / +0.9% instructions for `proto.check`, reopen overhead +8.2% / +4.7% / +5.4%; PF2–PF5 still met (n = 30). |
 | 2026-11-20 | major | Rewritten for fork milestone FM1 as delivered (`9f05ba8e`) and after M12.40–M12.45 (`99e3ae65`): the regression came from the example files (more variable sets per action and dearer settles), not the code (0.0–0.7%), and scenarios run once per call; settles copy only what changes, documents share styles and variables, caches hash cheaply, the first font walk zeroes no buffers, a design context is read straight. PF2–PF5 met (PF2 p95 27 / 35 / 44 ms); PF1 p95 of outline, undo and save and the outline's mean not shown within budget with no code cost; PF6 reopen missed for signup-flow and pantry-dashboard (+7.6% / +4.2% instructions, the context's JSON). |
 | 2026-11-19 | major | After the performance work (M11.41–M11.45, measured at `21e99ada`): causes found with profiles; PF1 `set_properties` and `undo` met; PF2 met for two examples, missed at p95 for `bike-repair-booking` (first call per process: font indexing and first shaping); PF1 `save_file` / `open_file` p95 and PF6 reopen of `signup-flow` not shown within budget; PF3–PF5 met; `figcraft-cli perf` added; n = 100 runs because n = 30 can't resolve these differences on the shared machine. |
 | 2026-11-13 | major | Created: before/after MCP timings for FM1; PF1 missed for `set_properties` and `undo`, PF2 missed for `proto.check`; PF3–PF5 met; PF6 not measured yet. |
