@@ -102,6 +102,27 @@ pub fn missing(doc: &Document) -> Vec<Missing> {
         .collect()
 }
 
+/// What a command that sets text in `family` (`fontFamily`) warns when no installed or built-in
+/// font provides it (F-13): the edit goes through, the text keeps the family it was given, and it
+/// draws in the fallback font until the family is there. Nothing for an empty name, or while the
+/// installed fonts are still being indexed (one of them may be it).
+pub fn family_warning(family: &str) -> Option<String> {
+    let family = family.trim();
+    if family.is_empty() || !figcraft_text::installed_fonts_known() || figcraft_text::has_family(family) {
+        return None;
+    }
+    let get = source(family).map(|s| format!("; `font.download` can get it from {s}")).unwrap_or_default();
+    Some(format!(
+        "no installed or built-in font is `{}`: the text keeps that family but draws in a fallback font until it is installed{get} (`file.fontReport` lists the fonts the file uses)",
+        crate::error::prose(family)
+    ))
+}
+
+/// [`family_warning`] for the `fontFamily` in `props` (a `node.set` or `node.create` props map).
+pub(crate) fn props_family_warning(props: &serde_json::Map<String, Value>) -> Option<String> {
+    props.get("fontFamily").and_then(Value::as_str).and_then(family_warning)
+}
+
 /// A family's download ([`downloads`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Download {

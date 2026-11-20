@@ -291,3 +291,29 @@ fn refitting_nothing_is_no_edit() {
         assert_eq!((s.ds().unwrap().doc_revision(), s.undo_depth().0), (rev, depth), "{cmd}");
     }
 }
+
+/// F-13: setting text in a family no installed or built-in font provides said nothing where it was
+/// set. `node.set` and `node.create` go through, keep the family, and say so in `warnings`; a
+/// family that is there says nothing.
+#[test]
+fn a_missing_font_family_is_a_warning_where_it_is_set() {
+    let have = installed();
+    let mut s = Session::new();
+    let t = id_of(&s.execute("text.create", &json!({"text": "Hi", "x": 0, "y": 0})).unwrap()["id"]).unwrap();
+    let r = s.execute("node.set", &json!({"ids": [t], "props": {"fontFamily": "FigCraft Missing Q"}})).unwrap();
+    let w = r["warnings"].as_array().unwrap_or_else(|| panic!("no warnings: {r}"));
+    assert!(w.len() == 1 && w[0].as_str().unwrap().contains("`FigCraft Missing Q`"), "{r}");
+    assert!(w[0].as_str().unwrap().contains("fallback font"), "{r}");
+    assert!(matches!(&s.doc().unwrap().node(t).unwrap().kind, NodeKind::Text(d) if d.style.font_family == "FigCraft Missing Q"), "kept");
+
+    let r = s.execute("node.create", &json!({"type": "text", "text": "Yo", "props": {"fontFamily": "FigCraft Missing R"}})).unwrap();
+    assert!(r["id"].is_u64(), "{r}");
+    assert!(r["warnings"][0].as_str().is_some_and(|m| m.contains("`FigCraft Missing R`")), "{r}");
+
+    if let Some(family) = have {
+        let r = s.execute("node.set", &json!({"ids": [t], "props": {"fontFamily": family}})).unwrap();
+        assert!(r.get("warnings").is_none(), "{family}: {r}");
+        let r = s.execute("node.create", &json!({"type": "text", "text": "Ok", "props": {"fontFamily": family}})).unwrap();
+        assert!(r.get("warnings").is_none(), "{family}: {r}");
+    }
+}
