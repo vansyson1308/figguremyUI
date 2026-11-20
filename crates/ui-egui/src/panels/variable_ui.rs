@@ -92,7 +92,7 @@ pub fn groups<'a>(
     keep: impl Fn(Option<&PublishedLibrary>, &Variable) -> bool,
 ) -> Vec<Group<'a>> {
     let mut out: Vec<Group<'a>> = Vec::new();
-    let local: Vec<&Variable> = doc.variables.variables.iter().filter(|v| !library::is_remote_variable(doc, &v.id)).collect();
+    let local: Vec<&Variable> = doc.variables.variables.iter().map(|v| &**v).filter(|v| !library::is_remote_variable(doc, &v.id)).collect();
     for c in library::local_collections(doc) {
         out.push((None, c, local.iter().copied().filter(|v| v.collection == c.id && keep(None, v)).collect()));
     }

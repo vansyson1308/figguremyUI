@@ -199,7 +199,7 @@ impl<'a> View<'a> {
             vars: &doc.variables,
             library: None,
             collections: library::local_collections(doc).collect(),
-            variables: doc.variables.variables.iter().filter(|v| !library::is_remote_variable(doc, &v.id)).collect(),
+            variables: doc.variables.variables.iter().map(|v| &**v).filter(|v| !library::is_remote_variable(doc, &v.id)).collect(),
         }
     }
 

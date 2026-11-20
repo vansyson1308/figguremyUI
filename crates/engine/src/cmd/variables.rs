@@ -386,7 +386,7 @@ pub fn sync_extensions(doc: &mut Document) {
             }
             continue;
         };
-        let parents: Vec<Variable> = vars.iter().filter(|v| v.collection == parent.id).cloned().collect();
+        let parents: Vec<Variable> = vars.iter().filter(|v| v.collection == parent.id).map(|v| Variable::clone(v)).collect();
         let modes: Vec<ModeId> = parent.modes.iter().map(|m| m.id.clone()).collect();
         for v in vars.iter_mut().filter(|v| v.collection == cid) {
             match v.extends.as_ref().map(|e| parents.iter().find(|p| p.id == *e)) {
@@ -430,14 +430,9 @@ pub fn sync_extensions(doc: &mut Document) {
             let id = doc.new_variable_id();
             let extends = Some(p.id.clone());
             // The parent's own overrides (it may be an extension too) aren't this one's.
-            doc.variables.variables.push(Variable {
-                id,
-                collection: cid.clone(),
-                extends,
-                hidden_from_publishing: false,
-                overrides: BTreeSet::new(),
-                ..p
-            });
+            doc.variables
+                .variables
+                .push(Variable { id, collection: cid.clone(), extends, hidden_from_publishing: false, overrides: BTreeSet::new(), ..p }.into());
         }
     }
 }

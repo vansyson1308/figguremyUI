@@ -74,7 +74,7 @@ pub(super) fn value(kind: VariableType, v: &Value) -> Option<VariableValue> {
 /// as the colour they resolve to in the mode they are written for.
 pub fn export(vars: &Variables, collections: &[&Collection]) -> Value {
     let ids: BTreeSet<&str> = collections.iter().map(|c| c.id.as_str()).collect();
-    let members: Vec<&Variable> = vars.variables.iter().filter(|v| ids.contains(v.collection.as_str())).collect();
+    let members: Vec<&Variable> = vars.variables.iter().map(|v| &**v).filter(|v| ids.contains(v.collection.as_str())).collect();
     let exported: BTreeSet<&str> = members.iter().map(|v| v.id.as_str()).collect();
     let mut colls = Map::new();
     for c in collections {
@@ -169,7 +169,7 @@ impl Ctx<'_> {
         if !collections.is_empty() {
             self.doc.variables.collections.sort_by_key(|c| collections.get(c.id.as_str()).copied().unwrap_or(usize::MAX));
         }
-        self.doc.variables.variables.extend(found);
+        self.doc.variables.variables.extend(found.into_iter().map(Into::into));
     }
 
     /// The modes a layer or page sets explicitly (`explicitVariableModes`): collection → mode.

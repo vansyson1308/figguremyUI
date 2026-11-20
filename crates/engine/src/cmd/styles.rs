@@ -1038,19 +1038,22 @@ fn var_create(s: &mut Session, p: &Value) -> Result<Value> {
         super::variables::check_resolves(cmd, &doc.variables, "", &coll.id, m, val)?;
     }
     let id = doc.new_variable_id();
-    doc.variables.variables.push(Variable {
-        id: id.clone(),
-        name,
-        collection: coll.id,
-        kind,
-        values,
-        description: string(p, "description").unwrap_or_default(),
-        scopes: None,
-        hidden_from_publishing: false,
-        extends: None,
-        overrides: Default::default(),
-        code_syntax: Default::default(),
-    });
+    doc.variables.variables.push(
+        Variable {
+            id: id.clone(),
+            name,
+            collection: coll.id,
+            kind,
+            values,
+            description: string(p, "description").unwrap_or_default(),
+            scopes: None,
+            hidden_from_publishing: false,
+            extends: None,
+            overrides: Default::default(),
+            code_syntax: Default::default(),
+        }
+        .into(),
+    );
     Ok(json!({"id": id}))
 }
 
@@ -1360,8 +1363,8 @@ fn apply_bindings_matching(doc: &mut Document, only: Option<&std::collections::B
 struct Pass {
     modes: figcraft_doc::ModesCache,
     /// Each set of modes met, by its place in `resolved`.
-    in_modes: std::collections::HashMap<std::sync::Arc<BTreeMap<CollectionId, ModeId>>, usize>,
-    resolved: Vec<std::collections::HashMap<String, Option<VariableValue>>>,
+    in_modes: figcraft_doc::fast_hash::FastMap<std::sync::Arc<BTreeMap<CollectionId, ModeId>>, usize>,
+    resolved: Vec<figcraft_doc::fast_hash::FastMap<String, Option<VariableValue>>>,
     /// The set of modes met last and its place: layers next to each other share one (the same
     /// `Arc` from `modes`), found without hashing it again.
     last: Option<(std::sync::Arc<BTreeMap<CollectionId, ModeId>>, usize)>,

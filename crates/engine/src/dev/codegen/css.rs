@@ -81,7 +81,7 @@ impl CssNames {
         let mut names = HashMap::with_capacity(vars.len());
         // Every plain name is reserved first, so a suffixed name never takes another's plain one;
         // the next suffix per base keeps this linear.
-        let plain: Vec<String> = vars.iter().map(css_var_of).collect();
+        let plain: Vec<String> = vars.iter().map(|v| css_var_of(v)).collect();
         let mut taken: HashSet<String> = HashSet::with_capacity(vars.len());
         let all: HashSet<&str> = plain.iter().map(String::as_str).collect();
         let mut next: HashMap<&str, usize> = HashMap::new();

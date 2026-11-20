@@ -442,13 +442,14 @@ pub fn publish(doc: &Document, prev: Option<&PublishedLibrary>, sel: &Selection,
             }
         })
         .collect();
-    let old_vars: HashMap<&str, &Variable> = prev.map(|p| p.doc.variables.variables.iter().map(|v| (v.id.as_str(), v)).collect()).unwrap_or_default();
+    let old_vars: HashMap<&str, &Variable> =
+        prev.map(|p| p.doc.variables.variables.iter().map(|v| (v.id.as_str(), &**v)).collect()).unwrap_or_default();
     let variables = snap
         .variables
         .variables
         .iter()
         .map(|v| {
-            let kept = prev.and_then(|p| p.manifest.variable(&v.id)).filter(|_| old_vars.get(v.id.as_str()) == Some(&v)).map(|x| x.version);
+            let kept = prev.and_then(|p| p.manifest.variable(&v.id)).filter(|_| old_vars.get(v.id.as_str()) == Some(&&**v)).map(|x| x.version);
             LibraryVariable {
                 id: v.id.clone(),
                 name: v.name.clone(),
@@ -891,8 +892,8 @@ pub fn import_variables(
         }
         let copy = Variable { id: local.clone(), collection, values, extends: None, overrides: Default::default(), ..v.clone() };
         match doc.variables.variables.iter_mut().find(|x| x.id == local).filter(|_| !new) {
-            Some(slot) => *slot = copy,
-            None => doc.variables.variables.push(copy),
+            Some(slot) => *slot = copy.into(),
+            None => doc.variables.variables.push(copy.into()),
         }
         set_record(&mut doc.libraries_mut().variables, ImportedRecord { library: lid.to_string(), key: v.id.clone(), local, version });
     }
@@ -1473,7 +1474,7 @@ pub fn published_collections(lib: &PublishedLibrary) -> impl Iterator<Item = &Co
 /// The variables library `lib` offers (not those hidden from publishing).
 pub fn published_variables(lib: &PublishedLibrary) -> impl Iterator<Item = &Variable> {
     let offered: BTreeSet<&str> = lib.manifest.variables.iter().filter(|v| v.published).map(|v| v.id.as_str()).collect();
-    lib.doc.variables.variables.iter().filter(move |v| offered.contains(v.id.as_str()))
+    lib.doc.variables.variables.iter().map(|v| &**v).filter(move |v| offered.contains(v.id.as_str()))
 }
 
 #[cfg(test)]

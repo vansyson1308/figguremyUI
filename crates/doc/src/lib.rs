@@ -16,6 +16,7 @@ pub mod comments;
 pub mod design;
 pub mod env;
 pub mod facilitation;
+pub mod fast_hash;
 pub mod geometry;
 pub mod handoff;
 pub mod ids;
@@ -1384,7 +1385,7 @@ mod width_tests;
 pub struct ModesCache {
     /// A layer's modes for the layers inside it (its own over its parents'), and how many layers
     /// that chain has.
-    chains: std::collections::HashMap<NodeId, (Arc<BTreeMap<CollectionId, ModeId>>, usize)>,
+    chains: fast_hash::FastMap<NodeId, (Arc<BTreeMap<CollectionId, ModeId>>, usize)>,
 }
 
 /// The longest chain of parents a [`ModesCache`] works out; a deeper layer (or a loop of parents
