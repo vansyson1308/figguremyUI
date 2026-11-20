@@ -12,7 +12,9 @@ workspace = true
 figcraft-geom = { workspace = true }
 figcraft-color = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
+# `raw_value`: a stored design context that reads whole is read straight into its types, through
+# a `Value` only when it doesn't (design::read_stored).
+serde_json = { workspace = true, features = ["raw_value"] }
 thiserror = { workspace = true }
 imbl = { workspace = true }
 unicode-segmentation = { workspace = true }

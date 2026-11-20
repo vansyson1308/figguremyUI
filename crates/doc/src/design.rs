@@ -797,8 +797,8 @@ const MAX_COUNTERS: usize = 64;
 /// [`MAX_TEXT`] is cut. What was left out or cut is in [`DesignContext::load_issues`] for the
 /// loader to report: it is never written back, so saving the file drops what couldn't be read.
 pub fn read_stored<'de, D: Deserializer<'de>>(d: D) -> Result<Arc<DesignContext>, D::Error> {
-    let raw = Value::deserialize(d)?;
-    Ok(Arc::new(DesignContext::from_stored(raw)))
+    let raw = Box::<serde_json::value::RawValue>::deserialize(d)?;
+    Ok(Arc::new(DesignContext::from_stored_text(raw.get())))
 }
 
 /// What reading the stored context left out or cut, taken out of it so it is reported once.
@@ -955,13 +955,32 @@ impl Cut {
 }
 
 impl DesignContext {
+    /// [`from_stored`](Self::from_stored) of the JSON text `text`: a context that reads whole is
+    /// read straight into its types (building a `Value` first, and dropping it, was most of the
+    /// cost a design context added to opening a file, performance budget PF6); one that doesn't is
+    /// read through a `Value` as before, so what is kept and said about it is the same. Read
+    /// straight, duplicate keys are refused where a `Value` keeps the last: such a context takes
+    /// the `Value` way too.
+    pub fn from_stored_text(text: &str) -> DesignContext {
+        match serde_json::from_str::<DesignContext>(text) {
+            Ok(ctx) => DesignContext::settled(ctx, Vec::new()),
+            Err(_) => DesignContext::from_stored(serde_json::from_str(text).unwrap_or(Value::Null)),
+        }
+    }
+
     /// The context a stored `design` value holds, read leniently (see [`read_stored`]).
     pub fn from_stored(raw: Value) -> DesignContext {
         let mut issues = Vec::new();
-        let mut ctx = match DesignContext::deserialize(&raw) {
+        let ctx = match DesignContext::deserialize(&raw) {
             Ok(ctx) => ctx,
             Err(why) => DesignContext::salvaged(raw, &why.to_string(), &mut issues),
         };
+        DesignContext::settled(ctx, issues)
+    }
+
+    /// `ctx` as read (`issues`: what reading it left out) cut to what a file may hold, its id
+    /// counters raised and its states and required elements repaired, with what was changed.
+    fn settled(mut ctx: DesignContext, mut issues: Vec<String>) -> DesignContext {
         let cut = ctx.clamp();
         if !cut.is_empty() {
             issues.push(format!("the design context was larger than a file may hold and was cut: {}", cut.join("; ")));
@@ -1469,6 +1488,39 @@ mod tests {
         // A context within the limits is left alone.
         let mut small = DesignContext { brief: Brief { audience: "é".repeat(MAX_TEXT), ..Brief::default() }, ..DesignContext::default() };
         assert!(small.clamp().is_empty());
+    }
+
+    #[test]
+    fn a_context_read_straight_is_what_reading_it_through_a_value_gives() {
+        // The same context and the same report, whichever way it is read, and whether the file
+        // comes as text or as a JSON value: well formed, repaired, cut, salvaged, duplicate keys.
+        let long = "x".repeat(MAX_TEXT + 3);
+        let texts = [
+            json!({"brief": {"audience": "Nurses", "required": [{"id": "r1", "text": "Price", "nodes": [4, 4]}]}, "stage": "converging",
+                "scenarios": [{"id": "S1", "name": "Happy", "start": 4, "steps": [{"action": {"type": "wait"}, "expect": {"variables": {"n": 1.5}}}]}],
+                "states": [{"frame": 4, "kind": "other", "reason": "Offline", "author": "user", "status": "accepted"}], "counters": {"S": 1}})
+            .to_string(),
+            json!({"brief": {"audience": long}, "counters": {}}).to_string(),
+            json!({"brief": {"audience": "Nurses"}, "scenarios": [{"id": "S1", "name": "x"}]}).to_string(),
+            json!({"stage": "shipping"}).to_string(),
+            json!([1, 2]).to_string(),
+            r#"{"stage": "converging", "brief": {"audience": "A"}, "stage": "ready"}"#.to_string(),
+            r#"{"brief": {"audience": "A", "audience": "B"}}"#.to_string(),
+        ];
+        for text in &texts {
+            let value: serde_json::Value = serde_json::from_str(text).unwrap();
+            let (straight, through) = (DesignContext::from_stored_text(text), DesignContext::from_stored(value.clone()));
+            assert_eq!(straight, through, "{text}");
+            assert_eq!(straight.load_issues.0, through.load_issues.0, "{text}");
+            assert_eq!(serde_json::to_string(&straight).unwrap(), serde_json::to_string(&through).unwrap(), "{text}");
+            // Inside a document, from its text and from its value.
+            let doc_text = document_with(serde_json::Value::Null).to_string().replacen("\"design\":null", &format!("\"design\":{text}"), 1);
+            let from_text: Document = serde_json::from_str(&doc_text).unwrap();
+            let from_value: Document = serde_json::from_value(document_with(value)).unwrap();
+            assert_eq!(serde_json::to_string(&from_text).unwrap(), serde_json::to_string(&from_value).unwrap(), "{text}");
+            assert_eq!(from_text.design.load_issues.0, through.load_issues.0, "{text}");
+        }
+        assert_eq!(DesignContext::from_stored_text(&texts[5]).stage, Stage::Ready, "the last of a duplicate key, as a `Value` keeps it");
     }
 
     #[test]
