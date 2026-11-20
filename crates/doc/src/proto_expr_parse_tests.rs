@@ -205,7 +205,7 @@ fn not_of_a_variable_reads_back_when_a_name_starts_with_not() {
         let mut x = b.clone();
         x.id = id.into();
         x.name = name.into();
-        v.variables.push(x.into());
+        v.variables.push(x);
     }
     let not_done = Expr::op(Not, vec![Expr::var("done")]);
     for e in [
