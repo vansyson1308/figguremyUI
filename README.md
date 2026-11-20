@@ -291,14 +291,16 @@ experimental and drops what that format can't hold (variable and conditional act
   anything with full access to the control channel or the command line acts as you.
 - **Live editing by two people** merges the design context as a whole: if two people edit it at the
   same moment in a live session, the later edit wins.
-- **The Design context panel has had one hands-on check.** What it found is fixed (each file shows
-  its own results after a tab switch, keyboard focus stays in view, the Vietnamese panel's own
-  labels are translated); an independent re-check on a fresh build is still to do
-  (`handoff/CHECKLIST.md`). Messages from the rules and the simulator are in English in every
-  language, and some engine refusals still show command ids.
+- **The Design context panel** has had two hands-on checks by people who didn't build it, and what
+  they found is fixed ([`docs/review-record.md`](docs/review-record.md)). Messages from the rules and
+  the simulator are in English in every language, and some engine refusals still show command ids.
 - **Accessibility**: the app has keyboard navigation and screen-reader names (AccessKit); the new
-  Design context panel's text contrast was measured in both themes (at least 5:1 for its text) and
-  Tab reaches its fields and buttons. A screen-reader pass over the new panel has not been done.
+  Design context panel's text contrast was measured in both themes (at least 4.5:1; the lowest
+  measured, text on the brand colours, is 4.75:1) and Tab reaches its fields and buttons. A
+  screen-reader pass over the new panel has not been done.
+- **Tested on Linux only.** The build, the app (under a virtual display), the MCP server and Claude
+  Code were run on Linux; macOS and Windows, Codex and Claude Desktop were not tried. What else is
+  known to be missing is ranked in [`docs/gaps.md`](docs/gaps.md#figgure-my-ui-the-forks-own-work).
 - **Online sharing is off by default** in this fork: Share ▸ Online needs a server you enter in
   Preferences (or run yourself, [`docs/server.md`](docs/server.md)); sharing on your local network
   works without one. Shared files are not end-to-end encrypted.

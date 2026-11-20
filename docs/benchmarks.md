@@ -21,13 +21,13 @@
   load average 0.96 (1 minute) after the machine had been idle down to 1.14, and nothing else ran
   during it; loads are given with each table.
 - Each operation is a `tools/call` round trip over MCP stdio, headless, timed in the client (JSON
-  encode, pipe, server, JSON decode), with `handoff/tools/bench.py`: each round runs every
+  encode, pipe, server, JSON decode), with `tools/bench/bench.py`: each round runs every
   operation 10 times in a fresh server process, the baseline and the measured binary alternating
   round by round so both see the same load; 10 rounds (n = 100), samples pooled. The new build was
   run first, then the same script with `9f05ba8e` in place of it, back to back (a minute apart), so
   before and after share the session; the new operations were also run with the two binaries
   interleaved round by round (`proto.check`, `proto.scenario.run`, `design.check` as `bench.py`
-  runs them, 10 rounds × 10). PF6 with `handoff/tools/pf6.py` (10 rounds × 10), for both builds.
+  runs them, 10 rounds × 10). PF6 with `tools/bench/pf6.py` (10 rounds × 10), for both builds.
 - Mean and 95th percentile (nearest rank) are reported separately; a mean is never used to claim a
   percentile.
 - Causes were found with profiles of release builds: `perf` (software clock, DWARF call graphs)
@@ -296,7 +296,7 @@ first shaping of each text and the faces read for it.
 
 ## PF6: save and reopen with a design context against the same file without one
 
-`handoff/tools/pf6.py` (`save_file` then `open_file` of what was saved, 10 each per round, a fresh
+`tools/bench/pf6.py` (`save_file` then `open_file` of what was saved, 10 each per round, a fresh
 server per round, the two files alternating), the copies without a context made by deleting the
 `design` key from `document.json` in the `.figcraft` zip. Budget: within PF1's limit (10%) of the
 file without one. n = 100, milliseconds, mean / p95.

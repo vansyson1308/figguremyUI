@@ -55,14 +55,14 @@ mean and 95th percentile are reported separately and a mean is never used to cla
 Machine, document sizes and commands are recorded with the numbers in
 [`docs/benchmarks.md`](benchmarks.md).
 
-| ID | Operation | Budget |
-|---|---|---|
-| PF1 | Operations that existed at the baseline (open, save, outline inspect, create, set properties, 50-step batch, frame screenshot; `figguremyui-cli perf` engine and render timings at 1,000 and 10,000 layers) | No more than 10% slower than the baseline in mean and in p95; a larger difference is investigated and explained, not waved through |
-| PF2 | `proto.check` on each example file | p95 ≤ 50 ms |
-| PF3 | `proto.scenario.run` of all scenarios of one example file | p95 ≤ 150 ms |
-| PF4 | `design.check` with the full rule set on each example file | p95 ≤ 500 ms |
-| PF5 | `design.get` on each example file | p95 ≤ 20 ms |
-| PF6 | Save then reopen of each example file with its design context | Within PF1's limit of the same file without one |
+| ID | Operation | Budget | Result ([`benchmarks.md`](benchmarks.md), release builds, n = 100 deciding run) |
+|---|---|---|---|
+| PF1 | Operations that existed at the baseline (open, save, outline inspect, create, set properties, 50-step batch, frame screenshot; `figguremyui-cli perf` engine and render timings at 1,000 and 10,000 layers) | No more than 10% slower than the baseline in mean and in p95; a larger difference is investigated and explained, not waved through | **Not shown within budget for three figures; no code cost found.** Means within 10% except `inspect_document {outline}` (+27%, 0.09 ms); p95 over 10% for `inspect_document {outline}`, `undo` (+10.3%) and `save_file` (+29%). The server's instruction counts for all three are equal to or below the baseline's (outline +0.9%, undo −21%, save −13%), and the same binary moves 15–30 points between runs on these sub-millisecond figures; `perf` at 1,000/10,000 layers is within 10% but for two rows at the tool's resolution. |
+| PF2 | `proto.check` on each example file | p95 ≤ 50 ms | **Met:** p95 26.6 / 35.1 / 43.9 ms (sign-up / dashboard / bike booking); after the review fixes 25.0 / 31.8 / 45.1 ms (n = 30). The p95 is set by the first call in each server process. |
+| PF3 | `proto.scenario.run` of all scenarios of one example file | p95 ≤ 150 ms | **Met:** p95 18.5 / 21.6 / 41.6 ms. |
+| PF4 | `design.check` with the full rule set on each example file | p95 ≤ 500 ms | **Met:** p95 21.1 / 27.0 / 41.0 ms. |
+| PF5 | `design.get` on each example file | p95 ≤ 20 ms | **Met:** p95 0.75 / 0.57 / 0.60 ms. |
+| PF6 | Save then reopen of each example file with its design context | Within PF1's limit of the same file without one | **Saving met; reopening missed for two files:** sign-up +18% mean / +33% p95, dashboard +11% / +15%; bike booking met. The cost is reading the design context's JSON (+8.2% / +4.7% / +5.4% of the instructions after the review fixes, which restore the old refusal of malformed text). |
 
 ## Revision history
 

@@ -49,7 +49,7 @@ limits a person and an agent designing and verifying a prototype together. Hours
 
 | # | Gap | Kind | Hours |
 |---|---|---|---|
-| F1 | Performance budgets not all met: see [`benchmarks.md`](benchmarks.md) for which, by how much and why | Performance | 4–12 |
+| F1 | Performance: reopening a file with its design context is 11–18% slower than without one on two examples (PF6, the context's JSON); three sub-millisecond PF1 p95 figures not shown within 10% though their instruction counts aren't higher; `proto.check`'s p95 is set by the first call in a process (font loading). Details in [`benchmarks.md`](benchmarks.md) | Performance | 4–10 |
 | F2 | Two prototype engines: the app's player and the headless simulator are separate, held together by a parity test with five documented differences (no animation timing, scroll, drag direction, devices or hit-testing in the simulator) | Verification | 15–30 |
 | F3 | Not run on macOS or Windows; Codex and Claude Desktop setups not tried (Claude Code was); no screen-reader pass over the Design context panel | Platforms | 6–12 + people |
 | F4 | No releases: the release workflows still carry upstream's names and need a separate CI pull request and signing secrets ([`migration.md`](migration.md#release-workflow-follow-up)); install is from source | Distribution | 2–4 + owner |

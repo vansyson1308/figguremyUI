@@ -19,7 +19,7 @@ import sys
 import tempfile
 import time
 
-sys.path.insert(0, "/tmp/claude-0/-home-user-figguremyUI/39d89997-e289-5eb4-a16b-402a776ef6a8/scratchpad/baseline")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # mcp_client.py beside this script
 from mcp_client import Client  # noqa: E402
 
 BASE, NEW, EX, OUT = sys.argv[1:5]
