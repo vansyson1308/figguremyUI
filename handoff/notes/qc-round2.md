@@ -226,3 +226,15 @@ Each test below was also run against the code before its fix and failed there.
 | QC2-10 | **fixed** | vi.toml: "Đảo ngược chiều thu phóng" (as "Thu phóng" elsewhere), "Lưới bảng trắng", "Giấy kẻ ô". | `i18n::tests::vietnamese_has_the_save_as_file_type_and_the_preferences_labels` | `10-vi-prefs` |
 
 QC2-02, 03, 08 and 11 wait for the work on the design context and the examples.
+
+## Fix status, second pass (design context and examples, on the M12 branch)
+
+Screens: /tmp/claude-0/-home-user-figguremyUI/39d89997-e289-5eb4-a16b-402a776ef6a8/scratchpad/states-fix-shots/.
+
+| Id | Status | Cause, fix | Test | Real app |
+|---|---|---|---|---|
+| QC2-02 | **fixed** | Choose service's auto layout started 24 px from the top, under the cut-out; the other steps start with a Back row. It now has the 56 px top inset the sign-up's Welcome has (`examples/build/build_examples.py`), and the example was regenerated. | `examples::each_example_passes_its_flow_check_scenarios_and_design_check` (unchanged: scenarios and checks still pass) | `12-bike-choose-service-presented` (iPhone 16 frame: the step bar is below the cut-out) |
+| QC2-03 | **fixed** (4 across) | The KPI cards' minimum width (240) let three fit at 1024 but not four. 226 gives four across from 1024 (4 × 226 + 3 × 16 = 952 of the 960 inside the padding), two at 768 (three need 710 of 704), one at 360. | `examples::the_dashboard_holds_its_layout_at_five_widths_in_every_state` (1024 added: 4 per row) | presented at Custom size, responsive, Restart: `13-pantry-1024` (four across), `14-pantry-768` (two and two) |
+| QC2-06 | **fixed** (the follow-up) | A new form's first field now calls `crate::a11y::scroll_ring_into_view(ui, r.rect.expand(6.0))` instead of `scroll_to_me`. | `design_context_tests::a_new_forms_first_field_shows_with_its_whole_focus_ring` | the declare form opens with its first field and ring in view (`03-declare-form-open`) |
+| QC2-08 | **fixed** | A check's `source` is the word `check`; the panel showed it as who raised it. A check now says "Measured by the rule" and the rule's id; a judgement or feedback still says who raised it. | `design_context_tests::a_stored_check_says_which_rule_measured_it` | Findings ▸ Ready ▸ Run the checks ▸ Store what they find: F1 says "Measured by the rule / context.untestedAssumption", "Stored by you" (`10-stored-check-measured-by-rule`) |
+| QC2-11 | **fixed** | The rail is drawn in the layers' region (F6 counts it with them), so `ui.inspect` named it as the Design context panel. A control on the rail is now reported as region `rail`; each link's remove button is named "Remove the link to {name}". | `design_context_tests::the_rail_is_its_own_focus_region`, `design_context_tests::links_go_both_ways_and_a_missing_layer_stays_listed` | Tab from the Brief chip lands on "Main menu" with `focus.region` `rail` (`11-rail-focus`); Shift+Tab through R1 names "Remove the link to Consent checkbox" and "… to Consent text" |

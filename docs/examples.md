@@ -73,10 +73,10 @@ Verify's "Gửi lại mã" opens a toast right under the link, over no button, t
 
 Scenarios: S1 Happy path · S2 Missing contact shows an error · S3 Back keeps what was typed ·
 S4 Resend toast closes by itself · S5 Continue explains itself while consent is off · S6 Fixing
-the form updates the error.
+the form updates the error · S7 Confirm without a code says what to type.
 
 Declared states: Sign-up form `error` (the Error summary), Verify code `error` (the Code field
-showing `State=Error`), `success` (Done) and `other` "Code sent again" (the toast). Required
+showing `State=Error`, shown by S7), `success` (Done) and `other` "Code sent again" (the toast). Required
 element R1: consent to be contacted and to the pool's safety rules, on the Sign-up form, linked
 to the Consent text and the Consent checkbox.
 
@@ -84,9 +84,9 @@ to the Consent text and the Consent checkbox.
 
 One frame that is responsive by auto layout: the header, the KPI cards and the main row wrap,
 with fill children and minimum widths, and the frame hugs its height. It keeps its layout from
-360 to 1440 px: four KPI cards per row at 1100 and 1440 px, two at 768, one at 360; the side panel
-moves under the list when the frame is narrower than 648 px (the test checks 360, 768, 1100 and
-1440 px in every state). State is a string variable `status` (`loading`, `ready`, `empty`,
+360 to 1440 px: four KPI cards per row at 1024, 1100 and 1440 px, two at 768, one at 360; the side
+panel moves under the list when the frame is narrower than 648 px (the test checks 360, 768, 1024,
+1100 and 1440 px in every state). State is a string variable `status` (`loading`, `ready`, `empty`,
 `error`) with booleans bound to the visibility of the loading placeholders, the list, the empty
 state and the error banner. The dashboard loads after a delay; Refresh and Retry show a syncing
 toast that finishes after a delay; "Only out of stock" leads to the empty state (nothing is out
@@ -149,5 +149,5 @@ and the Design context panel shows both ("proposed by Example builder (agent) ·
 
 `crates/mcp/tests/it/examples.rs` keeps them working: flow check, scenarios, design check (the
 `states.*` and `context.requiredMissing` rules included, with no finding at `converging`), the
-declared states and required elements, save and reopen, the dashboard at four widths, a missing
+declared states and required elements, save and reopen, the dashboard at five widths, a missing
 font, and an end state that stays a proposal without the acceptance step.

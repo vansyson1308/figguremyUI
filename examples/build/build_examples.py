@@ -816,6 +816,15 @@ def signup_flow(b):
                ],
                {"screen": verify})
 
+    b.scenario("Confirm without a code says what to type", verify,
+               "Someone who taps “Xác nhận” before the code arrives is told, under the field, what is missing.",
+               [
+                   click(confirm, "Taps “Xác nhận” with the code field empty.", {
+                       "screen": verify, "variants": [{"instance": code_f, "variant": "Error"}],
+                       "variables": {"code_state": "Error"}}),
+               ],
+               {"screen": verify, "overlays": []})
+
     # -- Design context
     m.run("design.brief.set", {
         "audience": "Residents of a fictional ward (Phường Sông Mây) signing up an adult or a child for a beginners' swimming "
@@ -996,7 +1005,9 @@ def pantry_dashboard(b):
     kpi_values = []
     for n, (label, value, note) in enumerate(KPIS, start=1):
         i = b.instance(kpi, kpis, name="KPI " + label, sizing=("fill", "hug"))
-        b.set(i, {"minWidth": 240})
+        # 226: four across from 1024 px (4 × 226 + 3 gaps of 16 fit in 1024 less the padding),
+        # two at 768 (three don't fit), one at 360 (QC2-03: 240 gave 3 + 1 at 1024).
+        b.set(i, {"minWidth": 226})
         b.override(i, "label", label)
         b.override(i, "value", value)
         b.override(i, "note", note)
@@ -1330,7 +1341,9 @@ def bike_repair_booking(b):
         b.text(parent, en, "Caption", "muted", name="Subtitle", fill_width=True)
 
     # -- Choose service
-    choose = screen("Choose service", xs[0], padding=(24, 24, 32, 24))
+    # Clear of the phone's camera cut-out, as Welcome in the sign-up is (QC2-02): the other steps
+    # start with a Back row there.
+    choose = screen("Choose service", xs[0], padding=(56, 24, 32, 24))
     cbody = column(choose, "Content")
     step_bar(cbody, 1)
     head = column(cbody, "Heading", gap=4)

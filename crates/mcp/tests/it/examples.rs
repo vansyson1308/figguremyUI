@@ -53,6 +53,7 @@ const EXAMPLES: [Example; 3] = [
             ("S4", "Resend toast closes by itself"),
             ("S5", "Continue explains itself while consent is off"),
             ("S6", "Fixing the form updates the error"),
+            ("S7", "Confirm without a code says what to type"),
         ],
         screens: &[
             ("Welcome", true, false),
@@ -70,7 +71,7 @@ const EXAMPLES: [Example; 3] = [
         end_states: &["Done"],
         states: &[
             ("Sign-up form", "error", "Error summary", &["S2", "S5", "S6"]),
-            ("Verify code", "error", "Code field", &[]),
+            ("Verify code", "error", "Code field", &["S7"]),
             ("Verify code", "success", "Done", &["S1"]),
             ("Verify code", "other", "Toast: code sent again", &["S4"]),
         ],
@@ -403,7 +404,7 @@ fn shots_dir() -> PathBuf {
 }
 
 #[test]
-fn the_dashboard_holds_its_layout_at_four_widths_in_every_state() {
+fn the_dashboard_holds_its_layout_at_five_widths_in_every_state() {
     let mut c = open("pantry-dashboard");
     let dash = named(&mut c, "Pantry dashboard");
     let list = named(&mut c, "Low stock");
@@ -414,7 +415,8 @@ fn the_dashboard_holds_its_layout_at_four_widths_in_every_state() {
         .collect();
     let shots = shots_dir();
     // (width, KPI cards per row, side panel under the list)
-    for (width, per_row, stacked) in [(360.0, 1, true), (768.0, 2, false), (1440.0, 4, false), (1100.0, 4, false)] {
+    // 1024: four across, not three and a lone fourth (QC2-03).
+    for (width, per_row, stacked) in [(360.0, 1, true), (768.0, 2, false), (1440.0, 4, false), (1100.0, 4, false), (1024.0, 4, false)] {
         for status in ["loading", "ready", "empty", "error"] {
             dashboard_state(&mut c, status);
             c.ok("set_properties", json!({"ids": [dash], "props": {"width": width}}));
