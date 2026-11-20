@@ -111,6 +111,21 @@ fn play_again_shows_the_tab_as_it_was_and_another_page_opens_a_new_one() {
     assert_eq!(u.app.inspect()["presenter"]["current"], json!(b));
 }
 
+/// QC2-05: `proto.present {start}` while that prototype already plays on screen from `start`
+/// starts it again there, as Restart does (an agent or script has no other way to); waiting in its
+/// tab it shows as it was (above).
+#[test]
+fn present_again_while_it_plays_on_screen_starts_again() {
+    let (mut u, a, b, _) = setup();
+    u.run("proto.present", json!({"start": a}));
+    u.key(pos2(720.0, 470.0), Key::ArrowRight);
+    assert_eq!(u.app.inspect()["presenter"]["current"], json!(b));
+    assert_eq!(u.run("proto.present", json!({"start": a}))["start"], json!(a));
+    let p = u.app.inspect()["presenter"].clone();
+    assert_eq!((p["current"].clone(), p["history"].clone(), p["start"].clone()), (json!(a), json!([]), json!(a)), "{p}");
+    assert_eq!(tabs(&u).as_array().unwrap().len(), 1, "still the one tab");
+}
+
 #[test]
 fn the_presentation_plays_on_when_its_file_closes() {
     let (mut u, a, b, _) = setup();

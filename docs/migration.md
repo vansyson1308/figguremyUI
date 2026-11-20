@@ -61,7 +61,7 @@ opens in both apps.
 | Copied fills, strokes, effects and layers (clipboard marker) | `figcraft://clipboard/…` | `figguremyui://clipboard/…` (old marker still accepted on paste) |
 | MCP `serverInfo` | `figcraft` | `name: "figguremyui"`, `title: "Figgure My UI"` |
 | MCP server name in client configs (by convention) | `figcraft`, `figcraft-app` | `figguremyui`, `figguremyui-app` |
-| MCP resources | `figcraft://document`, `figcraft://node/{id}`, `figcraft://command/{id}`, `figcraft://comments`, `figcraft://design`, `figcraft://design/findings`, `figcraft://prototype/flow`, `figcraft://prototype/scenarios` | `figguremyui://document`, `figguremyui://node/{id}`, `figguremyui://command/{id}`, `figguremyui://comments`, `figguremyui://design`, `figguremyui://design/findings`, `figguremyui://prototype/flow`, `figguremyui://prototype/scenarios` (old URIs still read) |
+| MCP resources | `figcraft://document`, `figcraft://commands`, `figcraft://node/{id}`, `figcraft://command/{id}`, `figcraft://comments`, `figcraft://design`, `figcraft://design/findings`, `figcraft://prototype/flow`, `figcraft://prototype/scenarios` | `figguremyui://document`, `figguremyui://commands`, `figguremyui://node/{id}`, `figguremyui://command/{id}`, `figguremyui://comments`, `figguremyui://design`, `figguremyui://design/findings`, `figguremyui://prototype/flow`, `figguremyui://prototype/scenarios` (old URIs still read) |
 | Settings folder, Linux and FreeBSD | `$XDG_CONFIG_HOME/FigCraft` or `~/.config/FigCraft` | `$XDG_CONFIG_HOME/FiggureMyUI` or `~/.config/FiggureMyUI` |
 | Settings folder, macOS | `~/Library/Application Support/FigCraft` | `~/Library/Application Support/FiggureMyUI` |
 | Settings folder, Windows | `%APPDATA%\FigCraft` | `%APPDATA%\FiggureMyUI` |

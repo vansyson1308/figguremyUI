@@ -119,7 +119,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "proto.present",
             "Present",
-            "{start? (frame id; default: the selected frame, else the first flow, else the first frame)}",
+            "{start? (frame id; default: the selected frame, else the first flow, else the first frame)}  the player opens in a tab of its own, one per page: while that page's prototype already plays on screen it starts again from `start` (as Restart does); waiting in its tab behind the editor it shows as it was, unless `start` is another frame, which starts it there",
             false,
             |s, p| { open_player(s, p, "proto.present", "present") }
         ),

@@ -612,9 +612,14 @@ pub fn open_present(app: &mut FigApp, start: NodeId) {
     pres.view = app.ui.present_view;
     let same = |t: &&PresentTab| t.page == page && (t.doc_uid == uid || (path.is_some() && t.path == path));
     if let Some(id) = app.ui.presents.iter().find(same).map(|t| t.id) {
+        // Already on screen there is nothing to show again: the call starts it again from
+        // `start`, as Restart does (QC2-05). Waiting in its tab, it shows as it was.
+        let in_front = app.ui.present.is_some() && app.ui.present_active == Some(id);
         show_present(app, id);
         if app.ui.present.as_ref().is_some_and(|p| p.start() != start) {
             app.ui.present = Some(pres);
+        } else if in_front && let Some(p) = app.ui.present.as_mut() {
+            p.restart_now(start);
         }
         return;
     }

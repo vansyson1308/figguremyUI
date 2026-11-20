@@ -67,3 +67,23 @@ fn a_hover_where_nothing_changed_is_not_hit_tested_again() {
     u.frame(vec![Event::PointerMoved(u.app.to_screen(500.0, 200.0))]);
     assert_eq!(hovered(&u), Some(b));
 }
+
+/// QC2-01: the pointer goes from a layer straight into the panel beside the canvas (a fast mouse
+/// skips the empty canvas in between): the layer isn't hovered any more, so its outline and frame
+/// name go. A layers row hovered there still hovers its layer.
+#[test]
+fn leaving_the_canvas_from_a_layer_ends_its_hover() {
+    let (mut u, a, _) = two_rectangles();
+    u.frame(vec![]);
+    u.frame(vec![Event::PointerMoved(u.app.to_screen(200.0, 200.0))]);
+    assert_eq!(hovered(&u), Some(a));
+    let rect = u.app.canvas.rect;
+    let in_panel = egui::pos2(rect.left() - 40.0, rect.center().y);
+    u.frame(vec![Event::PointerMoved(in_panel)]);
+    u.frame(vec![]);
+    assert_eq!(hovered(&u), None, "the pointer is in the panel, not on the layer");
+    // Something a panel hovers stays when the canvas has nothing of its own to end.
+    u.app.session.ds_mut().unwrap().hover = Some(a);
+    u.frame(vec![Event::PointerMoved(in_panel + egui::vec2(0.0, 10.0))]);
+    assert_eq!(hovered(&u), Some(a));
+}

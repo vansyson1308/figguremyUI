@@ -34,9 +34,19 @@ fn pan_button_down(i: &egui::InputState) -> bool {
 }
 
 /// The pointer left the canvas (or something over it took the pointer): nothing is hovered there.
+/// That includes the hovered layer's outline and frame name (QC2-01): the pointer may go from a
+/// layer straight into a panel or onto the rail without a hover over empty canvas in between.
 fn left(app: &mut FigApp) {
     app.canvas.last_hover = None;
     app.session.pointer_left();
+    let found = app.canvas.hover_found.take();
+    if let Ok(ds) = app.session.ds_mut()
+        && found.is_some()
+        && ds.hover == found
+    {
+        ds.hover = None;
+        ds.revision += 1;
+    }
 }
 
 /// The zoom tool while Z is held (Alt: zoom out): a click zooms a step about the pointer, a drag
@@ -400,6 +410,9 @@ fn send(app: &mut FigApp, kind: PointerKind, pos: Pos2, m: &egui::Modifiers) {
     app.canvas.last_pointer = Some(Point::new(ev.x, ev.y));
     if let Err(e) = app.session.pointer(&ev) {
         app.toast(e.to_string());
+    }
+    if hover {
+        app.canvas.hover_found = app.session.ds().ok().and_then(|d| d.hover);
     }
     app.canvas.last_hover = hover.then(|| HoverKey::of(app, ev));
     app.handle_ui_requests();

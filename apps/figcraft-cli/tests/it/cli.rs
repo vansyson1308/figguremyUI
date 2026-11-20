@@ -278,6 +278,36 @@ fn mcp_over_stdio() {
     assert_eq!(lines[2]["result"]["isError"], false);
 }
 
+/// QC2-09: the migration note's table names every resource and template the server lists, in its
+/// new form and its old one (which still reads).
+#[test]
+fn the_migration_note_lists_every_mcp_resource() {
+    let mut child = bin().arg("mcp").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"2025-06-18"}}}}"#).unwrap();
+        writeln!(stdin, r#"{{"jsonrpc":"2.0","method":"notifications/initialized"}}"#).unwrap();
+        writeln!(stdin, r#"{{"jsonrpc":"2.0","id":2,"method":"resources/list"}}"#).unwrap();
+        writeln!(stdin, r#"{{"jsonrpc":"2.0","id":3,"method":"resources/templates/list"}}"#).unwrap();
+    }
+    drop(child.stdin.take());
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let lines: Vec<serde_json::Value> = String::from_utf8_lossy(&out.stdout).lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    let mut uris: Vec<String> = Vec::new();
+    for l in &lines[1..] {
+        let list = l["result"]["resources"].as_array().or_else(|| l["result"]["resourceTemplates"].as_array()).unwrap_or_else(|| panic!("{l}"));
+        uris.extend(list.iter().map(|r| r["uri"].as_str().or_else(|| r["uriTemplate"].as_str()).unwrap().to_string()));
+    }
+    assert!(uris.len() >= 9, "{uris:?}");
+    let note = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/migration.md")).unwrap();
+    let row = note.lines().find(|l| l.starts_with("| MCP resources |")).expect("the Old → new table's MCP resources row");
+    for uri in &uris {
+        let old = uri.replacen("figguremyui://", "figcraft://", 1);
+        assert!(row.contains(&format!("`{uri}`")) && row.contains(&format!("`{old}`")), "docs/migration.md doesn't list {uri} (old {old})");
+    }
+}
+
 #[test]
 fn mcp_over_stdio_confined_to_automation_roots() {
     let d = tmp("roots");

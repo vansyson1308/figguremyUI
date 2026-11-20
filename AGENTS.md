@@ -172,8 +172,11 @@ milestone id in the message (`M2.1: auto layout wrap`). Commit after every lande
   in `crates/ui-egui/src/control.rs` and `docs/control-protocol.md`.
 - **For UI work, look at the result** (take a screenshot and read the PNG). Compare with the
   incumbent side by side where the owner allows (`plan/figma/`).
-- Headless: `figguremyui-cli` (`info`, `export`, `run`, `commands`, `mcp`). MCP: `figguremyui-cli mcp`
-  (see `docs/mcp.md`).
+- Headless: `figguremyui-cli` (`info`, `export`, `run`, `commands`, `mcp`, `doctor`). MCP:
+  `figguremyui-cli mcp` (see `docs/mcp.md`).
+- Installing it for someone, or connecting a client: follow
+  [`docs/install-for-agents.md`](docs/install-for-agents.md), and run `figguremyui-cli doctor` after
+  building; it checks the install and prints the client setup lines with the binary's real path.
 - Parallel agents: separate `CARGO_TARGET_DIR` per agent, edit only the crates/files you own,
   write manifests atomically, delete your target dir when done (disk is limited).
 

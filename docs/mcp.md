@@ -141,7 +141,10 @@ no system fonts.
 ## Configure a client
 
 Build the CLI first (`cargo build --release -p figcraft-cli`) and use the absolute path to
-`target/release/figguremyui-cli`.
+`target/release/figguremyui-cli`. `figguremyui-cli doctor` checks the build through this server
+(handshake, tools, capabilities, a small prototype verified, with `--example FILE` a file's
+scenarios) and prints the lines below with that path filled in ([cli.md](cli.md#doctor---json---example-file---port-port));
+[install-for-agents.md](install-for-agents.md) is the whole install, written for an agent to follow.
 
 The Linux AppImage bundles the CLI: `<the AppImage> cli <args>` runs `figguremyui-cli <args>`, so
 `/path/to/<the AppImage> cli mcp` works wherever `/path/to/figguremyui-cli mcp` appears below
